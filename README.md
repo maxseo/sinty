@@ -1,7 +1,7 @@
 # Sinty
 
 **Syntet AI agent that runs the same on a laptop and on any VPS.**
-Оne process, one SQLite file, plugins for everything else.
+One process, one SQLite file, plugins for everything else.
 
 > Status: **v0.1, core working** — turn loop, journal with crash recovery, policy gate, sandboxed plugin host, HTTP API with SSE, CLI, providers for OpenAI-compatible APIs and Anthropic, file tools. Supervisor and Web UI are next. See [roadmap](docs/roadmap.md).
 
