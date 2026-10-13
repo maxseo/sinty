@@ -1,0 +1,11 @@
+{
+  "name": "@sinty/supervisor",
+  "version": "0.0.1",
+  "description": "Sinty supervisor process: detectors, notices, escalation, incident memory",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@sinty/sdk": "workspace:*"
+  }
+}

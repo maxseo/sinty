@@ -1,0 +1,11 @@
+{
+  "name": "@sinty/core",
+  "version": "0.0.1",
+  "description": "Sinty protected core: turn loop, tool registry, policy gate, journal, plugin host, API",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@sinty/sdk": "workspace:*"
+  }
+}

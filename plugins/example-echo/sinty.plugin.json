@@ -1,0 +1,21 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "example-echo",
+  "version": "0.0.1",
+  "description": "Reference plugin: one tool, no permissions",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {},
+  "tools": [
+    {
+      "name": "echo.say",
+      "description": "Return the text back, optionally upper-cased",
+      "sideEffects": "none",
+      "idempotent": true,
+      "docs": "README.md",
+      "defaultPolicy": "allow"
+    }
+  ],
+  "editable": true
+}

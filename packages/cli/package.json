@@ -1,0 +1,14 @@
+{
+  "name": "sinty",
+  "version": "0.0.1",
+  "description": "Sinty CLI: init, web, run, connect, secret, upgrade, doctor",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "sinty": "./dist/bin.js"
+  },
+  "dependencies": {
+    "@sinty/core": "workspace:*"
+  }
+}

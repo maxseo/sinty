@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/maxseo/sinty/main/schemas/plugin-manifest.schema.json",
+  "title": "Sinty plugin manifest",
+  "type": "object",
+  "required": ["name", "version", "description", "kinds", "runtime", "permissions"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "kinds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["provider", "tool", "context", "channel", "server", "schedule", "event", "ui"] }
+    },
+    "runtime": { "enum": ["node", "mcp-stdio", "http"] },
+    "entry": { "type": "string" },
+    "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "url": { "type": "string", "format": "uri" },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "read": { "type": "array", "items": { "type": "string" } },
+            "write": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "net": { "type": "array", "items": { "type": "string" } },
+        "secrets": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "array", "items": { "type": "string" } },
+        "shell": { "type": "boolean" }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "sideEffects"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$" },
+          "description": { "type": "string" },
+          "sideEffects": { "enum": ["none", "read", "write", "external"] },
+          "idempotent": { "type": "boolean" },
+          "recoverable": { "type": "boolean" },
+          "docs": { "type": "string" },
+          "defaultPolicy": { "enum": ["allow", "ask", "deny"] }
+        }
+      }
+    },
+    "config": { "type": "object" },
+    "tests": { "type": "string" },
+    "editable": { "type": "boolean", "default": true }
+  },
+  "allOf": [
+    { "if": { "properties": { "runtime": { "const": "node" } } }, "then": { "required": ["entry"] } },
+    { "if": { "properties": { "runtime": { "const": "mcp-stdio" } } }, "then": { "required": ["command"] } },
+    { "if": { "properties": { "runtime": { "const": "http" } } }, "then": { "required": ["url"] } }
+  ]
+}
