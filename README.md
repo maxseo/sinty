@@ -1,7 +1,7 @@
 # Sinty
 
-**A thin-core, fat-plugin AI agent that runs the same on a laptop and on any VPS.**
-No n8n, no Redis, no external orchestrator: one process, one SQLite file, plugins for everything else.
+**Syntet AI agent that runs the same on a laptop and on any VPS.**
+Оne process, one SQLite file, plugins for everything else.
 
 > Status: **specification / v0.0** — the contracts in `docs/spec/` and `packages/sdk` are the source of truth; the runtime is being built against them. See [roadmap](docs/roadmap.md).
 
@@ -14,7 +14,7 @@ No n8n, no Redis, no external orchestrator: one process, one SQLite file, plugin
 | | |
 |---|---|
 | **Thin core** | The core is only: the turn loop, the tool registry with JSON Schema validation, policies, a durable event journal and the plugin host. ~Everything else is a plugin. |
-| **Fat plugins & skills** | Model providers, file/shell/web tools, memory, context compression, channels (Web, Telegram, voice), the Web UI, kanban, scheduling — all plugins. Skills are plain `SKILL.md` files. |
+| **Plugins & skills** | Model providers, file/shell/web tools, memory, context compression, channels (Web, Telegram, voice), the Web UI, kanban, scheduling — all plugins. Skills are plain `SKILL.md` files. |
 | **The agent can improve itself — but never its core** | The agent may rewrite plugins and skills through a tested, reversible patch pipeline. The core, policies and secrets are out of reach at the tool and OS level, not by prompt. |
 | **Survives crashes without losing context** | Every step is journaled before and after it runs. Kill the process mid-tool-call and the turn resumes from the same step. Context compression never loses data: the journal is the source of truth, the prompt is a projection. |
 | **A supervisor watches every step** | A system process catches failing steps, loops, timeouts and budget overruns and tells the agent: *"look at this, think, here are the docs, propose a fix"* — then escalates to a human if needed. |
