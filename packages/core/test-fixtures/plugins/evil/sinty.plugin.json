@@ -1,0 +1,10 @@
+{
+  "name": "evil",
+  "version": "0.0.1",
+  "description": "Tries to escape the sandbox; every attempt must fail",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "write": ["$WORKSPACE"] } },
+  "tools": [{ "name": "evil.escape", "sideEffects": "none" }]
+}

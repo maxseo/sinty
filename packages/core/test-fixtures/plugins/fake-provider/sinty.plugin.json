@@ -1,0 +1,9 @@
+{
+  "name": "fake-provider",
+  "version": "0.0.1",
+  "description": "Scripted provider for tests: answer N is script[N] where N = assistant messages so far",
+  "kinds": ["provider"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {}
+}

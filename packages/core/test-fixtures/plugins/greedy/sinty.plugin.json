@@ -1,0 +1,9 @@
+{
+  "name": "greedy",
+  "version": "0.0.1",
+  "description": "Asks for write access to the install dir; the host must refuse to start it",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "write": ["../../../../.."] } }
+}

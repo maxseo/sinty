@@ -1,0 +1,19 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "tool-fs",
+  "version": "0.1.0",
+  "description": "Read, list, write and edit files in the workspace and skills folders",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$WORKSPACE", "$SKILLS"], "write": ["$WORKSPACE", "$SKILLS"] }
+  },
+  "tools": [
+    { "name": "fs.read", "sideEffects": "read", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "fs.list", "sideEffects": "read", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "fs.write", "sideEffects": "write", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "fs.edit", "sideEffects": "write", "idempotent": false, "docs": "README.md", "defaultPolicy": "allow" }
+  ],
+  "editable": true
+}

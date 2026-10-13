@@ -14,7 +14,7 @@ Sinty assumes the **model is untrusted**: it may be wrong, manipulated by prompt
 | Policies, config, journal | Owned by the core process; no tool can write them |
 | Secrets | Encrypted store; tools receive values by `secret://` reference at call time; values are redacted from events and logs |
 | Host filesystem | Plugins run as separate processes under the Node.js permission model; writes limited to declared roots; `strict` mode uses separate OS users |
-| Network | Per-plugin egress allowlist from the manifest plus the global `policy.yaml` allowlist |
+| Network | Per-plugin egress allowlist from the manifest plus the global `policy.yaml` allowlist. In `standard` mode it is enforced inside the plugin process (`fetch` is replaced); a plugin that opens raw sockets bypasses it. `strict` mode (M5) adds OS-level egress control |
 | Shell | Disabled by default; when enabled runs in a sandbox (Docker / bubblewrap / restricted user) and defaults to `ask` |
 | API | Bearer tokens with scopes (`read`, `chat`, `approve`, `admin`), per agent and per project; local mode binds to `127.0.0.1` |
 | Self-modification | Only plugins and skills; via the patch pipeline with tests, health check and rollback; permission changes require human approval |

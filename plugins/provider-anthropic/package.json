@@ -1,0 +1,14 @@
+{
+  "name": "@sinty/plugin-provider-anthropic",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sinty/sdk": "workspace:*"
+  }
+}

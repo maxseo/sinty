@@ -1,0 +1,15 @@
+{
+  "name": "test-tools",
+  "version": "0.0.1",
+  "description": "Tools for core tests",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "write": ["$WORKSPACE"] } },
+  "tools": [
+    { "name": "echo.say", "sideEffects": "none", "idempotent": true },
+    { "name": "side.effect", "sideEffects": "write", "idempotent": false },
+    { "name": "crash.now", "sideEffects": "none" },
+    { "name": "sleep.long", "sideEffects": "none" }
+  ]
+}

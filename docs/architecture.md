@@ -46,7 +46,8 @@ $SINTY_HOME/             default ~/.sinty, or /var/lib/sinty on a VPS
   config.yaml            core-owned: providers, models, plugins, server
   policy.yaml            core-owned: permissions, budgets, approvals
   AGENTS.md              core-owned: agent rules (agent may propose edits, human approves)
-  secrets.db             core-owned: encrypted secrets
+  secrets.json           core-owned: secrets, AES-256-GCM
+  secret.key             core-owned: key for secrets.json
   journal.db             core-owned: events, checkpoints, incidents
   plugins/               git repo; changed only through plugin.propose_patch
   skills/                agent-writable

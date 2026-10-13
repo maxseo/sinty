@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "provider-anthropic",
+  "version": "0.1.0",
+  "description": "Anthropic Messages protocol for Claude models",
+  "kinds": ["provider"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "net": ["*"]
+  },
+  "editable": true
+}

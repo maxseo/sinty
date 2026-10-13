@@ -60,7 +60,16 @@ export interface ToolSchema {
   inputSchema: Record<string, unknown>;
 }
 
+/** Resolved from `config.yaml` by the core; `apiKey` is a secret value and must never be logged. */
+export interface ProviderEndpoint {
+  baseUrl?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+  options?: Record<string, unknown>;
+}
+
 export interface ProviderRequest {
+  endpoint: ProviderEndpoint;
   model: string;
   messages: ChatMessage[];
   tools: ToolSchema[];
@@ -78,7 +87,7 @@ export type ProviderChunk =
 export interface ProviderDefinition {
   protocol: string;
   stream(req: ProviderRequest): AsyncIterable<ProviderChunk>;
-  listModels?(): Promise<{ id: string; contextWindow?: number }[]>;
+  listModels?(endpoint: ProviderEndpoint): Promise<{ id: string; contextWindow?: number }[]>;
 }
 
 // ---- context ----
@@ -107,6 +116,8 @@ export interface ChannelDefinition {
 export interface PluginContext {
   readonly name: string;
   readonly config: Readonly<Record<string, unknown>>;
+  /** Absolute paths; the process can only write where `permissions.fs.write` allows. */
+  readonly paths: { readonly workspace: string; readonly skills: string; readonly plugin: string };
   readonly log: { debug(msg: string, data?: unknown): void; info(msg: string, data?: unknown): void; warn(msg: string, data?: unknown): void; error(msg: string, data?: unknown): void };
 
   /** Network access limited to `permissions.net`. */

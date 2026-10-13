@@ -3,7 +3,7 @@
 **Syntet AI agent that runs the same on a laptop and on any VPS.**
 Оne process, one SQLite file, plugins for everything else.
 
-> Status: **specification / v0.0** — the contracts in `docs/spec/` and `packages/sdk` are the source of truth; the runtime is being built against them. See [roadmap](docs/roadmap.md).
+> Status: **v0.1, core working** — turn loop, journal with crash recovery, policy gate, sandboxed plugin host, HTTP API with SSE, CLI, providers for OpenAI-compatible APIs and Anthropic, file tools. Supervisor and Web UI are next. See [roadmap](docs/roadmap.md).
 
 [Русская версия](README.ru.md)
 
@@ -22,9 +22,30 @@
 | **Any model** | OpenAI-compatible (xAI Grok, DeepSeek, Ollama, vLLM, OpenRouter…), OpenAI Responses and Anthropic Messages protocols, with fallback routing. |
 | **Any interface** | The core speaks a protocol; the bundled Web UI (chat, kanban, journal, supervisor panel) is just one client. Telegram, Herdr, your own app, Claude/ChatGPT/Grok via MCP — all equal clients. |
 
-## Quick start
+## Run from source (works today)
 
-> The commands below describe the target CLI. They will work starting from milestone M1.
+```sh
+git clone https://github.com/maxseo/sinty.git && cd sinty
+corepack enable && pnpm install && pnpm build      # Node.js 24+
+alias sinty="node $PWD/packages/cli/dist/bin.js"   # PowerShell: function sinty { node "$PWD\packages\cli\dist\bin.js" @args }
+
+sinty init                          # prints the API token once
+sinty secret set deepseek           # or anthropic, openai, xai
+# set models.default in ~/.sinty/config.yaml, e.g. deepseek/deepseek-chat
+sinty doctor
+sinty run "create notes/todo.md with three ideas for my weekend"
+sinty serve                         # HTTP API on 127.0.0.1:3180
+```
+
+```sh
+curl -X POST localhost:3180/v1/sessions -H "Authorization: Bearer $TOKEN" -d '{}'
+curl -X POST localhost:3180/v1/sessions/<id>/messages -H "Authorization: Bearer $TOKEN" -d '{"text":"hi"}'
+curl -N localhost:3180/v1/sessions/<id>/stream -H "Authorization: Bearer $TOKEN"
+```
+
+## Quick start (target distribution)
+
+> Packaged install arrives with milestone M5.
 
 ```sh
 # local machine (Windows, macOS, Linux) — Node.js 24+

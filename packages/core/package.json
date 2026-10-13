@@ -5,7 +5,21 @@
   "license": "MIT",
   "type": "module",
   "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 \"dist/**/*.test.js\""
+  },
   "dependencies": {
-    "@sinty/sdk": "workspace:*"
+    "@hono/node-server": "^1.19.0",
+    "@sinty/sdk": "workspace:*",
+    "hono": "^4.10.0",
+    "yaml": "^2.8.0"
   }
 }

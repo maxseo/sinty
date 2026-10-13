@@ -3,7 +3,7 @@
 **ИИ-агент с тонким ядром и толстыми плагинами. Одинаково работает на ноутбуке и на любом VPS.**
 Без n8n, Redis и внешнего оркестратора: один процесс, один файл SQLite, всё остальное — плагины.
 
-> Статус: **спецификация, v0.0.** Источник истины — контракты в `docs/spec/` и `packages/sdk`, рантайм пишется под них. План — в [roadmap](docs/roadmap.md).
+> Статус: **v0.1, ядро работает.** Цикл хода, журнал с восстановлением после сбоя, политики, изолированные плагины, HTTP API с SSE, CLI, провайдеры для OpenAI-совместимых API и Anthropic, инструменты для файлов. Дальше супервизор и веб-интерфейс. План — в [roadmap](docs/roadmap.md).
 
 [English version](README.md)
 
@@ -27,9 +27,24 @@
 
 **Любой интерфейс.** Ядро говорит по протоколу. Веб-интерфейс (чат, канбан, журнал, панель супервизора) — один из клиентов наравне с Telegram, Herdr, вашим приложением и Claude, ChatGPT или Grok через MCP.
 
-## Быстрый старт
+## Запуск из исходников (работает уже сейчас)
 
-> Это целевой CLI. Команды заработают с этапа M1.
+```sh
+git clone https://github.com/maxseo/sinty.git && cd sinty
+corepack enable && pnpm install && pnpm build      # Node.js 24+
+alias sinty="node $PWD/packages/cli/dist/bin.js"   # PowerShell: function sinty { node "$PWD\packages\cli\dist\bin.js" @args }
+
+sinty init                          # один раз печатает токен API
+sinty secret set deepseek           # или anthropic, openai, xai
+# в ~/.sinty/config.yaml указать models.default, например deepseek/deepseek-chat
+sinty doctor
+sinty run "создай notes/todo.md с тремя идеями на выходные"
+sinty serve                         # HTTP API на 127.0.0.1:3180
+```
+
+## Быстрый старт (целевая установка)
+
+> Установка пакетом появится на этапе M5.
 
 ```sh
 # компьютер (Windows, macOS, Linux), Node.js 24+
