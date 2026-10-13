@@ -184,7 +184,6 @@ docs/           architecture, specs, integrations, roadmap
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (self-improving skills, multi-channel gateway) ·
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (everything-is-a-plugin, Web UI) ·
-[iva-agent](https://github.com/smixs/iva-agent) (one-command self-hosting, personal memory) ·
 [Herdr](https://herdr.dev) (agent state you can see and wait on).
 
 ## License
