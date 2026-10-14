@@ -17,7 +17,7 @@ Sinty assumes the **model is untrusted**: it may be wrong, manipulated by prompt
 | Network | Per-plugin egress allowlist from the manifest plus the global `policy.yaml` allowlist. In `standard` mode it is enforced inside the plugin process (`fetch` is replaced); a plugin that opens raw sockets bypasses it. `strict` mode (M5) adds OS-level egress control |
 | Shell | Disabled by default; when enabled runs in a sandbox (Docker / bubblewrap / restricted user) and defaults to `ask` |
 | API | Bearer tokens with scopes (`read`, `chat`, `approve`, `admin`), per agent and per project; local mode binds to `127.0.0.1` |
-| Self-modification | Only plugins and skills; via the patch pipeline with tests, health check and rollback; permission changes require human approval |
+| Self-modification | Only plugins and skills; via the patch pipeline: a staging copy, tests run under the plugin's own permissions, a git commit per change, a health check and automatic rollback; applying needs approval by default, and permission changes always need it |
 
 ## Untrusted content
 

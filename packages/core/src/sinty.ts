@@ -1,12 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import type { SintyEvent } from "@sinty/sdk";
 import { Agent } from "./agent.js";
 import { Bus } from "./bus.js";
 import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, loadConfig, loadPolicy, type SintyConfig, type SintyPolicy } from "./config.js";
 import { PluginHost } from "./host/host.js";
+import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
+import { PatchManager } from "./patches.js";
 import { resolvePaths, type SintyPaths } from "./paths.js";
 import { SecretStore } from "./secrets.js";
+import { SupervisorClient } from "./supervisor-client.js";
 
 export type LogFn = (level: string, msg: string, data?: unknown) => void;
 
@@ -53,6 +57,8 @@ export interface SintyOptions {
   policy?: Partial<SintyPolicy>;
 }
 
+const PLUGIN_ACTOR = { kind: "system", id: "patches" } as const;
+
 export class Sinty {
   readonly paths: SintyPaths;
   readonly config: SintyConfig;
@@ -61,6 +67,8 @@ export class Sinty {
   readonly journal: Journal;
   readonly bus = new Bus();
   readonly host: PluginHost;
+  readonly patches: PatchManager;
+  readonly supervisor: SupervisorClient | undefined;
   readonly agent: Agent;
   private readonly log: LogFn;
 
@@ -78,6 +86,34 @@ export class Sinty {
       crashed: (plugin, code, restarts) => this.log("warn", `plugin ${plugin} exited with ${code} (crash ${restarts})`),
       readJournal: (sessionId, afterSeq, types) => this.journal.events(sessionId, { afterSeq, types }),
     });
+
+    this.patches = new PatchManager(this.paths, this.journal, this.host, {
+      proposed: (p) => this.agent.emit({ sessionId: p.sessionId, type: "plugin.patch.proposed", actor: PLUGIN_ACTOR, data: { patchId: p.id, plugin: p.plugin, reason: p.reason, branch: `.staging/${p.id}` } }),
+      tested: (p, ok) => this.agent.emit({ sessionId: p.sessionId, type: "plugin.patch.tested", actor: PLUGIN_ACTOR, data: { patchId: p.id, ok, output: p.testOutput } }),
+      applied: (p) => this.agent.emit({ sessionId: p.sessionId, type: "plugin.patch.applied", actor: PLUGIN_ACTOR, data: { patchId: p.id, commit: p.commit ?? "" } }),
+      rolledBack: (r) => this.agent.emit({ sessionId: r.sessionId, type: "plugin.patch.rolled_back", actor: PLUGIN_ACTOR, data: { patchId: r.patchId, toCommit: r.toCommit, reason: r.reason } }),
+      toolsChanged: () => this.supervisor?.setTools(this.agent.supervisedTools()),
+    });
+
+    const s = this.config.supervisor;
+    const budget = this.policy.budgets.turn;
+    this.supervisor = s.enabled
+      ? new SupervisorClient(
+          this.paths,
+          { loopThreshold: s.loopThreshold, maxNoticesPerTurn: s.maxNoticesPerTurn, maxNoticesPerDetector: 2, docsMaxChars: s.docsMaxChars, budget: { steps: budget.steps, tokens: budget.tokens } },
+          () => this.journal.incidents(),
+          {
+            log: (level, msg) => this.log(level, msg),
+            replay: () => this.openTurnEvents(),
+            incidentResolved: (sessionId, turnId, incident) => {
+              const row = this.journal.addIncident({ id: newId("inc"), ...incident });
+              this.agent.emit({ sessionId, ...(turnId ? { turnId } : {}), type: "supervisor.incident_resolved", actor: { kind: "supervisor", id: "supervisor" }, data: { incidentId: row.id, tool: row.tool, code: row.code, fixSummary: row.fixSummary } });
+              this.supervisor?.incidentStored(row);
+            },
+          },
+        )
+      : undefined;
+
     this.agent = new Agent({
       paths: this.paths,
       config: this.config,
@@ -86,21 +122,33 @@ export class Sinty {
       journal: this.journal,
       host: this.host,
       bus: this.bus,
+      patches: this.patches,
+      ...(this.supervisor ? { supervisor: this.supervisor } : {}),
       log: this.log,
     });
   }
 
-  /** Starts plugins and resumes turns that were running when the process stopped. */
+  /** Starts plugins and the supervisor, then resumes turns that were running when the process stopped. */
   async start(): Promise<{ failedPlugins: { plugin: string; error: string }[]; resumedTurns: string[] }> {
     const { failed } = await this.host.start();
     for (const f of failed) this.log("error", `plugin ${f.plugin} failed to start: ${f.error}`);
+    if (this.supervisor) {
+      this.supervisor.setTools(this.agent.supervisedTools());
+      await this.supervisor.start();
+    }
     const resumedTurns = this.agent.resumeAll();
     return { failedPlugins: failed, resumedTurns };
   }
 
   async stop(): Promise<void> {
     await this.agent.stop();
+    this.supervisor?.stop();
     this.host.stop();
     this.journal.close();
+  }
+
+  private openTurnEvents(): SintyEvent[] {
+    const turns = [...this.journal.turnsWithStatus("running"), ...this.journal.turnsWithStatus("blocked")];
+    return turns.flatMap((t) => this.journal.turnEvents(t.id));
   }
 }

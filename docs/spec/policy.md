@@ -16,7 +16,8 @@ tools:                    # exact name or glob; overrides defaults
   "fs.write": allow       # still limited by paths.write
   "shell.*": ask
   "syntet.*": allow
-  "plugin.patch": ask     # auto | ask | deny
+  "plugin.propose_patch": allow   # writes only to a staging copy and tests it
+  "plugin.apply_patch": ask       # permission changes always ask, whatever this says
 
 paths:
   read:  ["$WORKSPACE/**", "$SKILLS/**", "$PLUGINS/**"]

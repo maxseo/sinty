@@ -1,10 +1,22 @@
 {
   "name": "@sinty/supervisor",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Sinty supervisor process: detectors, notices, escalation, incident memory",
   "license": "MIT",
   "type": "module",
   "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./main": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
+  },
   "dependencies": {
     "@sinty/sdk": "workspace:*"
   }

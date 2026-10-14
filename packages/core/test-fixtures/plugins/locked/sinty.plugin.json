@@ -1,0 +1,11 @@
+{
+  "name": "locked",
+  "version": "0.0.1",
+  "description": "A plugin the agent may not patch",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "editable": false,
+  "permissions": {},
+  "tools": [{ "name": "locked.ping", "sideEffects": "none", "idempotent": true }]
+}

@@ -19,6 +19,7 @@
   "dependencies": {
     "@hono/node-server": "^1.19.0",
     "@sinty/sdk": "workspace:*",
+    "@sinty/supervisor": "workspace:*",
     "hono": "^4.10.0",
     "yaml": "^2.8.0"
   }

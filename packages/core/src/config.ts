@@ -45,6 +45,7 @@ export const configSchema = z.object({
     .prefault({}),
   supervisor: z
     .object({
+      enabled: z.boolean().default(true),
       loopThreshold: z.number().int().default(3),
       stallSeconds: z.number().int().default(180),
       maxNoticesPerTurn: z.number().int().default(6),
@@ -146,6 +147,11 @@ tools:
   "fs.list": allow
   "fs.write": allow
   "fs.edit": allow
+  # The agent may read and test patches for its plugins; activating one needs a human.
+  "plugin.list": allow
+  "plugin.read": allow
+  "plugin.propose_patch": allow
+  "plugin.apply_patch": ask
 
 net:
   allow:

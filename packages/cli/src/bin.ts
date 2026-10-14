@@ -112,17 +112,25 @@ async function run(prompt: string): Promise<number> {
           })();
           break;
         }
+        case "supervisor.notice":
+          process.stderr.write(`  ! supervisor: ${(e.data as { text: string }).text.split("\n")[0]}\n`);
+          break;
+        case "plugin.patch.applied":
+        case "plugin.patch.rolled_back":
+          process.stderr.write(`  ~ ${e.type.replace("plugin.patch.", "patch ")}: ${JSON.stringify(e.data)}\n`);
+          break;
         case "turn.blocked": {
           const d = e.data as { reason: string; detail?: string };
-          if (d.reason === "ask_human") {
+          if (d.reason !== "approval") {
             void (async () => {
+              const prompt = d.reason === "ask_human" ? `agent asks: ${d.detail ?? ""}` : `${d.reason === "budget" ? "budget" : "supervisor"} stopped the turn: ${d.detail ?? ""}`;
               if (!rl) {
-                console.error(`\nagent asks: ${d.detail ?? ""} (no TTY, stopping)`);
+                console.error(`\n${prompt} (no TTY, stopping)`);
                 exit = 3;
                 resolveDone();
                 return;
               }
-              const answer = await rl.question(`\n  ? ${d.detail ?? "the agent needs an answer"}\n  > `);
+              const answer = await rl.question(`\n  ? ${prompt}\n  > `);
               sinty.agent.send(sessionId, answer);
             })();
           }

@@ -41,6 +41,7 @@ export class PluginProcess {
   private crashes: number[] = [];
   private stopping = false;
   private restarting: Promise<void> | undefined;
+  autoRestart = true;
   disabled = false;
   tools: ToolInfo[] = [];
   providers: string[] = [];
@@ -64,23 +65,7 @@ export class PluginProcess {
     const m = this.loaded.manifest;
     if (m.runtime !== "node") throw new Error(`plugin ${m.name}: runtime ${m.runtime} is not supported by this core version yet`);
     if (!m.entry) throw new Error(`plugin ${m.name}: entry is required`);
-    const grants = resolveFsGrants(this.paths, this.loaded);
-    for (const w of grants.write) mkdirSync(w, { recursive: true });
-
-    const execArgv = [
-      "--permission",
-      `--allow-fs-read=${this.paths.install}`,
-      `--allow-fs-read=${this.loaded.dir}`,
-      ...grants.read.map((p) => `--allow-fs-read=${p}`),
-      ...grants.write.flatMap((p) => [`--allow-fs-read=${p}`, `--allow-fs-write=${p}`]),
-      "--disable-warning=ExperimentalWarning",
-    ];
-    const env: NodeJS.ProcessEnv = {};
-    for (const k of ["NODE_ENV", "PATH", "SYSTEMROOT", "TEMP", "TMP", ...(m.permissions.env ?? [])]) {
-      if (process.env[k] !== undefined) env[k] = process.env[k];
-    }
-
-    const child = fork(RUNNER, [], { execArgv, env, cwd: this.loaded.dir, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "advanced" });
+    const child = fork(RUNNER, [], { execArgv: this.permissionArgs(), env: this.childEnv(), cwd: this.loaded.dir, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "advanced" });
     this.child = child;
     child.stdout?.on("data", (b: Buffer) => this.events.log(this.name, "info", b.toString().trimEnd()));
     child.stderr?.on("data", (b: Buffer) => this.events.log(this.name, "warn", b.toString().trimEnd()));
@@ -122,6 +107,41 @@ export class PluginProcess {
     });
     await ready;
     this.events.loaded(this.name, m.version);
+  }
+
+  /** Node flags that confine a process to this plugin's grants; also used to run the plugin's tests. */
+  permissionArgs(): string[] {
+    const grants = resolveFsGrants(this.paths, this.loaded);
+    for (const w of grants.write) mkdirSync(w, { recursive: true });
+    return [
+      "--permission",
+      `--allow-fs-read=${this.paths.install}`,
+      `--allow-fs-read=${this.loaded.dir}`,
+      `--allow-fs-read=${join(this.paths.plugins, "node_modules")}`,
+      ...grants.read.map((p) => `--allow-fs-read=${p}`),
+      ...grants.write.flatMap((p) => [`--allow-fs-read=${p}`, `--allow-fs-write=${p}`]),
+      "--disable-warning=ExperimentalWarning",
+    ];
+  }
+
+  childEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    for (const k of ["NODE_ENV", "PATH", "SYSTEMROOT", "TEMP", "TMP", ...(this.loaded.manifest.permissions.env ?? [])]) {
+      if (process.env[k] !== undefined) env[k] = process.env[k];
+    }
+    return env;
+  }
+
+  /** Resolves when the process has exited. */
+  async stopAndWait(): Promise<void> {
+    const c = this.child;
+    if (!c || c.exitCode !== null) {
+      this.stopping = true;
+      return;
+    }
+    const exited = new Promise<void>((r) => c.once("exit", () => r()));
+    this.stop();
+    await exited;
   }
 
   stop(): void {
@@ -270,7 +290,7 @@ export class PluginProcess {
     for (const p of [...this.pending.values()]) p.onCrash(crash);
     this.pending.clear();
     this.child = undefined;
-    if (this.stopping) return;
+    if (this.stopping || !this.autoRestart) return;
 
     const now = Date.now();
     this.crashes = [...this.crashes.filter((t) => now - t < CRASH_WINDOW_MS), now];
@@ -359,6 +379,40 @@ export class PluginHost {
 
   stop(): void {
     for (const p of this.plugins.values()) p.stop();
+  }
+
+  /** Stops a plugin and forgets it until the next reload. Windows cannot delete the folder of a running process. */
+  async unload(name: string): Promise<void> {
+    const old = this.plugins.get(name);
+    this.plugins.delete(name);
+    if (old) await old.stopAndWait();
+  }
+
+  /** Restarts a plugin from disk (after a patch or rollback). Returns the error if the new version does not start. */
+  async reload(name: string): Promise<string | undefined> {
+    await this.unload(name);
+    try {
+      const loaded = findPlugin(this.paths, name, this.config.plugins.searchPaths);
+      const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events);
+      await proc.start();
+      this.plugins.set(name, proc);
+      return undefined;
+    } catch (e) {
+      this.plugins.delete(name);
+      return e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  /** Starts a plugin from an arbitrary folder without registering it; the caller stops it. */
+  async startDetached(loaded: LoadedManifest): Promise<PluginProcess> {
+    const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, { ...this.events, loaded: () => undefined, crashed: () => undefined });
+    proc.autoRestart = false;
+    await proc.start();
+    return proc;
+  }
+
+  locate(name: string): LoadedManifest {
+    return findPlugin(this.paths, name, this.config.plugins.searchPaths);
   }
 
   tools(): RegisteredTool[] {

@@ -85,6 +85,28 @@ export class Journal {
         turn_id TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS incidents (
+        id TEXT PRIMARY KEY,
+        tool TEXT NOT NULL,
+        code TEXT NOT NULL,
+        message TEXT NOT NULL,
+        fix_summary TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS patches (
+        id TEXT PRIMARY KEY,
+        plugin TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        files TEXT NOT NULL,
+        permissions_changed INTEGER NOT NULL,
+        test_output TEXT NOT NULL DEFAULT '',
+        base_commit TEXT,
+        commit_sha TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -192,6 +214,79 @@ export class Journal {
   rememberIdempotency(key: string, sessionId: string, turnId: string): void {
     this.db.prepare("INSERT OR IGNORE INTO idempotency (key, session_id, turn_id, created_at) VALUES (?, ?, ?, ?)").run(key, sessionId, turnId, new Date().toISOString());
   }
+
+  addIncident(i: Omit<IncidentRow, "createdAt">): IncidentRow {
+    const createdAt = new Date().toISOString();
+    this.db.prepare("INSERT INTO incidents (id, tool, code, message, fix_summary, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(i.id, i.tool, i.code, i.message, i.fixSummary, createdAt);
+    return { ...i, createdAt };
+  }
+
+  incidents(limit = 500): IncidentRow[] {
+    return this.db
+      .prepare("SELECT * FROM incidents ORDER BY created_at DESC LIMIT ?")
+      .all(limit)
+      .reverse()
+      .map((r) => ({ id: String(r.id), tool: String(r.tool), code: String(r.code), message: String(r.message), fixSummary: String(r.fix_summary), createdAt: String(r.created_at) }));
+  }
+
+  savePatch(p: PatchRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO patches (id, plugin, session_id, status, reason, files, permissions_changed, test_output, base_commit, commit_sha, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET status = excluded.status, test_output = excluded.test_output, base_commit = excluded.base_commit,
+           commit_sha = excluded.commit_sha, updated_at = excluded.updated_at`,
+      )
+      .run(p.id, p.plugin, p.sessionId, p.status, p.reason, JSON.stringify(p.files), p.permissionsChanged ? 1 : 0, p.testOutput, p.baseCommit, p.commit, p.createdAt, new Date().toISOString());
+  }
+
+  getPatch(id: string): PatchRow | undefined {
+    const r = this.db.prepare("SELECT * FROM patches WHERE id = ?").get(id);
+    if (!r) return undefined;
+    return {
+      id: String(r.id),
+      plugin: String(r.plugin),
+      sessionId: String(r.session_id),
+      status: String(r.status) as PatchStatus,
+      reason: String(r.reason),
+      files: JSON.parse(String(r.files)) as PatchFile[],
+      permissionsChanged: Number(r.permissions_changed) === 1,
+      testOutput: String(r.test_output),
+      baseCommit: r.base_commit === null ? null : String(r.base_commit),
+      commit: r.commit_sha === null ? null : String(r.commit_sha),
+      createdAt: String(r.created_at),
+    };
+  }
+}
+
+export interface IncidentRow {
+  id: string;
+  tool: string;
+  code: string;
+  message: string;
+  fixSummary: string;
+  createdAt: string;
+}
+
+export type PatchStatus = "failed_tests" | "ready" | "applied" | "rolled_back" | "rejected";
+
+export interface PatchFile {
+  path: string;
+  content: string;
+}
+
+export interface PatchRow {
+  id: string;
+  plugin: string;
+  sessionId: string;
+  status: PatchStatus;
+  reason: string;
+  files: PatchFile[];
+  permissionsChanged: boolean;
+  testOutput: string;
+  baseCommit: string | null;
+  commit: string | null;
+  createdAt: string;
 }
 
 type Row = Record<string, SQLInputValue>;

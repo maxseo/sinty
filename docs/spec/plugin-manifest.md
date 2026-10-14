@@ -70,24 +70,33 @@ Tools are imported from the server's `tools/list`. Missing `sideEffects` default
 
 ## Patch pipeline
 
-The only way the agent changes code. Core tool:
+The only way the agent changes code. Four core tools:
+
+| Tool | Default policy | Does |
+|---|---|---|
+| `plugin.list` | allow | installed plugins, location (`bundled` or `home`), `editable`, tools |
+| `plugin.read` | allow | list a plugin's files, or read one |
+| `plugin.propose_patch` | allow | write new full file contents to a staging copy and test it; nothing runs yet |
+| `plugin.apply_patch` | ask | commit, hot-reload, watch, roll back if needed |
 
 ```ts
 plugin.propose_patch({
   plugin: "syntet",
   reason: "generate_image sends width as string; API requires integer",
-  changes: [{ path: "src/tools/generate-image.ts", patch: "<unified diff>" }]
+  files: [{ path: "src/index.ts", content: "<full new file>" }]
 })
+// → { patchId: "pat_…", status: "ready", permissionsChanged: false, testOutput: "…" }
 ```
 
 Steps, each journaled as `plugin.patch.*`:
 
-1. **Branch.** `$SINTY_HOME/plugins` is a git repo; the patch goes to `agent/<plugin>/<ulid>`.
-2. **Guard.** Reject if the plugin has `editable: false`, if paths leave the plugin folder, or if the core or schemas are touched.
-3. **Permission diff.** If `permissions` in the manifest change, require human approval regardless of policy.
-4. **Test.** Build and run `tests` in a sandbox with the plugin's own permissions. Failure → `plugin.patch.tested { ok: false, output }` back to the agent.
-5. **Approve.** Policy `plugin.patch`: `auto` (tests pass), `ask` (default) or `deny`.
-6. **Apply.** Start the new version side by side, healthcheck, switch traffic, stop the old process.
-7. **Canary.** Watch the next N calls (default 5). Errors above the previous rate → automatic rollback to the previous commit and `plugin.patch.rolled_back`.
+1. **Guard.** Reject if the plugin has `editable: false`, if a path is absolute, contains `..`, or touches `node_modules`, `dist` or `.git`. At most 20 files of 200 KB each.
+2. **Stage.** Copy the plugin to `$SINTY_HOME/plugins/.staging/<patchId>/<plugin>` and write the files there. A plugin that ships with the install (`bundled`) is forked: if its entry is `dist/…` and `src/index.ts` exists, the copy runs from `src/index.ts` through Node's type stripping, so no build step is needed. Relative imports in patched code must use `.ts` extensions.
+3. **Permission diff.** If `permissions` in the manifest change, `plugin.apply_patch` always asks a human, whatever the policy says.
+4. **Test.** Load the staged copy in its own sandbox (same permissions as in production) and check it registers. Then run every `*.test.ts`, `*.test.js` and `*.test.mjs` file with the same permission flags, 60 s limit. A failure returns `patch_tests_failed` with the output to the agent, and the patch cannot be applied.
+5. **Apply.** `$SINTY_HOME/plugins` is a git repository (created on first apply). A bundled plugin is first committed as a fork, then the patch is committed on top. The old process is stopped and the new version started from disk. If it does not start, the previous commit is restored at once.
+6. **Canary.** The next 5 calls to the plugin are watched. Two failures with `plugin_error`, `plugin_crashed`, `timeout` or `plugin_unavailable` restore the previous commit (for a fork, the bundled version) and record `plugin.patch.rolled_back`.
 
-New plugins go through the same pipeline (`plugin.propose_patch` with a new name) and always require approval for their first permissions.
+Tool errors the plugin raises on purpose (`ToolError` with its own code) do not count against the canary.
+
+Not yet: creating new plugins through the pipeline, a policy mode that applies patches automatically when tests pass.

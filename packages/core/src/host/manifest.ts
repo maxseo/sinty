@@ -52,6 +52,10 @@ export interface LoadedManifest {
   bundled: boolean;
 }
 
+export function parseManifest(json: unknown): PluginManifest {
+  return manifestSchema.parse(json) as PluginManifest;
+}
+
 export function findPlugin(paths: SintyPaths, name: string, searchPaths: readonly string[]): LoadedManifest {
   const roots = [paths.plugins, ...searchPaths.map((p) => resolve(paths.home, p)), paths.bundledPlugins];
   for (const root of roots) {

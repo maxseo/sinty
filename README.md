@@ -3,7 +3,7 @@
 **Syntet AI agent that runs the same on a laptop and on any VPS.**
 One process, one SQLite file, plugins for everything else.
 
-> Status: **v0.1, core working** — turn loop, journal with crash recovery, policy gate, sandboxed plugin host, HTTP API with SSE, CLI, providers for OpenAI-compatible APIs and Anthropic, file tools. Supervisor and Web UI are next. See [roadmap](docs/roadmap.md).
+> Status: **v0.2, core and supervisor working** — turn loop, journal with crash recovery, policy gate, sandboxed plugin host, HTTP API with SSE, CLI, providers for OpenAI-compatible APIs and Anthropic, file tools, a supervisor that sends the agent hints and escalates to a human, and a patch pipeline through which the agent fixes its own plugins (sandboxed tests, git history, automatic rollback). The Web UI is next. See [roadmap](docs/roadmap.md).
 
 [Русская версия](README.ru.md)
 

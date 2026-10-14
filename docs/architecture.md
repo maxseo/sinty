@@ -19,7 +19,7 @@
 | **Plugin host** | Discover, validate, start, isolate, hot-reload and roll back plugins |
 | **Event bus + API** | Internal pub/sub; external HTTP, SSE and WebSocket |
 | **Supervisor** | Separate process that watches the bus and intervenes (see [spec](spec/supervisor.md)) |
-| **Core tools** | `ask_human`, `context.recall`, `plugin.list`, `plugin.read`, `plugin.propose_patch`, `plugin.status`; these cannot be overridden by plugins |
+| **Core tools** | `ask_human`, `context.recall`, `plugin.list`, `plugin.read`, `plugin.propose_patch`, `plugin.apply_patch`; these cannot be overridden by plugins |
 
 Nothing else is in the core. In particular, these are plugins: model providers, file and shell tools, web search, memory, context compression, skills loader, channels, the Web UI, kanban, scheduler jobs, MCP/A2A/OpenAI servers.
 

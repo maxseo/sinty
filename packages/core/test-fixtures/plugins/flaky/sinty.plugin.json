@@ -1,0 +1,10 @@
+{
+  "name": "flaky",
+  "version": "0.0.1",
+  "description": "A plugin with a bug, for supervisor and patch tests",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {},
+  "tools": [{ "name": "flaky.get", "sideEffects": "none", "idempotent": true }]
+}
