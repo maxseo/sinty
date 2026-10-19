@@ -103,6 +103,10 @@ export interface AfterTurnInput {
   messages: { role: "user" | "assistant"; content: string }[];
 }
 
+export interface AfterTurnResult {
+  facts?: { text: string; tier?: MemoryTier; scope?: MemoryScope; about?: MemoryAbout }[];
+}
+
 export interface CompactionInput {
   turn: TurnInfo;
   previous?: string;
@@ -124,8 +128,12 @@ export interface MemoryProcessorDefinition {
   onTurnStart?(turn: TurnInfo): Promise<RecallPlan | void>;
   afterRecall?(turn: TurnInfo, records: MemoryRecord[]): Promise<MemoryRecord[] | void>;
   beforeContext?(turn: TurnInfo, blocks: ContextBlock[]): Promise<ContextBlock[] | void>;
-  /** Runs from a durable queue after the turn completed, at most once per turnId. Must be idempotent anyway. */
-  afterTurn?(input: AfterTurnInput): Promise<void>;
+  /**
+   * Runs from a durable queue after the turn completed, at most once per turnId (retried up to 3 times on failure,
+   * so it should be idempotent). Returned facts go through the normal write path (onWrite, builtin store,
+   * `memory.written` with `source` = plugin name).
+   */
+  afterTurn?(input: AfterTurnInput): Promise<AfterTurnResult | void>;
   /** Return a result to replace the builtin summary call; return nothing to let the next processor or the core do it. */
   onCompaction?(input: CompactionInput): Promise<CompactionResult | void>;
   /** Return the (possibly edited) write, or null to drop it. */

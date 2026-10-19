@@ -8,6 +8,8 @@ import {
   type EventType,
   type HttpRoute,
   type LiveEvent,
+  type MemoryProcessorDefinition,
+  type MemoryProviderDefinition,
   type PluginContext,
   type PluginDefinition,
   type ProviderDefinition,
@@ -26,6 +28,10 @@ const send = (msg: FromChild): void => {
 const tools = new Map<string, ToolDefinition>();
 const providers = new Map<string, ProviderDefinition>();
 const contexts = new Map<string, { fn: ContextContributor; order: number }>();
+const memoryProviders = new Map<string, MemoryProviderDefinition>();
+const memoryProcessors = new Map<string, MemoryProcessorDefinition>();
+const PROCESSOR_HOOKS = ["onTurnStart", "afterRecall", "beforeContext", "afterTurn", "onCompaction", "onWrite"] as const;
+const PROVIDER_METHODS = ["recall", "write", "forget"] as const;
 const listeners = new Map<string, ((e: SintyEvent) => void | Promise<void>)[]>();
 const running = new Map<number, AbortController>();
 const journalWaiters = new Map<number, (events: SintyEvent[]) => void>();
@@ -191,11 +197,11 @@ async function init(msg: InitMessage): Promise<void> {
       embed: (req) => modelsCall("embed", req),
     },
     memory: {
-      provider() {
-        log("warn")("memory providers are not supported by this core version yet");
+      provider(def) {
+        memoryProviders.set(def.name, def);
       },
-      processor() {
-        log("warn")("memory processors are not supported by this core version yet");
+      processor(def) {
+        memoryProcessors.set(def.name, def);
       },
     },
     tool(def) {
@@ -253,6 +259,14 @@ async function init(msg: InitMessage): Promise<void> {
     tools: toolInfos,
     providers: [...providers.keys()],
     embedders: [...providers.values()].filter((p) => typeof p.embed === "function").map((p) => p.protocol),
+    memory: {
+      providers: [...memoryProviders.keys()],
+      processors: [...memoryProcessors.values()].map((p) => ({
+        name: p.name,
+        order: p.order ?? 100,
+        hooks: PROCESSOR_HOOKS.filter((h) => typeof p[h] === "function"),
+      })),
+    },
     contexts: [...contexts.entries()].map(([name, c]) => ({ name, order: c.order })),
     subscriptions: [...listeners.keys()] as (EventType | "*")[],
     routes: routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, public: r.public === true })),
@@ -299,6 +313,19 @@ async function streamProvider(id: number, protocol: string, req: Omit<Parameters
     send({ t: "provider.error", id, error: toWire(e) });
   } finally {
     running.delete(id);
+  }
+}
+
+async function callMemory(id: number, kind: "provider" | "processor", name: string, method: string, args: unknown[]): Promise<void> {
+  const target = kind === "provider" ? memoryProviders.get(name) : memoryProcessors.get(name);
+  const allowed: readonly string[] = kind === "provider" ? PROVIDER_METHODS : PROCESSOR_HOOKS;
+  const fn = target && allowed.includes(method) ? (target as unknown as Record<string, unknown>)[method] : undefined;
+  if (typeof fn !== "function") return send({ t: "memory.result", id, ok: false, error: { code: "unknown_method", message: `memory ${kind} ${name} has no ${method}` } });
+  try {
+    const value: unknown = await (fn as (...a: unknown[]) => unknown).apply(target, Array.isArray(args) ? args : []);
+    send({ t: "memory.result", id, ok: true, value: value === undefined ? null : value });
+  } catch (e) {
+    send({ t: "memory.result", id, ok: false, error: toWire(e) });
   }
 }
 
@@ -382,6 +409,9 @@ process.on("message", (raw: ToChild) => {
         .finally(() => running.delete(raw.id));
       break;
     }
+    case "memory.call":
+      void callMemory(raw.id, raw.kind, raw.name, raw.method, raw.args);
+      break;
     case "agent.event":
       agentStreams.get(raw.id)?.push(raw.event);
       break;

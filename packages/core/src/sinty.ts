@@ -128,6 +128,9 @@ export class Sinty {
       config: this.config,
       record: (input) => this.agent.emit(input),
       log: this.log,
+      host: this.host,
+      redact: (t) => this.secrets.redact(t),
+      turnEvents: (turnId) => this.journal.turnEvents(turnId),
     });
 
     this.agent = new Agent({
@@ -161,6 +164,7 @@ export class Sinty {
       this.supervisor.setTools(this.agent.supervisedTools());
       await this.supervisor.start();
     }
+    this.memory.kick();
     const resumedTurns = this.agent.resumeAll();
     return { failedPlugins: failed, resumedTurns };
   }
@@ -168,8 +172,9 @@ export class Sinty {
   async stop(): Promise<void> {
     await this.agent.stop();
     this.supervisor?.stop();
+    this.memory.beginClose();
     this.host.stop();
-    this.memory.close();
+    await this.memory.close();
     this.journal.close();
   }
 

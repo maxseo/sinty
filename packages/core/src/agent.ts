@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { z, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
+import { z, type TurnInfo, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
 import type { CheckpointPhase, SupervisedTool } from "@sinty/supervisor";
 import type { Bus, StreamOnlyEvent } from "./bus.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, type SintyConfig, type SintyPolicy } from "./config.js";
@@ -13,7 +13,7 @@ import type { ToolInfo, WireError } from "./host/protocol.js";
 import type { AppendInput, Journal, SessionRow } from "./journal.js";
 import { PatchError, type PatchManager } from "./patches.js";
 import { MemoryError, parseSummaryPayload, trimOldToolResults } from "./memory.js";
-import type { MemoryRouter } from "./memory-router.js";
+import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
 import { runShell } from "./shell.js";
 import { interactPage, readPage, searchWeb, shotPage } from "./web.js";
@@ -312,6 +312,7 @@ export class Agent {
             this.record({ sessionId, turnId, stepId: view.lastResponse.stepId, type: "message.agent", actor: AGENT, data: strip({ text: view.lastResponse.data.text ?? "", agentId: speaker?.id, agentName: speaker?.name }) });
           }
           this.endTurn(sessionId, turnId, "completed", { type: "turn.completed", data: { steps: view.totalSteps } });
+          this.memoryAfterTurn(sessionId, turnId, view.lastResponse.data.text ?? "");
           return;
         }
         const over = this.overBudget(view);
@@ -450,7 +451,7 @@ export class Agent {
     const ownFallback = speaker?.fallback ? speaker.fallback.split(/\s+/).filter(Boolean) : [];
     const routes = [speaker?.model || this.d.config.models.default, ...ownFallback, ...this.d.config.models.fallback].filter((r): r is string => Boolean(r));
     if (!routes.length) throw new TurnError("no_model", "models.default is empty in config.yaml");
-    const messages = await this.buildContext(sessionId, signal);
+    const messages = await this.buildContext(sessionId, turnId, signal);
     const allow = this.allowedTools(sessionId);
     const tools = this.toolSchemas().filter((t) => (!allow || allow.includes(t.name)) && this.pluginVisible(sessionId, t.name));
     const stepId = newId("stp");
@@ -725,16 +726,17 @@ export class Agent {
 
   // ---- context ----
 
-  private async buildContext(sessionId: string, signal: AbortSignal): Promise<ChatMessage[]> {
+  private async buildContext(sessionId: string, turnId: string, signal: AbortSignal): Promise<ChatMessage[]> {
+    const turn = this.turnInfo(sessionId, turnId);
     const events = this.d.journal.events(sessionId, {
       types: ["message.user", "model.response", "tool.call.completed", "tool.call.failed", "tool.call.denied", "supervisor.notice"],
     });
     let dialogue = eventsToMessages(events, this.d.paths.data);
-    dialogue = await this.maybeCompact(sessionId, events, dialogue, signal);
+    dialogue = await this.maybeCompact(sessionId, events, dialogue, signal, turn);
     dialogue = trimOldToolResults(dialogue);
     const speaker = this.speaker(sessionId);
     const skills = listSkills(this.d.paths.skills).filter((s) => !speaker || speaker.skills.includes(s.name));
-    let messages: ChatMessage[] = [{ role: "system", content: this.systemPrompt(sessionId) }, { role: "system", content: skillCatalog(skills) }, ...this.memoryPreface(sessionId), ...dialogue];
+    let messages: ChatMessage[] = [{ role: "system", content: this.systemPrompt(sessionId) }, { role: "system", content: skillCatalog(skills) }, ...(await this.memoryPreface(sessionId, turn)), ...dialogue];
     for (const c of this.d.host.contexts()) {
       try {
         messages = await c.plugin.runContext(c.name, { sessionId, events: events.slice(-200), messages, budgetTokens: 0 });
@@ -745,8 +747,35 @@ export class Agent {
     return messages;
   }
 
-  private memoryPreface(sessionId: string): ChatMessage[] {
-    return this.d.memory.contextMessages({ sessionId, agentId: this.memoryAgentId(sessionId) });
+  private memoryPreface(sessionId: string, turn: TurnInfo): Promise<ChatMessage[]> {
+    return this.d.memory.contextMessages({ sessionId, agentId: turn.agentId }, turn);
+  }
+
+  /** What memory hooks know about the turn. */
+  private turnInfo(sessionId: string, turnId: string): TurnInfo {
+    const lastUser = this.d.journal.turnEvents(turnId).findLast((e) => e.type === "message.user");
+    const projectId = this.d.journal.getSession(sessionId)?.projectId;
+    return {
+      sessionId,
+      turnId,
+      agentId: this.memoryAgentId(sessionId),
+      userId: this.d.config.agent.userId,
+      ...(projectId ? { projectId } : {}),
+      text: (lastUser?.data as { text?: string } | undefined)?.text ?? "",
+    };
+  }
+
+  /** Hands the finished turn to afterTurn processors through the durable queue. Never fails the turn. */
+  private memoryAfterTurn(sessionId: string, turnId: string, reply: string): void {
+    try {
+      const messages = this.d.journal
+        .turnEvents(turnId)
+        .filter((e) => e.type === "message.user" || e.type === "message.agent")
+        .map((e) => ({ role: e.type === "message.user" ? ("user" as const) : ("assistant" as const), content: (e.data as { text?: string }).text ?? "" }));
+      this.d.memory.afterTurn({ turn: this.turnInfo(sessionId, turnId), reply, messages });
+    } catch (e) {
+      this.d.log?.("warn", "memory afterTurn was not queued", e instanceof Error ? e.message : e);
+    }
   }
 
   /** Agent-scoped memory belongs to the roster persona that speaks in this session, else to config.agent.name. */
@@ -754,19 +783,20 @@ export class Agent {
     return this.speaker(sessionId)?.id ?? this.d.config.agent.name;
   }
 
-  private memoryTool(sessionId: string, name: string, args: unknown): unknown {
+  private async memoryTool(sessionId: string, name: string, args: unknown): Promise<unknown> {
     try {
-      return this.d.memory.tool(name, args, { sessionId, agentId: this.memoryAgentId(sessionId) });
+      return await this.d.memory.tool(name, args, { sessionId, agentId: this.memoryAgentId(sessionId) });
     } catch (e) {
       if (e instanceof MemoryError) throw new CoreToolError(e.code, e.message, e.hint);
       throw e;
     }
   }
 
-  private maybeCompact(sessionId: string, events: SintyEvent[], dialogue: ChatMessage[], signal: AbortSignal): Promise<ChatMessage[]> {
+  private maybeCompact(sessionId: string, events: SintyEvent[], dialogue: ChatMessage[], signal: AbortSignal, turn: TurnInfo): Promise<ChatMessage[]> {
     return this.d.memory.compact({
       sessionId,
-      agentId: this.memoryAgentId(sessionId),
+      agentId: turn.agentId,
+      turn,
       events,
       dialogue,
       signal,
@@ -779,10 +809,7 @@ export class Agent {
     const speaker = this.speaker(sessionId);
     const route = speaker?.serviceModel || this.d.config.service.model || speaker?.model || this.d.config.models.default;
     if (!route) return undefined;
-    const transcript = head
-      .map((e) => `${e.type} ${truncate(JSON.stringify(e.data), 1500)}`)
-      .join("\n")
-      .slice(0, 80_000);
+    const transcript = foldTranscript(head);
     const prompt = [
       previous ? `Previous summary:\n${previous}` : "There is no previous summary.",
       speaker?.compress || this.d.config.service.compress || DEFAULT_COMPRESS_PROMPT,

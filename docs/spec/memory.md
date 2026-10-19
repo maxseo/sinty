@@ -84,7 +84,7 @@ interface TurnInfo { sessionId; turnId; agentId; userId; projectId?; text; arm? 
 | `onTurnStart(turn)` | first model step of a turn | `RecallPlan` | `memory.hooks.timeoutMs` | ignored, `memory.degraded` |
 | `afterRecall(turn, records)` | after providers answered | filtered/reordered records | same | previous records kept |
 | `beforeContext(turn, blocks)` | every model step | edited blocks | same | previous blocks kept |
-| `afterTurn({turn, reply, messages})` | after `turn.completed`, from a durable queue | – | same | retried on next start, at most 3 attempts |
+| `afterTurn({turn, reply, messages})` | after `turn.completed`, from a durable queue | `{ facts? }` written through the write path | `memory.hooks.afterTurnTimeoutMs` (60 s) | retried on the next drain/start, at most 3 attempts |
 | `onCompaction({turn, previous, transcript})` | when the dialogue is folded | `{summary, facts}` | 60 s | next processor, then builtin |
 | `onWrite(write, turn?)` | before every write | edited write or `null` | same | write goes through unchanged |
 
@@ -92,10 +92,12 @@ Processors run in `order` (default 100), then by plugin name.
 
 ### afterTurn queue
 
-`memory_jobs(turn_id, hook, plugin, payload, attempts, status)` lives in `memory.db` with primary key
-`(turn_id, plugin, hook)`; inserting the same turn twice is a no-op, so a resumed or replayed turn never runs
+`memory_jobs(turn_id, plugin, processor, session_id, payload, attempts, status, last_error)` lives in `memory.db`
+with primary key `(turn_id, plugin, processor)`; inserting the same turn twice is a no-op, so a resumed or replayed turn never runs
 `afterTurn` twice. The queue is drained after each completed turn and on start; a job that fails 3 times is marked
-`failed` and reported with `memory.degraded`.
+`failed` and reported with `memory.degraded`. Facts returned by `afterTurn` are written with `source` = plugin name
+and journaled as `memory.written` (`by` = plugin name). A job whose plugin is not running stays `pending` until a
+later start.
 
 ## Recall budget and trust
 
@@ -211,6 +213,6 @@ memory:
   providers: []                      # restrict recall to these plugin providers (default: all enabled)
   writeTo: []                        # plugin providers that receive mirrored writes
   recall: { auto: false, limit: 8, budgetTokens: 1200, timeoutMs: 3000 }
-  hooks: { timeoutMs: 5000 }
+  hooks: { timeoutMs: 5000, afterTurnTimeoutMs: 60000 }
   experiments: []
 ```

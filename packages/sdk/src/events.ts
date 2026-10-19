@@ -73,7 +73,7 @@ export interface EventDataMap {
 
   "memory.written": { id: string; action: "inserted" | "updated" | "dropped"; tier: string; scope: string; source: string; provider: string; by?: string };
   /** Automatic recall for one turn; the router reuses it for every later step of the same turn. */
-  "memory.recalled": { queries: string[]; providers: string[]; records: { id: string; provider: string; text: string; ref?: string; untrusted?: boolean }[]; tokens: number; ms: number; arm?: string };
+  "memory.recalled": { queries: string[]; providers: string[]; records: { id: string; provider: string; text: string; ref?: string; untrusted?: boolean; createdAt?: string }[]; tokens: number; ms: number; arm?: string; shadow?: boolean };
   "memory.compacted": { coversUntil: number; summaryTokens: number; facts: number; by: string; ok: boolean; reason?: string };
   /** A memory plugin failed or timed out; the router fell back to the builtin store. */
   "memory.degraded": { provider: string; hook?: string; reason: string };

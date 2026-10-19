@@ -74,6 +74,20 @@ export const configSchema = z.object({
       contextTokens: z.number().int().default(128000),
       /** sqlite-vec width. Fixed for the life of memory.db. */
       dimensions: z.number().int().default(1536),
+      /** Plugin memory providers used for recall. Unset: every enabled one. See docs/spec/memory.md. */
+      providers: z.array(z.string()).optional(),
+      /** Plugin memory providers that receive mirrored writes and forgets. Default: none. */
+      writeTo: z.array(z.string()).optional(),
+      recall: z
+        .object({
+          /** Recall with the user's message at the start of every turn even without a processor plan. */
+          auto: z.boolean().optional(),
+          limit: z.number().int().positive().optional(),
+          budgetTokens: z.number().int().positive().optional(),
+          timeoutMs: z.number().int().positive().optional(),
+        })
+        .optional(),
+      hooks: z.object({ timeoutMs: z.number().int().positive().optional(), afterTurnTimeoutMs: z.number().int().positive().optional() }).optional(),
     })
     .prefault({}),
 });

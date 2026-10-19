@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format follows
   `embed`, `models.routes` keys), secrets stay in the core, `permissions.models`, per-plugin daily token budget
   (`models.pluginTokensPerDay`), `models.called` / `usage.recorded` journaling.
 - `ProviderDefinition.embed()`; `provider-openai-compat` implements `POST /embeddings`.
+- Memory plugins: `ctx.memory.provider()` / `ctx.memory.processor()` over IPC with per-call timeouts, a recall
+  token budget, fallback to the builtin store with `memory.degraded`, automatic recall once per turn (journaled as
+  `memory.recalled` and reused on resume), untrusted + secret-redacted external records, an `onWrite` filter, a
+  durable afterTurn queue idempotent per turn, and `onCompaction`. New config: `memory.providers`, `memory.writeTo`,
+  `memory.recall.{auto,limit,budgetTokens,timeoutMs}`, `memory.hooks.{timeoutMs,afterTurnTimeoutMs}`.
 
 ### Changed
 - Memory goes through a single `MemoryRouter` in the core with the SQLite store as the `builtin:sqlite` provider;
@@ -34,4 +39,6 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- When the compaction summary fails the prompt is trimmed to the last 12 user turns instead of sending the whole
+  history (journaled as `memory.degraded` / `memory.compacted {ok: false}`).
 - The two Windows-only shell sandbox tests no longer fail on Linux CI; they are skipped off Windows (TODO).
