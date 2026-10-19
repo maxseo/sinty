@@ -1,7 +1,8 @@
 # Memory
 
-Status: contract introduced in step 1 of the memory plan; router, IPC, model gateway, plugins and experiments
-land in steps 2–6 (see `docs/journal/`). This document is the reference for plugin authors and for the core.
+Status: implemented (memory plan steps 0–6, see `docs/journal/2026-10-19-memory-step-*.md`). This document is the
+reference for plugin authors and for the core; code lives in `packages/core/src/memory-router.ts`,
+`memory-builtin.ts`, `memory.ts`, `models.ts`, `memory-eval.ts` and `packages/sdk/src/memory.ts`.
 
 ## Goals
 
