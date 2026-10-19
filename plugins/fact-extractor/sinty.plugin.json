@@ -1,0 +1,12 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "fact-extractor",
+  "version": "0.1.0",
+  "description": "Memory processor: extracts durable facts after each turn with the cheap model route and filters memory writes",
+  "kinds": ["memory"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "models": ["cheap"] },
+  "config": { "maxFacts": 3, "minChars": 12, "maxChars": 300 },
+  "editable": true
+}

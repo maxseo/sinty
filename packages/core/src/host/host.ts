@@ -165,7 +165,7 @@ export class PluginProcess {
 
   /** Node flags that confine a process to this plugin's grants; also used to run the plugin's tests. */
   permissionArgs(): string[] {
-    const grants = resolveFsGrants(this.paths, this.loaded);
+    const grants = resolveFsGrants(this.paths, this.loaded, this.config.plugins.config[this.loaded.manifest.name] ?? {});
     for (const w of grants.write) mkdirSync(w, { recursive: true });
     return [
       "--permission",

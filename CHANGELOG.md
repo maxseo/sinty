@@ -24,6 +24,12 @@ All notable changes to this project are documented here. The format follows
   `memory.recalled` and reused on resume), untrusted + secret-redacted external records, an `onWrite` filter, a
   durable afterTurn queue idempotent per turn, and `onCompaction`. New config: `memory.providers`, `memory.writeTo`,
   `memory.recall.{auto,limit,budgetTokens,timeoutMs}`, `memory.hooks.{timeoutMs,afterTurnTimeoutMs}`.
+- Vector search in the builtin memory store when `models.routes.embed` is configured (falls back to full-text search
+  with `memory.degraded` on errors or a width mismatch).
+- `plugins/memory-obsidian` (disabled by default): read-only Markdown/Obsidian vault search with its own index.
+- `plugins/fact-extractor` (disabled by default): extracts durable facts after each turn via the `cheap` route and
+  filters secrets from memory writes.
+- `$CONFIG.<key>` read grants in plugin manifests, resolved only from the human's `config.yaml`.
 
 ### Changed
 - Memory goes through a single `MemoryRouter` in the core with the SQLite store as the `builtin:sqlite` provider;

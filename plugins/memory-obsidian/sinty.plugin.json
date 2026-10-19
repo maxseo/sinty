@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "memory-obsidian",
+  "version": "0.1.0",
+  "description": "Read-only memory provider: searches an Obsidian (Markdown) vault with its own index in $DATA",
+  "kinds": ["memory"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$CONFIG.vault", "$DATA"], "write": ["$DATA"] }
+  },
+  "config": { "maxFiles": 5000, "maxFileBytes": 524288, "rescanSeconds": 60 },
+  "editable": true
+}

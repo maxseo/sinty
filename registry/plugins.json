@@ -34,6 +34,14 @@
       ]
     },
     {
+      "name": "fact-extractor",
+      "version": "0.1.0",
+      "description": "Memory processor: extracts durable facts after each turn with the cheap model route and filters memory writes",
+      "kinds": [
+        "memory"
+      ]
+    },
+    {
       "name": "herdr",
       "version": "0.1.0",
       "description": "Forwards agent.state to a Herdr-compatible URL so an external board can show idle, working and blocked",
@@ -49,6 +57,14 @@
         "tool",
         "server",
         "event"
+      ]
+    },
+    {
+      "name": "memory-obsidian",
+      "version": "0.1.0",
+      "description": "Read-only memory provider: searches an Obsidian (Markdown) vault with its own index in $DATA",
+      "kinds": [
+        "memory"
       ]
     },
     {

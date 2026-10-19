@@ -131,6 +131,8 @@ export class Sinty {
       host: this.host,
       redact: (t) => this.secrets.redact(t),
       turnEvents: (turnId) => this.journal.turnEvents(turnId),
+      // Vector search in the builtin store turns on when models.routes.embed is configured.
+      embedder: () => (this.models.hasRoute("embed") ? { embed: async (texts, signal) => (await this.models.embed({ input: texts, signal })).vectors } : undefined),
     });
 
     this.agent = new Agent({

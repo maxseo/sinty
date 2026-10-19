@@ -82,9 +82,19 @@ export interface FsGrants {
   write: string[];
 }
 
-/** Expands `$WORKSPACE`, `$SKILLS`, `$PLUGIN`, `$DATA` and relative paths; rejects grants that touch core-owned files or other plugins' data. */
-export function resolveFsGrants(paths: SintyPaths, loaded: LoadedManifest): FsGrants {
+/**
+ * Expands `$WORKSPACE`, `$SKILLS`, `$PLUGIN`, `$DATA` and relative paths; rejects grants that touch core-owned files or other plugins' data.
+ * Read grants may also be `$CONFIG.<key>`: the path the human set in config.yaml `plugins.config.<plugin>.<key>`
+ * (never the manifest's own defaults, which the agent can patch). An unset key drops the grant.
+ */
+export function resolveFsGrants(paths: SintyPaths, loaded: LoadedManifest, humanConfig: Record<string, unknown> = {}): FsGrants {
   const ownData = pluginDataDir(paths, loaded.manifest.name);
+  const fromConfig = (p: string): string | undefined => {
+    const m = /^\$CONFIG\.([A-Za-z0-9_-]+)$/.exec(p);
+    if (!m) return p;
+    const v = humanConfig[m[1]!];
+    return typeof v === "string" && v.trim() && isAbsolute(v.trim()) ? v.trim() : undefined;
+  };
   const expand = (p: string): string => {
     const replaced = p
       .replace(/^\$WORKSPACE/, paths.workspace)
@@ -94,7 +104,8 @@ export function resolveFsGrants(paths: SintyPaths, loaded: LoadedManifest): FsGr
     return isAbsolute(replaced) ? resolve(replaced) : resolve(loaded.dir, replaced);
   };
   const fs = loaded.manifest.permissions.fs ?? {};
-  const read = (fs.read ?? []).map(expand);
+  if ((fs.write ?? []).some((p) => p.startsWith("$CONFIG"))) throw new Error(`plugin ${loaded.manifest.name}: $CONFIG grants are read-only`);
+  const read = (fs.read ?? []).map(fromConfig).filter((p): p is string => p !== undefined).map(expand);
   const write = (fs.write ?? []).map(expand);
   for (const p of [...read, ...write]) {
     if ((isInside(p, paths.data) || isInside(paths.data, p)) && !isInside(p, ownData)) {
