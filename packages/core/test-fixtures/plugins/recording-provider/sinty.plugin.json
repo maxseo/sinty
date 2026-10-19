@@ -1,0 +1,9 @@
+{
+  "name": "recording-provider",
+  "version": "0.0.1",
+  "description": "Test provider: answers from a script keyed by the last user message and records every request in $DATA/requests.jsonl",
+  "kinds": ["provider"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "write": ["$DATA"] } }
+}
