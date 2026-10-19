@@ -1,28 +1,23 @@
 # Bundled plugins
 
-Each folder has a `sinty.plugin.json` ([schema](../schemas/plugin-manifest.schema.json)). Start from [`example-echo`](example-echo).
+Each folder has a `sinty.plugin.json` ([schema](../schemas/plugin-manifest.schema.json)). Start from [`example-echo`](example-echo). Planned plugins that are not in the tree yet are in the [backlog](../docs/backlog.md).
 
-| Plugin | Kind | Milestone |
+| Plugin | Kind | Status |
 |---|---|---|
-| `provider-openai-compat` | provider | M1 |
-| `provider-anthropic` | provider | M1 |
-| `provider-openai-responses` | provider | M3 |
-| `tool-fs` | tool | M1 |
-| `tool-shell` | tool (sandboxed) | M1 |
-| `tool-web` | tool | M1 |
-| `tool-mcp-client` | tool | M1 |
-| `memory-sqlite` | context | M1 |
-| `skills` | context | M1 |
-| `context-compress` | context | M2 |
-| `scheduler` | schedule | M2 |
-| `channel-web` | channel, ui | M3 |
-| `kanban` | tool, schedule, ui | M3 |
-| `server-mcp` | server | M3 |
-| `server-openai-api` | server | M3 |
-| `channel-telegram` | channel | M4 |
-| `channel-voice` | channel | M4 |
-| `channel-webhook` | channel | M4 |
-| `server-a2a` | server | M4 |
-| `delegate` | tool | M4 |
-| `herdr` | event | M4 |
-| `otel` | event | M4 |
+| `provider-openai-compat` | provider | shipped (M1) |
+| `provider-anthropic` | provider | shipped (M1) |
+| `provider-openai-responses` | provider | shipped (M3); add to `plugins.enabled` |
+| `tool-fs` | tool | shipped (M1) |
+| `kanban` | tool, server, event | shipped (M3) |
+| `server-mcp` | server | shipped (M3); optional |
+| `server-openai-api` | server | shipped (M3); optional |
+| `server-agui` | server | shipped (M3); optional |
+| `ui-web` | ui | shipped (M3); static bundle from `apps/web` |
+| `channel-webhook` | server | shipped (M4); optional |
+| `channel-telegram` | server | shipped (M4); optional |
+| `channel-voice` | server | shipped (M4); optional |
+| `server-a2a` | server | shipped (M4); optional |
+| `delegate` | tool | shipped (M4); optional |
+| `herdr` | event | shipped (M4); optional |
+| `otel` | event | shipped (M4); optional |
+| `syntet` | tool | shipped (M4); optional |

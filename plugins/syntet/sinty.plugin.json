@@ -1,0 +1,19 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "syntet",
+  "version": "0.1.0",
+  "description": "Typed calls to a Syntet site: who am I, list generations, record token usage",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "net": ["*"],
+    "secrets": ["syntet.token"]
+  },
+  "tools": [
+    { "name": "syntet.whoami", "sideEffects": "read", "defaultPolicy": "allow" },
+    { "name": "syntet.generations", "sideEffects": "read", "defaultPolicy": "allow" },
+    { "name": "syntet.record_usage", "sideEffects": "external", "defaultPolicy": "ask" }
+  ],
+  "editable": true
+}

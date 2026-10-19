@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "provider-openai-responses",
+  "version": "0.1.0",
+  "description": "OpenAI Responses API protocol: GPT-5 and o-series models with reasoning summaries",
+  "kinds": ["provider"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "net": ["*"]
+  },
+  "editable": true
+}

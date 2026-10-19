@@ -1,0 +1,152 @@
+{
+  "protocol": "sinty/1.0",
+  "plugins": [
+    {
+      "name": "channel-telegram",
+      "version": "0.1.0",
+      "description": "Telegram bot webhook: each chat is a Sinty session; the agent's answer is sent back with sendMessage",
+      "kinds": [
+        "server"
+      ]
+    },
+    {
+      "name": "channel-voice",
+      "version": "0.1.0",
+      "description": "Voice turn: text in, agent text out. Speech-to-text and text-to-speech stay outside this plugin.",
+      "kinds": [
+        "server"
+      ]
+    },
+    {
+      "name": "channel-webhook",
+      "version": "0.1.0",
+      "description": "Sync chat webhook: one POST runs a turn and returns the agent's text. Same role as the n8n chat webhook.",
+      "kinds": [
+        "server"
+      ]
+    },
+    {
+      "name": "delegate",
+      "version": "0.1.0",
+      "description": "Run one task in Claude Code, Codex or Grok CLI and return only the final text",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
+      "name": "herdr",
+      "version": "0.1.0",
+      "description": "Forwards agent.state to a Herdr-compatible URL so an external board can show idle, working and blocked",
+      "kinds": [
+        "event"
+      ]
+    },
+    {
+      "name": "kanban",
+      "version": "0.1.0",
+      "description": "Kanban board: each card the human gives to the agent runs as its own session; the agent comments and moves cards",
+      "kinds": [
+        "tool",
+        "server",
+        "event"
+      ]
+    },
+    {
+      "name": "memory",
+      "version": "0.1.0",
+      "description": "Short facts in SQLite: profile, journal, notes, full-text and vector search",
+      "kinds": [
+        "tool",
+        "context"
+      ]
+    },
+    {
+      "name": "otel",
+      "version": "0.1.0",
+      "description": "Writes turn, model and tool events as JSON lines for later OpenTelemetry export",
+      "kinds": [
+        "event"
+      ]
+    },
+    {
+      "name": "provider-anthropic",
+      "version": "0.1.0",
+      "description": "Anthropic Messages protocol for Claude models",
+      "kinds": [
+        "provider"
+      ]
+    },
+    {
+      "name": "provider-openai-compat",
+      "version": "0.1.0",
+      "description": "Chat Completions protocol: xAI Grok, OpenAI, DeepSeek, OpenRouter, Ollama, vLLM and other compatible APIs",
+      "kinds": [
+        "provider"
+      ]
+    },
+    {
+      "name": "provider-openai-responses",
+      "version": "0.1.0",
+      "description": "OpenAI Responses API protocol: GPT-5 and o-series models with reasoning summaries",
+      "kinds": [
+        "provider"
+      ]
+    },
+    {
+      "name": "server-a2a",
+      "version": "0.1.0",
+      "description": "A2A agent card and message/send: another agent can give Sinty a task and read the answer",
+      "kinds": [
+        "server"
+      ]
+    },
+    {
+      "name": "server-agui",
+      "version": "0.1.0",
+      "description": "AG-UI endpoint: stream the agent's runs to AG-UI clients such as CopilotKit",
+      "kinds": [
+        "server"
+      ]
+    },
+    {
+      "name": "server-mcp",
+      "version": "0.1.0",
+      "description": "MCP server (Streamable HTTP): Claude, Cursor and other MCP clients can give the agent tasks and read its sessions",
+      "kinds": [
+        "server"
+      ]
+    },
+    {
+      "name": "server-openai-api",
+      "version": "0.1.0",
+      "description": "OpenAI-compatible Chat Completions endpoint: any OpenAI client can talk to the agent as if it were a model",
+      "kinds": [
+        "server"
+      ]
+    },
+    {
+      "name": "syntet",
+      "version": "0.1.0",
+      "description": "Typed calls to a Syntet site: who am I, list generations, record token usage",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
+      "name": "tool-fs",
+      "version": "0.1.0",
+      "description": "Read, list, write and edit files in the workspace and skills folders",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
+      "name": "ui-web",
+      "version": "0.1.0",
+      "description": "Web UI: chat, sessions, approvals, journal, supervisor and kanban. Built from apps/web",
+      "kinds": [
+        "ui"
+      ]
+    }
+  ]
+}

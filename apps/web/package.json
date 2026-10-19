@@ -1,0 +1,19 @@
+{
+  "name": "@sinty/web",
+  "version": "0.1.0",
+  "description": "Sinty Web UI: chat, sessions, approvals, journal, supervisor, kanban",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build"
+  },
+  "dependencies": {
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "vite": "^7.3.7"
+  }
+}

@@ -29,6 +29,61 @@ export async function* parseSSE(body: ReadableStream<Uint8Array>, signal?: Abort
   }
 }
 
+export interface SSEWriter {
+  readonly response: Response;
+  /** Objects are sent as JSON. Returns false once the client has gone. */
+  send(data: unknown, opts?: { event?: string; id?: string }): boolean;
+  close(): void;
+  readonly closed: boolean;
+}
+
+/** A `text/event-stream` response for plugin HTTP routes. A comment line is sent every 15 s to keep proxies open. */
+export function createSSE(signal?: AbortSignal, headers: Record<string, string> = {}): SSEWriter {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let closed = false;
+  const ping = setInterval(() => write(": ping\n\n"), 15_000);
+  const finish = (): void => {
+    if (closed) return;
+    closed = true;
+    clearInterval(ping);
+    try {
+      controller?.close();
+    } catch {
+      // already closed by the client
+    }
+  };
+  const write = (text: string): boolean => {
+    if (closed || !controller) return false;
+    try {
+      controller.enqueue(encoder.encode(text));
+      return true;
+    } catch {
+      finish();
+      return false;
+    }
+  };
+  signal?.addEventListener("abort", finish, { once: true });
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+    cancel: finish,
+  });
+  return {
+    response: new Response(body, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", "x-accel-buffering": "no", ...headers } }),
+    send(data, opts) {
+      const text = typeof data === "string" ? data : JSON.stringify(data);
+      const lines = [opts?.event ? `event: ${opts.event}` : "", opts?.id ? `id: ${opts.id}` : "", ...text.split("\n").map((l) => `data: ${l}`)].filter(Boolean);
+      return write(`${lines.join("\n")}\n\n`);
+    },
+    close: finish,
+    get closed() {
+      return closed;
+    },
+  };
+}
+
 function parseBlock(raw: string): SSEMessage | undefined {
   let event: string | undefined;
   const data: string[] = [];

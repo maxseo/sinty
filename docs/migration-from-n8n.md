@@ -1,6 +1,6 @@
 # Migrating from n8n
 
-Sinty replaces agent workflows built in n8n (chat webhook → AI agent node → tools → memory) with one process. The migration is gradual: n8n keeps running until each workflow is switched off.
+Sinty replaces agent workflows built in n8n (chat webhook → AI agent node → tools → memory) with one process. Switching happens **last**, after the Web UI, the `syntet` plugin, channels and packaging. Until then Sinty runs on its own (laptop or VPS). n8n stays until each workflow is switched off.
 
 ## Map workflows to plugins
 
@@ -16,7 +16,7 @@ Sinty replaces agent workflows built in n8n (chat webhook → AI agent node → 
 | Token counting nodes | `usage.recorded` events + a billing `event` plugin |
 | Telegram / voice triggers | channel plugins |
 
-## Strangler steps
+## Strangler steps (milestone M7, last)
 
 1. **Keep the contracts.** Point a `channel-webhook` route at the same request and response shape as the n8n webhook. Your backend changes only the URL.
 2. **Feature flag per workflow.** For example `AGENT_CHAT_BACKEND=n8n|sinty|shadow`.

@@ -1,0 +1,11 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "herdr",
+  "version": "0.1.0",
+  "description": "Forwards agent.state to a Herdr-compatible URL so an external board can show idle, working and blocked",
+  "kinds": ["event"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "net": ["*"], "fs": { "write": ["$DATA"] } },
+  "editable": true
+}

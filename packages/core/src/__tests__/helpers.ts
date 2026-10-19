@@ -23,7 +23,7 @@ export function tempHome(): { home: string; cleanup: () => void } {
 export function testConfig(script: ScriptStep[], extra: Partial<SintyConfig> = {}, plugins = ["fake-provider", "test-tools"]): Partial<SintyConfig> {
   return {
     providers: { fake: { protocol: "fake", options: { script } } },
-    models: { default: "fake/test-model", fallback: [], routes: {}, maxOutputTokens: 1000 },
+    models: { default: "fake/test-model", fallback: [], routes: {}, catalog: [], maxOutputTokens: 1000 },
     plugins: { enabled: plugins, config: {}, searchPaths: [FIXTURES] },
     ...extra,
   };
@@ -33,7 +33,10 @@ export async function boot(home: string, script: ScriptStep[], opts: { config?: 
   const sinty = new Sinty({ home, config: testConfig(script, opts.config, opts.plugins), ...(opts.policy ? { policy: opts.policy } : {}) });
   const { failedPlugins } = await sinty.start();
   const unexpected = failedPlugins.filter((f) => f.plugin !== "greedy");
-  if (unexpected.length) throw new Error(`plugins failed: ${JSON.stringify(unexpected)}`);
+  if (unexpected.length) {
+    await sinty.stop();
+    throw new Error(`plugins failed: ${JSON.stringify(unexpected)}`);
+  }
   return sinty;
 }
 

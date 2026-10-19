@@ -1,0 +1,20 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "kanban",
+  "version": "0.1.0",
+  "description": "Kanban board: each card the human gives to the agent runs as its own session; the agent comments and moves cards",
+  "kinds": ["tool", "server", "event"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "write": ["$DATA"] },
+    "agent": ["sessions.read", "sessions.write"]
+  },
+  "tools": [
+    { "name": "kanban.list", "sideEffects": "read", "idempotent": true, "docs": "README.md" },
+    { "name": "kanban.create", "sideEffects": "write", "idempotent": false, "docs": "README.md" },
+    { "name": "kanban.update", "sideEffects": "write", "idempotent": false, "docs": "README.md" }
+  ],
+  "config": { "maxParallel": { "type": "integer", "default": 3, "description": "cards the agent works on at the same time" } },
+  "editable": true
+}

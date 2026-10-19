@@ -21,6 +21,8 @@
     "@sinty/sdk": "workspace:*",
     "@sinty/supervisor": "workspace:*",
     "hono": "^4.10.0",
+    "playwright": "^1.64.1",
+    "sqlite-vec": "^0.1.9",
     "yaml": "^2.8.0"
   }
 }

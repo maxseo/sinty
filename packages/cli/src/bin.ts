@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { BusMessage, LogFn } from "@sinty/core";
 
@@ -7,7 +9,7 @@ process.removeAllListeners("warning");
 process.on("warning", (w) => {
   if (!(w.name === "ExperimentalWarning" && /SQLite/.test(w.message))) console.warn(w);
 });
-const { initHome, resolvePaths, SecretStore, Sinty, startServer } = await import("@sinty/core");
+const { checkIntegrity, hashInstall, initHome, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, SecretStore, Sinty, startServer } = await import("@sinty/core");
 
 const HELP = `sinty — thin-core AI agent
 
@@ -15,13 +17,16 @@ Usage:
   sinty init                       create $SINTY_HOME (default ~/.sinty)
   sinty run "<prompt>" [--session <id>] [--yes]
                                    one turn in the terminal; --yes approves every ask
-  sinty serve [--port 3180] [--host 127.0.0.1]
-                                   HTTP API (alias: web)
+  sinty serve | web [--port 3180] [--host 127.0.0.1]
+                                   HTTP API and Web UI; prints a login URL with #token=
   sinty secret set <name> [value]  value from stdin when omitted
   sinty secret list | rm <name>
-  sinty doctor                     check config, secrets and plugins
+  sinty doctor                     check config, secrets, plugins and install integrity
+  sinty upgrade --from <dir>      replace this install with a tree whose integrity.json matches
+  sinty version
+  sinty plugins                     catalog from registry/plugins.json and whether each is enabled
 
-Global: --home <dir>, --verbose`;
+Global: --home <dir>, --mode strict, --verbose`;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -31,6 +36,8 @@ const { values, positionals } = parseArgs({
     port: { type: "string" },
     host: { type: "string" },
     yes: { type: "boolean", short: "y" },
+    mode: { type: "string" },
+    from: { type: "string" },
     verbose: { type: "boolean", short: "v" },
     help: { type: "boolean", short: "h" },
   },
@@ -59,6 +66,12 @@ async function main(): Promise<number> {
       return secret(rest);
     case "doctor":
       return doctor();
+    case "upgrade":
+      return upgrade();
+    case "version":
+      return version();
+    case "plugins":
+      return plugins();
     default:
       console.error(`unknown command: ${command}\n\n${HELP}`);
       return 2;
@@ -69,6 +82,11 @@ function init(): number {
   const r = initHome(values.home);
   console.log(`Sinty home: ${r.paths.home}`);
   for (const c of r.created) console.log(`  created ${c}`);
+  if (values.mode === "strict") {
+    const text = readFileSync(r.paths.policy, "utf8").replace(/^mode:\s*\S+/m, "mode: strict");
+    writeFileSync(r.paths.policy, text);
+    console.log("policy mode: strict");
+  }
   if (r.apiToken) console.log(`\nAPI token (stored as secret api.token, shown once):\n  ${r.apiToken}`);
   console.log(`\nNext:\n  1. sinty secret set deepseek      (or anthropic, openai, xai)\n  2. set models.default in ${r.paths.config}, e.g. deepseek/deepseek-chat\n  3. sinty run "hello"`);
   return 0;
@@ -173,7 +191,11 @@ async function serveCmd(): Promise<number> {
     ...(values.host ? { host: values.host } : {}),
     ...(values.port ? { port: Number(values.port) } : {}),
   });
-  console.log(`Sinty API on ${url}\nAuth: Authorization: Bearer <token printed by sinty init>`);
+  const apiToken = sinty.secrets.resolve(sinty.config.server.token);
+  const ui = sinty.config.server.ui;
+  console.log(`Sinty API  ${url}`);
+  if (apiToken) console.log(`Web UI     ${url}/ui/${ui}/#token=${encodeURIComponent(apiToken)}`);
+  else console.log(`Web UI     ${url}/ui/${ui}/  (set the API token: sinty init)`);
   const shutdown = (): void => {
     void sinty.stop().then(() => process.exit(0));
   };
@@ -220,6 +242,58 @@ async function readSecretFromStdin(name: string): Promise<string> {
   return v.trim();
 }
 
+function version(): number {
+  const integrity = readIntegrity(resolvePaths(values.home).install);
+  console.log(`protocol ${PROTOCOL_VERSION}`);
+  console.log(integrity ? `sinty install, ${Object.keys(integrity.files).length} hashed files` : "sinty (source tree, no integrity.json)");
+  return 0;
+}
+
+function plugins(): number {
+  const paths = resolvePaths(values.home);
+  let enabled = new Set<string>();
+  try {
+    enabled = new Set(new Sinty({ ...(values.home ? { home: values.home } : {}) }).config.plugins.enabled);
+  } catch {
+    /* home may be missing; still print the catalog */
+  }
+  const list = loadRegistry(paths);
+  if (!list.length) {
+    console.log("no registry/plugins.json in this install");
+    return 1;
+  }
+  for (const p of list) console.log(`${enabled.has(p.name) ? "on " : "off"}  ${p.name.padEnd(28)} ${p.version.padEnd(8)} ${p.kinds.join(", ")}`);
+  console.log("\nTurn one on: add its name to plugins.enabled in config.yaml, then restart sinty web.");
+  return 0;
+}
+
+function upgrade(): number {
+  const from = values.from;
+  if (!from) {
+    console.error("usage: sinty upgrade --from <directory with integrity.json>");
+    return 2;
+  }
+  const source = checkIntegrity(from);
+  if (!readIntegrity(from)) {
+    console.error(`${from} has no integrity.json; build it with node scripts/stage.mjs`);
+    return 1;
+  }
+  if (!source.ok) {
+    console.error(`source failed the integrity check:\n${source.problems.slice(0, 8).join("\n")}`);
+    return 1;
+  }
+  const install = resolvePaths(values.home).install;
+  const files = hashInstall(from);
+  for (const rel of Object.keys(files)) {
+    const dest = join(install, rel);
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(join(from, rel), dest);
+  }
+  cpSync(join(from, "integrity.json"), join(install, "integrity.json"));
+  console.log(`upgraded ${install} (${Object.keys(files).length} files)`);
+  return 0;
+}
+
 async function doctor(): Promise<number> {
   const sinty = new Sinty({ ...(values.home ? { home: values.home } : {}), log });
   let problems = 0;
@@ -227,7 +301,9 @@ async function doctor(): Promise<number> {
     console.log(`${ok ? "ok  " : "FAIL"} ${text}`);
     if (!ok) problems++;
   };
-  console.log(`home     ${sinty.paths.home}\ninstall  ${sinty.paths.install}\n`);
+  console.log(`home     ${sinty.paths.home}\ninstall  ${sinty.paths.install}\nmode     ${sinty.policy.mode}`);
+  const integrity = checkIntegrity(sinty.paths.install);
+  check(integrity.ok, integrity.ok ? "install integrity" : `install integrity (${integrity.problems[0] ?? "mismatch"})`);
   const def = sinty.config.models.default;
   check(Boolean(def), `models.default = ${def || "(empty)"}`);
   for (const route of [def, ...sinty.config.models.fallback].filter((r): r is string => Boolean(r))) {

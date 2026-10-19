@@ -1,10 +1,13 @@
 import type { z } from "zod";
-import type { AgentState, EventType, SintyEvent, ToolSideEffects } from "./events.js";
+import type { AgentState, EventType, LiveEvent, SintyEvent, ToolSideEffects } from "./events.js";
 import type { PolicyDecision, ToolDefinition } from "./tool.js";
 
 export type PluginKind = "provider" | "tool" | "context" | "channel" | "server" | "schedule" | "event" | "ui";
 
 export type PluginRuntime = "node" | "mcp-stdio" | "http";
+
+/** `sessions.read`: list sessions, read events, live streams. `sessions.write`: create sessions, send messages, interrupt. */
+export type AgentScope = "sessions.read" | "sessions.write";
 
 export interface PluginPermissions {
   fs?: { read?: string[]; write?: string[] };
@@ -12,6 +15,7 @@ export interface PluginPermissions {
   secrets?: string[];
   env?: string[];
   shell?: boolean;
+  agent?: AgentScope[];
 }
 
 export interface ManifestTool {
@@ -40,6 +44,8 @@ export interface PluginManifest {
   config?: Record<string, unknown>;
   tests?: string;
   editable?: boolean;
+  /** Static files served by the core at `/ui/<name>/`. Only for plugins with `editable: false`. */
+  ui?: { static: string };
 }
 
 // ---- model provider ----
@@ -49,6 +55,8 @@ export type ChatRole = "system" | "user" | "assistant" | "tool";
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  /** Inline images for providers that accept them. Text of other files stays in `content`. */
+  images?: { mime: string; data: string }[];
   toolCallId?: string;
   toolCalls?: { id: string; name: string; args: unknown }[];
   untrusted?: boolean;
@@ -111,13 +119,50 @@ export interface ChannelDefinition {
   stop?(): Promise<void>;
 }
 
+// ---- HTTP routes ----
+
+export interface HttpRoute {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "*";
+  /** Relative to `/p/<plugin>`. `:name` matches one segment, a trailing `*` matches the rest. */
+  path: string;
+  /** Public routes skip the core's bearer token check; the plugin must authenticate callers itself. */
+  public?: boolean;
+  handler(req: Request, info: { params: Record<string, string>; signal: AbortSignal }): Response | Promise<Response>;
+}
+
+// ---- agent access ----
+
+export interface SessionInfo {
+  id: string;
+  title: string | null;
+  projectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastSeq: number;
+  metadata: Record<string, unknown>;
+  /** Status of the running or blocked turn, if any. */
+  activeTurn: { id: string; status: "running" | "blocked" } | null;
+}
+
+/** Talks to the agent like an API client would. Needs `permissions.agent`. */
+export interface AgentApi {
+  listSessions(opts?: { limit?: number }): Promise<SessionInfo[]>;
+  getSession(id: string): Promise<SessionInfo | null>;
+  events(sessionId: string, opts?: { afterSeq?: number; types?: EventType[]; limit?: number }): Promise<SintyEvent[]>;
+  /** Journal events after `afterSeq`, then live events, until the signal aborts. */
+  stream(sessionId: string, opts?: { afterSeq?: number; signal?: AbortSignal }): AsyncIterable<LiveEvent>;
+  createSession(init?: { title?: string; projectId?: string; metadata?: Record<string, unknown> }): Promise<SessionInfo>;
+  send(sessionId: string, text: string, opts?: { idempotencyKey?: string; channel?: string }): Promise<{ turnId: string }>;
+  interrupt(sessionId: string): Promise<boolean>;
+}
+
 // ---- setup context ----
 
 export interface PluginContext {
   readonly name: string;
   readonly config: Readonly<Record<string, unknown>>;
-  /** Absolute paths; the process can only write where `permissions.fs.write` allows. */
-  readonly paths: { readonly workspace: string; readonly skills: string; readonly plugin: string };
+  /** Absolute paths; the process can only write where `permissions.fs.write` allows. `data` is this plugin's own folder (`$DATA`). */
+  readonly paths: { readonly workspace: string; readonly skills: string; readonly plugin: string; readonly data: string };
   readonly log: { debug(msg: string, data?: unknown): void; info(msg: string, data?: unknown): void; warn(msg: string, data?: unknown): void; error(msg: string, data?: unknown): void };
 
   /** Network access limited to `permissions.net`. */
@@ -126,6 +171,8 @@ export interface PluginContext {
   readonly secrets: { get(name: string): Promise<string> };
   /** Read-only journal access. */
   readonly journal: { read(sessionId: string, opts?: { afterSeq?: number; types?: EventType[] }): AsyncIterable<SintyEvent> };
+  /** Calls fail with `agent_denied` unless the manifest grants the scope. */
+  readonly agent: AgentApi;
 
   tool<I extends z.ZodType>(def: ToolDefinition<I>): void;
   provider(def: ProviderDefinition): void;
@@ -133,7 +180,7 @@ export interface PluginContext {
   channel(def: ChannelDefinition): void;
   schedule(name: string, cron: string, run: (signal: AbortSignal) => Promise<void>): void;
   on<T extends EventType>(type: T | "*", handler: (event: SintyEvent<T>) => void | Promise<void>): void;
-  http(route: { method: string; path: string; handler: (req: Request) => Promise<Response> }): void;
+  http(route: HttpRoute): void;
 }
 
 export interface PluginDefinition {

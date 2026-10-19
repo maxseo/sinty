@@ -1,4 +1,22 @@
-import type { ChatMessage, ContextInput, EventType, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, ToolSideEffects } from "@sinty/sdk";
+import type { ChatMessage, ContextInput, EventType, LiveEvent, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, ToolSideEffects } from "@sinty/sdk";
+
+export interface RouteInfo {
+  method: string;
+  path: string;
+  public: boolean;
+}
+
+export interface WireHttpRequest {
+  route: number;
+  params: Record<string, string>;
+  method: string;
+  /** Path relative to the plugin mount, with the query string. */
+  url: string;
+  headers: [string, string][];
+  body: Uint8Array | null;
+}
+
+export type AgentOp = "listSessions" | "getSession" | "events" | "createSession" | "send" | "interrupt";
 
 export interface InitMessage {
   t: "init";
@@ -8,7 +26,7 @@ export interface InitMessage {
   secrets: Record<string, string>;
   /** A host must match both lists. */
   net: { manifest: string[]; policy: string[] };
-  paths: { workspace: string; skills: string; plugin: string };
+  paths: { workspace: string; skills: string; plugin: string; data: string };
 }
 
 export interface ToolInfo {
@@ -47,10 +65,22 @@ export type ToChild =
   | { t: "cancel"; id: number }
   | { t: "event"; event: SintyEvent }
   | { t: "journal.events"; id: number; events: SintyEvent[] }
+  | ({ t: "http.request"; id: number } & WireHttpRequest)
+  | { t: "agent.result"; id: number; ok: true; value: unknown }
+  | { t: "agent.result"; id: number; ok: false; error: WireError }
+  | { t: "agent.event"; id: number; event: LiveEvent }
+  | { t: "agent.end"; id: number; error?: WireError }
   | { t: "shutdown" };
 
 export type FromChild =
-  | { t: "ready"; tools: ToolInfo[]; providers: string[]; contexts: { name: string; order: number }[]; subscriptions: (EventType | "*")[] }
+  | { t: "ready"; tools: ToolInfo[]; providers: string[]; contexts: { name: string; order: number }[]; subscriptions: (EventType | "*")[]; routes: RouteInfo[] }
+  | { t: "http.start"; id: number; status: number; headers: [string, string][] }
+  | { t: "http.chunk"; id: number; chunk: Uint8Array }
+  | { t: "http.end"; id: number }
+  | { t: "http.error"; id: number; error: WireError }
+  | { t: "agent.call"; id: number; op: AgentOp; args: unknown[] }
+  | { t: "agent.stream"; id: number; sessionId: string; afterSeq: number }
+  | { t: "agent.stream.close"; id: number }
   | { t: "fatal"; error: WireError }
   | { t: "tool.progress"; id: number; message?: string; ratio?: number }
   | { t: "tool.result"; id: number; ok: true; content: unknown }

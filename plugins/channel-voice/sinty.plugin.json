@@ -1,0 +1,11 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "channel-voice",
+  "version": "0.1.0",
+  "description": "Voice turn: text in, agent text out. Speech-to-text and text-to-speech stay outside this plugin.",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "agent": ["sessions.read", "sessions.write"] },
+  "editable": true
+}

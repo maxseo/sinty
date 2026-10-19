@@ -12,7 +12,8 @@ test("API: auth, session, message, events, idempotency", async () => {
     const token = sinty.secrets.get("api.token")!;
     const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 
-    assert.equal((await app.request("/v1/health")).status, 200);
+    const health = (await (await app.request("/v1/health")).json()) as { protocol: string };
+    assert.equal(health.protocol, "sinty/1.0");
     assert.equal((await app.request("/v1/sessions")).status, 401);
     assert.equal((await app.request("/v1/sessions", { headers: { authorization: "Bearer wrong" } })).status, 401);
 
@@ -26,6 +27,17 @@ test("API: auth, session, message, events, idempotency", async () => {
     const { events } = (await (await app.request(`/v1/sessions/${created.id}/events`, { headers: auth })).json()) as { events: { type: string; data: { text?: string } }[] };
     assert.equal(events.find((e) => e.type === "message.agent")?.data.text, "hello from api");
     assert.equal(events.filter((e) => e.type === "turn.started").length, 1);
+
+    const saved = await app.request("/v1/settings", {
+      method: "PUT",
+      headers: auth,
+      body: JSON.stringify({ model: "fake/other-model", fallback: [], enabled: ["ui-web"], agentsMd: "persona from settings" }),
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(sinty.config.models.default, "fake/other-model");
+    const { readFileSync } = await import("node:fs");
+    assert.equal(readFileSync(sinty.paths.agents, "utf8"), "persona from settings");
+    assert.match(readFileSync(sinty.paths.config, "utf8"), /secret:\/\/anthropic/);
   } finally {
     await sinty.stop();
     cleanup();

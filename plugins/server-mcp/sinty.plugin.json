@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "server-mcp",
+  "version": "0.1.0",
+  "description": "MCP server (Streamable HTTP): Claude, Cursor and other MCP clients can give the agent tasks and read its sessions",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "agent": ["sessions.read", "sessions.write"]
+  },
+  "editable": true
+}

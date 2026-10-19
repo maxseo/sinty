@@ -33,10 +33,10 @@ Plugins attach to a small fixed set of extension points:
 | `tool` | callable tools | `tool-fs`, `syntet` |
 | `context` | contribute to or transform the prompt built from the journal | `memory-sqlite`, `context-compress`, `skills` |
 | `channel` | inbound and outbound messages | `channel-telegram`, `channel-web` |
-| `server` | additional HTTP surfaces | `server-mcp`, `server-a2a`, `server-openai-api` |
-| `schedule` | durable timers and cron jobs | `scheduler`, `kanban` |
-| `event` | subscribe to bus events (read-only) | `herdr`, `otel`, `billing` |
-| `ui` | static bundle and panels for the Web UI | `apps/web`, `kanban` |
+| `server` | additional HTTP surfaces at `/p/<plugin>/…` | `server-mcp`, `server-openai-api`, `server-agui` |
+| `schedule` | durable timers and cron jobs | `scheduler` (backlog) |
+| `event` | subscribe to bus events (read-only) | `kanban`, later `herdr`, `otel` |
+| `ui` | static bundle served at `/ui/<plugin>/` (non-editable only) | `ui-web` |
 
 ## Runtime layout
 
@@ -49,6 +49,7 @@ $SINTY_HOME/             default ~/.sinty, or /var/lib/sinty on a VPS
   secrets.json           core-owned: secrets, AES-256-GCM
   secret.key             core-owned: key for secrets.json
   journal.db             core-owned: events, checkpoints, incidents
+  data/<plugin>/         plugin-owned; `$DATA` in the manifest, isolated per plugin
   plugins/               git repo; changed only through plugin.propose_patch
   skills/                agent-writable
   workspace/             agent-writable; per-project subfolders

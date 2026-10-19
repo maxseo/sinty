@@ -97,6 +97,12 @@ function toWireMessage(m: ChatMessage): Record<string, unknown> {
       tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) } })),
     };
   }
+  if (m.images?.length) {
+    return {
+      role: m.role,
+      content: [{ type: "text", text: m.content }, ...m.images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.data}` } }))],
+    };
+  }
   return { role: m.role, content: m.content };
 }
 

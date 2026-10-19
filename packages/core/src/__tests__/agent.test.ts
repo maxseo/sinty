@@ -16,6 +16,49 @@ async function runTurn(sinty: Awaited<ReturnType<typeof boot>>, text: string): P
   return { sessionId: s.id, events: sinty.journal.events(s.id) };
 }
 
+test("a running turn stores a checkpoint and drops it when the turn ends", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [{ toolCalls: [{ name: "sleep__long", args: { ms: 400 } }] }, { text: "done" }], { policy: allowAll });
+  try {
+    const s = sinty.agent.createSession();
+    const { turnId } = sinty.agent.send(s.id, "start");
+    const deadline = Date.now() + 3000;
+    while (!sinty.journal.turnCheckpoint(turnId) && Date.now() < deadline) await sleep(20);
+    const saved = sinty.journal.turnCheckpoint(turnId);
+    assert.ok(saved && saved.seq > 0);
+    assert.ok(sinty.journal.turnEvents(turnId, saved.seq).length < sinty.journal.turnEvents(turnId).length);
+    await sinty.agent.idle();
+    assert.equal(sinty.journal.turnCheckpoint(turnId), undefined);
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+test("a message during a running turn is queued into that turn", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [{ toolCalls: [{ name: "sleep__long", args: { ms: 400 } }] }, { text: "continued" }], { policy: allowAll });
+  try {
+    const s = sinty.agent.createSession();
+    const first = sinty.agent.send(s.id, "start");
+    const deadline = Date.now() + 3000;
+    while (!sinty.journal.events(s.id).some((e) => e.type === "tool.call.started") && Date.now() < deadline) await sleep(20);
+    const second = sinty.agent.send(s.id, "correction");
+    assert.equal(second.turnId, first.turnId);
+    await sinty.agent.idle();
+    const events = sinty.journal.events(s.id);
+    assert.equal(events.filter((e) => e.type === "turn.started").length, 1);
+    assert.deepEqual(
+      events.filter((e) => e.type === "message.user").map((e) => (e.data as { text: string }).text),
+      ["start", "correction"],
+    );
+    assert.equal(events.filter((e) => e.type === "turn.completed").length, 1);
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
 test("turn: model calls a tool, gets the result, answers", async () => {
   const { home, cleanup } = tempHome();
   const sinty = await boot(home, [{ toolCalls: [{ name: "echo__say", args: { text: "hi" } }] }, { text: "all done" }], { policy: allowAll });
@@ -156,7 +199,7 @@ test("provider outage falls back to the next model", async () => {
     policy: allowAll,
     config: {
       providers: { bad: { protocol: "fake", options: { fail: true } }, fake: { protocol: "fake", options: { script: [{ text: "from fallback" }] } } },
-      models: { default: "bad/x", fallback: ["fake/y"], routes: {}, maxOutputTokens: 100 },
+      models: { default: "bad/x", fallback: ["fake/y"], routes: {}, catalog: [], maxOutputTokens: 100 },
     },
   });
   try {

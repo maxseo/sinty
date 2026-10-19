@@ -22,6 +22,7 @@ const manifestSchema = z
         secrets: z.array(z.string()).optional(),
         env: z.array(z.string()).optional(),
         shell: z.boolean().optional(),
+        agent: z.array(z.enum(["sessions.read", "sessions.write"])).optional(),
       })
       .strict(),
     tools: z
@@ -42,8 +43,14 @@ const manifestSchema = z
     config: z.record(z.string(), z.unknown()).optional(),
     tests: z.string().optional(),
     editable: z.boolean().optional(),
+    ui: z.object({ static: z.string().min(1) }).strict().optional(),
   })
   .strict();
+
+/** `$SINTY_HOME/data/<plugin>`: the plugin's own writable folder. */
+export function pluginDataDir(paths: SintyPaths, plugin: string): string {
+  return join(paths.data, plugin);
+}
 
 export interface LoadedManifest {
   dir: string;
@@ -74,18 +81,25 @@ export interface FsGrants {
   write: string[];
 }
 
-/** Expands `$WORKSPACE`, `$SKILLS`, `$PLUGIN` and relative paths; rejects grants that touch core-owned files. */
+/** Expands `$WORKSPACE`, `$SKILLS`, `$PLUGIN`, `$DATA` and relative paths; rejects grants that touch core-owned files or other plugins' data. */
 export function resolveFsGrants(paths: SintyPaths, loaded: LoadedManifest): FsGrants {
+  const ownData = pluginDataDir(paths, loaded.manifest.name);
   const expand = (p: string): string => {
     const replaced = p
       .replace(/^\$WORKSPACE/, paths.workspace)
       .replace(/^\$SKILLS/, paths.skills)
-      .replace(/^\$PLUGIN/, loaded.dir);
+      .replace(/^\$PLUGIN/, loaded.dir)
+      .replace(/^\$DATA/, ownData);
     return isAbsolute(replaced) ? resolve(replaced) : resolve(loaded.dir, replaced);
   };
   const fs = loaded.manifest.permissions.fs ?? {};
   const read = (fs.read ?? []).map(expand);
   const write = (fs.write ?? []).map(expand);
+  for (const p of [...read, ...write]) {
+    if ((isInside(p, paths.data) || isInside(paths.data, p)) && !isInside(p, ownData)) {
+      throw new Error(`plugin ${loaded.manifest.name}: may only use its own data folder ($DATA), not ${p}`);
+    }
+  }
   for (const p of read) {
     const err = checkFsGrant(paths, p, "read");
     if (err) throw new Error(`plugin ${loaded.manifest.name}: ${err}`);

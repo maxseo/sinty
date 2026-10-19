@@ -1,0 +1,11 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "otel",
+  "version": "0.1.0",
+  "description": "Writes turn, model and tool events as JSON lines for later OpenTelemetry export",
+  "kinds": ["event"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "fs": { "write": ["$DATA"] }, "net": ["*"] },
+  "editable": true
+}

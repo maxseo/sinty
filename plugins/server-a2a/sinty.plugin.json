@@ -1,0 +1,11 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "server-a2a",
+  "version": "0.1.0",
+  "description": "A2A agent card and message/send: another agent can give Sinty a task and read the answer",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "agent": ["sessions.read", "sessions.write"] },
+  "editable": true
+}

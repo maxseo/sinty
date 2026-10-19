@@ -1,0 +1,491 @@
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { api, subscribe, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
+import { IconBrain, IconMic, IconPlus } from "./icons.js";
+
+interface ToolCall {
+  callId: string;
+  tool: string;
+  args: unknown;
+  state: "requested" | "approval" | "running" | "done" | "failed" | "denied";
+  result?: unknown;
+  error?: { code: string; message: string; hint?: string };
+  reason?: string;
+}
+
+type Item =
+  | { kind: "user"; key: string; text: string; ts: string; files: string[] }
+  | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string }
+  | { kind: "tool"; key: string; call: ToolCall }
+  | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
+
+const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated"]);
+
+function build(events: SintyEvent[]): Item[] {
+  const items: Item[] = [];
+  const calls = new Map<string, ToolCall>();
+  for (const e of events) {
+    const d = e.data as Record<string, any>;
+    const key = String(e.seq ?? e.id);
+    switch (e.type) {
+      case "message.user":
+        items.push({ kind: "user", key, text: d.text, ts: e.ts, files: (d.attachments ?? []).map((a: { name?: string }) => a.name || "файл") });
+        break;
+      case "message.agent":
+        if (d.text) items.push({ kind: "agent", key, text: d.text, ts: e.ts, name: d.agentName });
+        break;
+      case "model.response":
+        if (d.text && d.toolCalls?.length) items.push({ kind: "agent", key, text: d.text, ts: e.ts, interim: true });
+        break;
+      case "tool.call.requested": {
+        const call: ToolCall = { callId: d.callId, tool: d.tool, args: d.args, state: "requested" };
+        calls.set(d.callId, call);
+        items.push({ kind: "tool", key, call });
+        break;
+      }
+      case "tool.call.approval_requested": {
+        const c = calls.get(d.callId);
+        if (c) Object.assign(c, { state: "approval", reason: d.reason });
+        break;
+      }
+      case "tool.call.approved":
+      case "tool.call.started": {
+        const c = calls.get(d.callId);
+        if (c && c.state !== "done" && c.state !== "failed") c.state = "running";
+        break;
+      }
+      case "tool.call.completed": {
+        const c = calls.get(d.callId);
+        if (c) Object.assign(c, { state: "done", result: d.result });
+        break;
+      }
+      case "tool.call.failed": {
+        const c = calls.get(d.callId);
+        if (c) Object.assign(c, { state: "failed", error: { code: d.code, message: d.message, hint: d.hint } });
+        break;
+      }
+      case "tool.call.denied": {
+        const c = calls.get(d.callId);
+        if (c) Object.assign(c, { state: "denied", reason: d.note ?? c.reason });
+        break;
+      }
+      case "supervisor.notice":
+        items.push({ kind: "note", key, tone: "warn", text: `Супервизор (${d.detector}): ${d.text}` });
+        break;
+      case "supervisor.escalated":
+        items.push({ kind: "note", key, tone: "error", text: `Супервизор остановил работу (${d.detector}): ${d.reason}` });
+        break;
+      case "turn.failed":
+        items.push({ kind: "note", key, tone: "error", text: `Ошибка: ${d.code} — ${d.message}` });
+        break;
+      case "turn.interrupted":
+        items.push({ kind: "note", key, tone: "info", text: "Остановлено" });
+        break;
+      case "turn.blocked":
+        if (d.reason === "budget") items.push({ kind: "note", key, tone: "warn", text: `Бюджет хода исчерпан${d.detail ? `: ${d.detail}` : ""}. Напишите сообщение, чтобы продолжить.` });
+        break;
+      case "plugin.patch.proposed":
+        items.push({ kind: "note", key, tone: "info", text: `Предложен патч плагина ${d.plugin}: ${d.reason}` });
+        break;
+      case "plugin.patch.applied":
+        items.push({ kind: "note", key, tone: "info", text: `Патч ${d.patchId} применён` });
+        break;
+      case "plugin.patch.rolled_back":
+        items.push({ kind: "note", key, tone: "warn", text: `Патч ${d.patchId} откатан: ${d.reason}` });
+        break;
+    }
+  }
+  return items;
+}
+
+function toBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+function show(v: unknown): string {
+  if (typeof v === "string") return v;
+  return JSON.stringify(v, null, 2);
+}
+
+export function Chat({ sessionId, onChange }: { sessionId: string; onChange: () => void }) {
+  const [events, setEvents] = useState<SintyEvent[]>([]);
+  const [draft, setDraft] = useState("");
+  const [streaming, setStreaming] = useState("");
+  const [info, setInfo] = useState<SessionInfo & { pending: Pending | null }>();
+  const [tab, setTab] = useState<"chat" | "journal">("chat");
+  const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
+  const [replyAgent, setReplyAgent] = useState("");
+  const bottom = useRef<HTMLDivElement>(null);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadInfo = async (): Promise<void> => setInfo(await api(`/v1/sessions/${encodeURIComponent(sessionId)}`));
+
+  useEffect(() => {
+    const projectId = info?.projectId;
+    if (!projectId) {
+      setMembers([]);
+      return;
+    }
+    void Promise.all([
+      api<{ agents: { id: string; name: string }[] }>("/v1/roster/agents"),
+      api<{ projects: { id: string; leadId: string; agentIds: string[] }[] }>("/v1/roster/projects"),
+    ]).then(([a, p]) => {
+      const project = p.projects.find((x) => x.id === projectId);
+      const picked = info?.metadata?.agentIds;
+      const ids = Array.isArray(picked) ? picked.filter((id): id is string => typeof id === "string") : project?.agentIds ?? [];
+      const list = a.agents.filter((agent) => ids.includes(agent.id));
+      setMembers(list);
+      setReplyAgent((cur) => cur || list[0]?.id || project?.leadId || "");
+    }).catch(() => setMembers([]));
+  }, [info?.projectId, info?.metadata]);
+
+  useEffect(() => {
+    void loadInfo().catch((e: unknown) => setError(String(e)));
+    let seen = 0;
+    return subscribe(
+      (lastId) => `/v1/sessions/${encodeURIComponent(sessionId)}/stream?after=${lastId ?? seen}`,
+      (m) => {
+        const e = JSON.parse(m.data) as SintyEvent;
+        if (e.type === "model.delta") {
+          const t = (e.data as { text?: string }).text;
+          if (t) setStreaming((s) => s + t);
+          return;
+        }
+        if (e.type === "tool.call.progress") return;
+        if (e.seq !== undefined) {
+          if (e.seq <= seen) return;
+          seen = e.seq;
+        }
+        if (e.type === "model.response" || e.type === "model.request" || e.type === "turn.completed" || e.type === "turn.failed" || e.type === "turn.interrupted") setStreaming("");
+        setEvents((list) => [...list, e]);
+        if (REFRESH_ON.has(e.type)) {
+          if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+          refreshTimer.current = setTimeout(() => {
+            void loadInfo();
+            onChange();
+          }, 150);
+        }
+      },
+    );
+  }, [sessionId]);
+
+  const items = useMemo(() => build(events), [events]);
+  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [items.length, streaming]);
+
+  const pending = info?.pending ?? null;
+  const running = info?.activeTurn?.status === "running";
+
+  const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number }[]>([]);
+
+  const addFiles = async (list: FileList | null): Promise<void> => {
+    if (!list?.length) return;
+    setError("");
+    for (const file of [...list].slice(0, 8 - files.length)) {
+      const dataBase64 = toBase64(await file.arrayBuffer());
+      const ref = await api<typeof files[number]>("/v1/blobs", { body: { name: file.name, mime: file.type || "application/octet-stream", dataBase64 } });
+      setFiles((cur) => [...cur, { name: file.name, blob: ref.blob, mime: ref.mime, bytes: ref.bytes }]);
+    }
+  };
+
+  const send = async (e?: Event): Promise<void> => {
+    e?.preventDefault();
+    const text = draft.trim();
+    if ((!text && files.length === 0) || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      await api(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
+        body: { text, channel: "web", ...(replyAgent ? { agentId: replyAgent } : {}), ...(files.length ? { attachments: files.map(({ name, blob, mime, bytes }) => ({ name, blob, mime, bytes })) } : {}) },
+        headers: { "idempotency-key": crypto.randomUUID() },
+      });
+      setDraft("");
+      setFiles([]);
+      await loadInfo();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const decide = async (callId: string, decision: "approve" | "deny"): Promise<void> => {
+    try {
+      await api(`/v1/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(callId)}`, { body: { decision } });
+      await loadInfo();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const interrupt = async (): Promise<void> => {
+    await api(`/v1/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: "POST" });
+    await loadInfo();
+  };
+
+  const placeholder =
+    pending?.reason === "ask_human"
+      ? `Агент спрашивает: ${pending.detail ?? ""}`
+      : pending?.reason === "supervisor" || pending?.reason === "budget"
+        ? "Ответьте, чтобы продолжить работу"
+        : "Сообщение агенту… (Enter — отправить, Shift+Enter — перенос)";
+
+  return (
+    <section class="chat">
+      <header class="bar">
+        <h2>{info?.title || sessionId}</h2>
+        {members.length > 0 && (
+          <select value={replyAgent} onChange={(e) => setReplyAgent(e.currentTarget.value)}>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        )}
+        <span class={`status ${info?.activeTurn?.status ?? "idle"}`}>{running ? "работает" : info?.activeTurn?.status === "blocked" ? "ждёт" : "свободен"}</span>
+        <div class="tabs">
+          <button class={tab === "chat" ? "on" : ""} onClick={() => setTab("chat")}>
+            Чат
+          </button>
+          <button class={tab === "journal" ? "on" : ""} onClick={() => setTab("journal")}>
+            Журнал
+          </button>
+        </div>
+        {running && (
+          <button class="danger" onClick={() => void interrupt()}>
+            Стоп
+          </button>
+        )}
+      </header>
+
+      {tab === "journal" ? (
+        <Journal events={events} />
+      ) : (
+        <div class="log">
+          {items.map((it) => {
+            switch (it.kind) {
+              case "user":
+                return (
+                  <div key={it.key} class="msg user">
+                    {it.files.length > 0 && (
+                      <div class="files">
+                        {it.files.map((name) => (
+                          <span>{name}</span>
+                        ))}
+                      </div>
+                    )}
+                    {it.text}
+                  </div>
+                );
+              case "agent":
+                return (
+                  <div key={it.key} class={`msg agent${it.interim ? " interim" : ""}`}>
+                    {it.name && <div class="muted small">{it.name}</div>}
+                    {it.text}
+                  </div>
+                );
+              case "note":
+                return (
+                  <div key={it.key} class={`note ${it.tone}`}>
+                    {it.text}
+                  </div>
+                );
+              case "tool":
+                return <ToolCard key={it.key} call={it.call} onDecide={pending?.approvals.some((a) => a.callId === it.call.callId) ? decide : undefined} />;
+            }
+          })}
+          {streaming && <div class="msg agent live">{streaming}</div>}
+          {running && !streaming && <div class="typing">агент думает…</div>}
+          <div ref={bottom} />
+        </div>
+      )}
+
+      {pending?.reason === "approval" && pending.approvals.length > 1 && (
+        <div class="approvals">
+          Ждут решения: {pending.approvals.length}
+          <button onClick={() => pending.approvals.forEach((a) => void decide(a.callId, "approve"))}>Одобрить все</button>
+        </div>
+      )}
+
+      <form class="composer" onSubmit={send}>
+        <div class="composer-card">
+          {files.length > 0 && (
+            <div class="files">
+              {files.map((f) => (
+                <span>
+                  {f.name}
+                  <button type="button" onClick={() => setFiles(files.filter((x) => x !== f))}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <textarea
+            value={draft}
+            placeholder={placeholder}
+            rows={Math.min(8, Math.max(2, draft.split("\n").length))}
+            onInput={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <div class="composer-bar">
+            <label class="icon composer-plus" title="Файл">
+              <IconPlus />
+              <input type="file" multiple accept="image/*,.pdf,.xlsx,.csv,.txt,.md,.json" onChange={(e) => void addFiles(e.currentTarget.files)} />
+            </label>
+            {members.length > 0 && (
+              <span class="composer-model"><IconBrain /> {members.find((m) => m.id === replyAgent)?.name}</span>
+            )}
+            <span class="grow" />
+            <button class="composer-send" type="submit" aria-label="Отправить" disabled={(!draft.trim() && files.length === 0) || sending}>
+              {draft.trim() || files.length ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5M6 11l6-6 6 6" /></svg>
+              ) : <IconMic />}
+            </button>
+          </div>
+        </div>
+      </form>
+      {error && <p class="error">{error}</p>}
+    </section>
+  );
+}
+
+function ToolCard({ call, onDecide }: { call: ToolCall; onDecide: ((callId: string, d: "approve" | "deny") => Promise<void>) | undefined }) {
+  const [open, setOpen] = useState(false);
+  const label: Record<ToolCall["state"], string> = { requested: "запрошен", approval: "ждёт одобрения", running: "выполняется", done: "готово", failed: "ошибка", denied: "отклонён" };
+  return (
+    <div class={`tool ${call.state}`}>
+      <div class="tool-head" onClick={() => setOpen(!open)}>
+        <code>{call.tool}</code>
+        <span class="small">{label[call.state]}</span>
+        <span class="muted small">{open ? "▾" : "▸"}</span>
+      </div>
+      {(open || call.state === "approval") && (
+        <div class="tool-body">
+          <pre>{show(call.args)}</pre>
+          {call.reason && <p class="muted small">{call.reason}</p>}
+          {call.state === "done" && open && call.tool === "agent.task" && call.result && typeof call.result === "object" && "text" in (call.result as object) && (
+            <p>{String((call.result as { text: string }).text)}</p>
+          )}
+          {call.state === "done" && open && <pre class="result">{show(call.result)}</pre>}
+          {call.error && (
+            <p class="error small">
+              {call.error.code}: {call.error.message}
+              {call.error.hint && <br />}
+              {call.error.hint}
+            </p>
+          )}
+        </div>
+      )}
+      {onDecide && (
+        <div class="tool-actions">
+          <button onClick={() => void onDecide(call.callId, "approve")}>Одобрить</button>
+          <button class="danger" onClick={() => void onDecide(call.callId, "deny")}>
+            Отклонить
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function laneOf(type: string): "input" | "model" | "tool" {
+  if (type.startsWith("tool.")) return "tool";
+  if (type.startsWith("message.agent") || type.startsWith("model.")) return "model";
+  return "input";
+}
+
+function eventPreview(data: Record<string, unknown>): string {
+  for (const key of ["text", "message", "summary", "name", "tool", "reason"]) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 280);
+  }
+  return "";
+}
+
+function Journal({ events }: { events: SintyEvent[] }) {
+  const [showDuration, setShowDuration] = useState(true);
+  const [showTurns, setShowTurns] = useState(true);
+  const [showCalls, setShowCalls] = useState(true);
+  const [picked, setPicked] = useState(0);
+  const rows = events.filter((e) => showCalls || !e.type.startsWith("tool."));
+  const selected = rows[Math.min(picked, Math.max(0, rows.length - 1))];
+  const start = rows.length ? Date.parse(rows[0]!.ts) : 0;
+  const end = rows.length ? Date.parse(rows[rows.length - 1]!.ts) : start;
+  const span = Math.max(1, end - start);
+  const turns = new Map<string, SintyEvent[]>();
+  for (const event of rows) {
+    const key = event.turnId || "до хода";
+    turns.set(key, [...(turns.get(key) ?? []), event]);
+  }
+  return (
+    <div class="trace">
+      <div class="trace-tools">
+        <label><input type="checkbox" checked={showDuration} onChange={() => setShowDuration(!showDuration)} /> Длительность</label>
+        <label><input type="checkbox" checked={showTurns} onChange={() => setShowTurns(!showTurns)} /> Ходы</label>
+        <label><input type="checkbox" checked={showCalls} onChange={() => setShowCalls(!showCalls)} /> Вызовы</label>
+      </div>
+      {showDuration && rows.length > 0 && (
+        <div class="trace-plot">
+          <div class="trace-lanes"><span>Ввод</span><span>Модель</span><span>Вызовы</span></div>
+          <div class="trace-track">
+            {[...turns.keys()].slice(1).map((turn) => {
+              const first = turns.get(turn)?.[0];
+              if (!first) return null;
+              const left = (Date.parse(first.ts) - start) / span * 100;
+              return <i key={turn} class="trace-bound" style={{ left: `${left}%` }} />;
+            })}
+            {rows.map((event, i) => {
+              const next = rows[i + 1];
+              const left = (Date.parse(event.ts) - start) / span * 100;
+              const width = Math.max(0.4, ((next ? Date.parse(next.ts) : end + span * 0.02) - Date.parse(event.ts)) / span * 100);
+              return (
+                <button
+                  key={event.seq ?? i}
+                  type="button"
+                  class={`seg ${laneOf(event.type)} ${selected === event ? "on" : ""}`}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                  title={eventPreview(event.data) || event.type}
+                  onClick={() => setPicked(i)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <div class="trace-body">
+        <div class="trace-list">
+          {[...turns.entries()].map(([turn, list], index) => (
+            <div key={turn}>
+              {showTurns && <div class="trace-turn">Ход {index + 1}</div>}
+              {list.map((event) => {
+                const i = rows.indexOf(event);
+                const preview = eventPreview(event.data);
+                return (
+                  <button key={event.seq ?? event.id} type="button" class={`trace-row ${selected === event ? "on" : ""}`} onClick={() => setPicked(i)}>
+                    <span class={`pill ${laneOf(event.type)}`}>{laneOf(event.type) === "input" ? "Ввод" : laneOf(event.type) === "model" ? "Модель" : "Вызов"}</span>
+                    <span class="trace-text">{preview || event.type}</span>
+                    <span class="muted small">{new Date(event.ts).toLocaleTimeString()}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        {selected && (
+          <aside class="trace-side">
+            <b>{selected.type}</b>
+            <p class="small muted">{selected.actor ? `${selected.actor.kind}:${selected.actor.id}` : "без автора"} · {new Date(selected.ts).toLocaleString()}</p>
+            {eventPreview(selected.data) && <p>{eventPreview(selected.data)}</p>}
+            <pre>{JSON.stringify(selected.data, null, 2)}</pre>
+          </aside>
+        )}
+      </div>
+    </div>
+  );
+}

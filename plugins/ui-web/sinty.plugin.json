@@ -1,0 +1,11 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "ui-web",
+  "version": "0.1.0",
+  "description": "Web UI: chat, sessions, approvals, journal, supervisor and kanban. Built from apps/web",
+  "kinds": ["ui"],
+  "runtime": "node",
+  "permissions": {},
+  "ui": { "static": "public" },
+  "editable": false
+}

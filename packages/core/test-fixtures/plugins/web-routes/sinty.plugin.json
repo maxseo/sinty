@@ -1,0 +1,12 @@
+{
+  "name": "web-routes",
+  "version": "0.0.1",
+  "description": "HTTP routes and read-only agent access for core tests",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {
+    "fs": { "write": ["$DATA"] },
+    "agent": ["sessions.read"]
+  }
+}

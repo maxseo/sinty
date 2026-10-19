@@ -35,7 +35,13 @@
         "net": { "type": "array", "items": { "type": "string" } },
         "secrets": { "type": "array", "items": { "type": "string" } },
         "env": { "type": "array", "items": { "type": "string" } },
-        "shell": { "type": "boolean" }
+        "shell": { "type": "boolean" },
+        "agent": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["sessions.read", "sessions.write"] },
+          "description": "Talk to the agent through ctx.agent: read sessions and live streams, create sessions and send messages"
+        }
       }
     },
     "tools": {
@@ -57,10 +63,19 @@
     },
     "config": { "type": "object" },
     "tests": { "type": "string" },
-    "editable": { "type": "boolean", "default": true }
+    "editable": { "type": "boolean", "default": true },
+    "ui": {
+      "type": "object",
+      "required": ["static"],
+      "additionalProperties": false,
+      "properties": { "static": { "type": "string", "description": "folder with static files served at /ui/<name>/; only for editable: false" } }
+    }
   },
   "allOf": [
-    { "if": { "properties": { "runtime": { "const": "node" } } }, "then": { "required": ["entry"] } },
+    {
+      "if": { "required": ["runtime"], "properties": { "runtime": { "const": "node" }, "kinds": { "contains": { "not": { "const": "ui" } } } } },
+      "then": { "required": ["entry"] }
+    },
     { "if": { "properties": { "runtime": { "const": "mcp-stdio" } } }, "then": { "required": ["command"] } },
     { "if": { "properties": { "runtime": { "const": "http" } } }, "then": { "required": ["url"] } }
   ]

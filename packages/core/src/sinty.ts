@@ -8,6 +8,8 @@ import { PluginHost } from "./host/host.js";
 import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
 import { PatchManager } from "./patches.js";
+import { createAgentBridge } from "./plugin-bridge.js";
+import { checkIntegrity, installLooksStrictUnsafe } from "./integrity.js";
 import { resolvePaths, type SintyPaths } from "./paths.js";
 import { SecretStore } from "./secrets.js";
 import { SupervisorClient } from "./supervisor-client.js";
@@ -24,7 +26,7 @@ export interface InitResult {
 export function initHome(home?: string): InitResult {
   const paths = resolvePaths(home);
   const created: string[] = [];
-  for (const dir of [paths.home, paths.blobs, paths.plugins, paths.skills, paths.workspace]) {
+  for (const dir of [paths.home, paths.blobs, paths.plugins, paths.skills, paths.workspace, paths.data]) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
       created.push(dir);
@@ -85,6 +87,7 @@ export class Sinty {
       loaded: (plugin, version) => this.log("info", `plugin ${plugin}@${version} ready`),
       crashed: (plugin, code, restarts) => this.log("warn", `plugin ${plugin} exited with ${code} (crash ${restarts})`),
       readJournal: (sessionId, afterSeq, types) => this.journal.events(sessionId, { afterSeq, types }),
+      agent: createAgentBridge(() => ({ agent: this.agent, journal: this.journal, bus: this.bus })),
     });
 
     this.patches = new PatchManager(this.paths, this.journal, this.host, {
@@ -130,6 +133,13 @@ export class Sinty {
 
   /** Starts plugins and the supervisor, then resumes turns that were running when the process stopped. */
   async start(): Promise<{ failedPlugins: { plugin: string; error: string }[]; resumedTurns: string[] }> {
+    const integrity = checkIntegrity(this.paths.install);
+    if (!integrity.ok) throw new Error(`install integrity check failed:\n${integrity.problems.slice(0, 8).join("\n")}`);
+    if (this.policy.mode === "strict") {
+      const note = installLooksStrictUnsafe();
+      if (note && process.platform !== "win32" && note.includes("root")) throw new Error(note);
+      if (note) this.log("warn", note);
+    }
     const { failed } = await this.host.start();
     for (const f of failed) this.log("error", `plugin ${f.plugin} failed to start: ${f.error}`);
     if (this.supervisor) {

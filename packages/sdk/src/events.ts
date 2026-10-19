@@ -1,4 +1,5 @@
-export const PROTOCOL_VERSION = "sinty/0.1" as const;
+/** Frozen in M6. New fields may be added; renaming or removing a field needs a new major version. */
+export const PROTOCOL_VERSION = "sinty/1.0" as const;
 
 export type ActorKind = "human" | "agent" | "supervisor" | "system" | "plugin";
 
@@ -24,6 +25,7 @@ export interface BlobRef {
   blob: `sha256:${string}`;
   mime: string;
   bytes: number;
+  name?: string;
 }
 
 export interface EventDataMap {
@@ -77,6 +79,14 @@ export type EventType = keyof EventDataMap;
 
 /** Event types delivered to live streams but never written to the journal. */
 export const STREAM_ONLY_EVENTS = ["model.delta", "tool.call.progress"] as const satisfies readonly EventType[];
+
+/** A live-only event: delivered to streams, never journaled. */
+export type StreamEvent =
+  | { type: "model.delta"; sessionId: string; turnId: string; ts: string; data: EventDataMap["model.delta"] }
+  | { type: "tool.call.progress"; sessionId: string; turnId: string; ts: string; data: EventDataMap["tool.call.progress"] };
+
+/** What a live stream yields: journaled events (with `seq`) and stream-only events (without). */
+export type LiveEvent = SintyEvent | StreamEvent;
 
 export interface ToolCallRef {
   callId: string;

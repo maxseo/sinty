@@ -1,7 +1,14 @@
 # Web UI
 
-Vue 3 + Vite single-page app served by the `channel-web` plugin. Milestone M3.
+Preact + Vite app. `pnpm build` writes the bundle to `plugins/ui-web/public`, which the core serves at `/ui/ui-web/`.
 
-Views: chat with sessions, live journal, approvals, supervisor panel, kanban (cards are tasks; any number of agents can be assigned), agents list with states, settings (models, plugins, policy viewer).
+Talks only to the public HTTP API ([protocol](../../docs/spec/protocol.md)). The token is a bearer header; EventSource cannot send headers, so live streams use `fetch` + SSE.
 
-Talks only to the public API ([protocol](../../docs/spec/protocol.md)), so it can be replaced or embedded into another app.
+| Page | Source |
+|---|---|
+| Chat, streaming, tool cards, approvals, resume | `src/chat.tsx` |
+| Session list and live badges | `src/app.tsx` via `GET /v1/stream` |
+| Kanban | `src/board.tsx` via `/p/kanban` |
+| Pending, supervisor, plugins | `src/pages.tsx` |
+
+`vite` in `dev` proxies `/v1` and `/p` to `SINTY_URL` (default `http://127.0.0.1:3180`).

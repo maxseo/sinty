@@ -41,14 +41,24 @@ Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-mani
 |---|---|
 | `kinds` | extension points the plugin uses: `provider`, `tool`, `context`, `channel`, `server`, `schedule`, `event`, `ui` |
 | `runtime` | `node` (SDK, own process), `mcp-stdio` (any MCP server, any language), `http` (remote MCP endpoint) |
+| `entry` | required for a node plugin unless `kinds` is only `ui` (static files, no process) |
 | `permissions` | the only rights the plugin process receives; enforced by the host |
+| `permissions.agent` | `sessions.read` and/or `sessions.write`: the plugin may call the agent API over IPC |
+| `ui.static` | folder of static files served at `/ui/<name>/`, **only** when `editable` is `false` |
 | `tools[].sideEffects` | `none`, `read`, `write`, `external`; drives default policy and resume behaviour |
 | `tools[].idempotent` | safe to repeat with the same arguments |
 | `tools[].recoverable` | plugin implements `recover(idempotencyKey)` |
 | `tools[].docs` | markdown the supervisor shows when this tool fails |
-| `editable` | whether the agent may patch this plugin; `false` for security-critical plugins |
+| `editable` | whether the agent may patch this plugin; `false` for security-critical plugins and for any UI the core serves |
 
 Input schemas are declared in code (zod) and exported by the plugin at load time; the host converts them to JSON Schema and stores them in the registry.
+
+## `$DATA`, HTTP routes and agent access
+
+- `$DATA` expands to `$SINTY_HOME/data/<plugin>`. A grant that touches another plugin's data folder is rejected.
+- `ctx.http({ method, path, public?, handler })` registers a route under `/p/<plugin>`. `:param` is one segment, a trailing `*` the rest. The core strips `Authorization`, `Cookie` and hop-by-hop headers, and removes `token` from the query, before the plugin sees the request. `public: true` skips the bearer check.
+- `ctx.agent` is the same session API the HTTP clients use. Arguments are validated in the core (`plugin-bridge.ts`); write ops need `sessions.write`; idempotency keys are prefixed with the plugin name; the actor is `{ kind: "plugin" }`.
+- `createSSE` / `runTurn` in `@sinty/sdk` are helpers for streaming servers (MCP, OpenAI API, AG-UI).
 
 ## MCP servers as plugins
 

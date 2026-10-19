@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sinty 1.0</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; color: #1d1d1f; }
+      code { font-family: ui-monospace, Consolas, monospace; }
+      a { color: #3a6df0; }
+    </style>
+  </head>
+  <body>
+    <h1>Sinty 1.0</h1>
+    <p>Протокол <code>sinty/1.0</code> заморожен. Новые поля добавлять можно. Переименовать или убрать поле — только в следующей мажорной версии. Версию отдаёт <code>GET /v1/health</code>.</p>
+    <h2>Запуск</h2>
+    <ol>
+      <li><code>node scripts/stage.mjs</code>, затем <code>install.ps1</code> или <code>install.sh</code>.</li>
+      <li>В <code>~/.sinty/config.yaml</code> строка <code>models.default</code>, например <code>deepseek/deepseek-chat</code>.</li>
+      <li><code>sinty secret set deepseek</code>, затем <code>sinty web</code>.</li>
+    </ol>
+    <h2>Плагины</h2>
+    <p>Каталог установки: <code>registry/plugins.json</code>. Команда <code>sinty plugins</code> показывает, какой включён. Включение — имя в <code>plugins.enabled</code> и перезапуск. Свой плагин — папка в <code>~/.sinty/plugins</code>.</p>
+    <h2>Ход</h2>
+    <p>Модель либо отвечает текстом, либо зовёт инструмент. Результат возвращается модели. Журнал хода — вкладка «Журнал» в чате. Спецификация событий: <code>docs/spec/protocol.md</code> в репозитории.</p>
+  </body>
+</html>

@@ -2,26 +2,46 @@ import { fork, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ChatMessage, ContextInput, EventType, ProviderChunk, RecoverOutcome, SintyEvent } from "@sinty/sdk";
+import type { AgentScope, ChatMessage, ContextInput, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent } from "@sinty/sdk";
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
-import { findPlugin, resolveFsGrants, type LoadedManifest } from "./manifest.js";
-import type { CallCtx, FromChild, ProviderWireRequest, ToChild, ToolInfo, WireError } from "./protocol.js";
+import { findPlugin, pluginDataDir, resolveFsGrants, type LoadedManifest } from "./manifest.js";
+import type { AgentOp, CallCtx, FromChild, ProviderWireRequest, RouteInfo, ToChild, ToolInfo, WireError } from "./protocol.js";
 
 const RUNNER = join(dirname(fileURLToPath(import.meta.url)), "runner.js");
 const READY_TIMEOUT_MS = 15_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+const HTTP_START_TIMEOUT_MS = 120_000;
 const CRASH_WINDOW_MS = 10 * 60_000;
 const MAX_CRASHES = 5;
+const AGENT_OP_SCOPE: Record<AgentOp | "stream", AgentScope> = {
+  listSessions: "sessions.read",
+  getSession: "sessions.read",
+  events: "sessions.read",
+  stream: "sessions.read",
+  createSession: "sessions.write",
+  send: "sessions.write",
+  interrupt: "sessions.write",
+};
+const NO_BODY_STATUS = new Set([101, 204, 205, 304]);
+const HOP_HEADERS = new Set(["authorization", "cookie", "connection", "keep-alive", "transfer-encoding", "host"]);
 
 export type ToolOutcome = { ok: true; content: unknown } | { ok: false; error: WireError };
+
+/** What plugins with `permissions.agent` may do; implemented by the core. */
+export interface AgentBridge {
+  call(plugin: string, op: AgentOp, args: unknown[]): Promise<unknown>;
+  /** Replays the journal after `afterSeq`, then pushes live events. Returns the unsubscribe function. */
+  stream(sessionId: string, afterSeq: number, push: (e: LiveEvent) => void): () => void;
+}
 
 export interface HostEvents {
   log(plugin: string, level: string, msg: string, data?: unknown): void;
   loaded(plugin: string, version: string): void;
   crashed(plugin: string, exitCode: number | null, restarts: number): void;
   readJournal(sessionId: string, afterSeq?: number, types?: EventType[]): SintyEvent[];
+  agent?: AgentBridge;
 }
 
 interface Pending {
@@ -47,6 +67,10 @@ export class PluginProcess {
   providers: string[] = [];
   contexts: { name: string; order: number }[] = [];
   subscriptions: (EventType | "*")[] = [];
+  routes: RouteInfo[] = [];
+  /** A `ui`-only plugin without an entry: the core serves its files, no process runs. */
+  staticOnly = false;
+  private readonly streams = new Map<number, () => void>();
 
   constructor(
     readonly loaded: LoadedManifest,
@@ -63,8 +87,14 @@ export class PluginProcess {
 
   async start(): Promise<void> {
     const m = this.loaded.manifest;
-    if (m.runtime !== "node") throw new Error(`plugin ${m.name}: runtime ${m.runtime} is not supported by this core version yet`);
-    if (!m.entry) throw new Error(`plugin ${m.name}: entry is required`);
+    if (!m.entry && m.kinds.every((k) => k === "ui")) {
+      if (!m.ui) throw new Error(`plugin ${m.name}: a ui plugin without entry needs "ui": { "static": "<folder>" }`);
+      this.staticOnly = true;
+      this.events.loaded(this.name, m.version);
+      return;
+    }
+    if (m.runtime !== "node" && m.runtime !== "mcp-stdio" && m.runtime !== "http") throw new Error(`plugin ${m.name}: runtime ${m.runtime} is not supported by this core version yet`);
+    if (m.runtime === "node" && !m.entry) throw new Error(`plugin ${m.name}: entry is required`);
     const child = fork(RUNNER, [], { execArgv: this.permissionArgs(), env: this.childEnv(), cwd: this.loaded.dir, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "advanced" });
     this.child = child;
     child.stdout?.on("data", (b: Buffer) => this.events.log(this.name, "info", b.toString().trimEnd()));
@@ -82,6 +112,7 @@ export class PluginProcess {
           this.providers = msg.providers;
           this.contexts = msg.contexts;
           this.subscriptions = msg.subscriptions;
+          this.routes = msg.routes;
           resolveReady();
         } else if (msg.t === "fatal") {
           clearTimeout(timer);
@@ -99,11 +130,11 @@ export class PluginProcess {
     this.send({
       t: "init",
       manifest: m,
-      entry: resolve(this.loaded.dir, m.entry),
+      entry: m.entry ? resolve(this.loaded.dir, m.entry) : "",
       config: { ...(m.config ?? {}), ...(this.config.plugins.config[m.name] ?? {}) },
       secrets: this.resolveSecrets(),
-      net: { manifest: m.permissions.net ?? [], policy: this.netPolicy() },
-      paths: { workspace: this.paths.workspace, skills: this.paths.skills, plugin: this.loaded.dir },
+      net: { manifest: [...(m.permissions.net ?? []), ...(httpHost(m) ? [httpHost(m)!] : [])], policy: this.netPolicy() },
+      paths: { workspace: this.paths.workspace, skills: this.paths.skills, plugin: this.loaded.dir, data: pluginDataDir(this.paths, m.name) },
     });
     await ready;
     this.events.loaded(this.name, m.version);
@@ -120,6 +151,7 @@ export class PluginProcess {
       `--allow-fs-read=${join(this.paths.plugins, "node_modules")}`,
       ...grants.read.map((p) => `--allow-fs-read=${p}`),
       ...grants.write.flatMap((p) => [`--allow-fs-read=${p}`, `--allow-fs-write=${p}`]),
+      ...(this.loaded.manifest.permissions.shell || this.loaded.manifest.runtime === "mcp-stdio" ? ["--allow-child-process"] : []),
       "--disable-warning=ExperimentalWarning",
     ];
   }
@@ -129,6 +161,9 @@ export class PluginProcess {
     for (const k of ["NODE_ENV", "PATH", "SYSTEMROOT", "TEMP", "TMP", ...(this.loaded.manifest.permissions.env ?? [])]) {
       if (process.env[k] !== undefined) env[k] = process.env[k];
     }
+    env.SINTY_USER_ID = this.config.agent.userId;
+    env.SINTY_AGENT_NAME = this.config.agent.name;
+    env.SINTY_MEMORY_DIM = String(this.config.memory.dimensions);
     return env;
   }
 
@@ -247,6 +282,100 @@ export class PluginProcess {
     }
   }
 
+  /** Forwards an HTTP request to one of the plugin's routes; the response body streams back chunk by chunk. */
+  async handleHttp(route: number, params: Record<string, string>, req: Request, relativeUrl: string): Promise<Response> {
+    await this.whenRunning();
+    const id = ++this.nextId;
+    const body = req.method === "GET" || req.method === "HEAD" ? null : new Uint8Array(await req.arrayBuffer());
+    const headers = [...req.headers.entries()].filter(([k]) => !HOP_HEADERS.has(k.toLowerCase()));
+    return new Promise<Response>((resolveResponse) => {
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+      let started = false;
+      let bodyless = false;
+      let finished = false;
+      const cleanup = (): void => {
+        finished = true;
+        clearTimeout(timer);
+        this.pending.delete(id);
+        req.signal.removeEventListener("abort", onAbort);
+      };
+      const fail = (status: number, error: WireError): void => {
+        if (finished) return;
+        cleanup();
+        if (!started) resolveResponse(Response.json({ error }, { status }));
+        else controller?.error(new Error(error.message));
+      };
+      const onAbort = (): void => {
+        if (finished) return;
+        this.send({ t: "cancel", id });
+        cleanup();
+        controller?.error(new Error("client disconnected"));
+      };
+      const timer = setTimeout(() => {
+        if (started) return;
+        this.send({ t: "cancel", id });
+        fail(504, { code: "timeout", message: `plugin ${this.name} did not answer in ${HTTP_START_TIMEOUT_MS} ms` });
+      }, HTTP_START_TIMEOUT_MS);
+      req.signal.addEventListener("abort", onAbort, { once: true });
+      const stream = new ReadableStream<Uint8Array>({
+        start: (c) => {
+          controller = c;
+        },
+        cancel: () => onAbort(),
+      });
+      this.pending.set(id, {
+        onMessage: (msg) => {
+          if (msg.t === "http.start") {
+            started = true;
+            clearTimeout(timer);
+            bodyless = NO_BODY_STATUS.has(msg.status) || req.method === "HEAD";
+            resolveResponse(new Response(bodyless ? null : stream, { status: msg.status, headers: msg.headers }));
+          } else if (msg.t === "http.chunk") {
+            if (!bodyless) controller?.enqueue(msg.chunk);
+          } else if (msg.t === "http.end") {
+            cleanup();
+            if (!bodyless) controller?.close();
+          } else if (msg.t === "http.error") {
+            fail(msg.error.code === "not_found" ? 404 : 502, msg.error);
+          }
+        },
+        onCrash: (error) => fail(502, error),
+      });
+      if (!this.send({ t: "http.request", id, route, params, method: req.method, url: relativeUrl, headers, body })) {
+        fail(503, { code: "plugin_unavailable", message: `plugin ${this.name} is not running` });
+      }
+    });
+  }
+
+  private hasScope(op: AgentOp | "stream"): boolean {
+    return (this.loaded.manifest.permissions.agent ?? []).includes(AGENT_OP_SCOPE[op]);
+  }
+
+  private onAgentCall(id: number, op: AgentOp, args: unknown[]): void {
+    const bridge = this.events.agent;
+    if (!bridge || !this.hasScope(op)) {
+      this.send({ t: "agent.result", id, ok: false, error: { code: "agent_denied", message: `plugin ${this.name} lacks permissions.agent "${AGENT_OP_SCOPE[op]}" for ${op}` } });
+      return;
+    }
+    bridge
+      .call(this.name, op, Array.isArray(args) ? args : [])
+      .then((value) => this.send({ t: "agent.result", id, ok: true, value }))
+      .catch((e: unknown) => this.send({ t: "agent.result", id, ok: false, error: wireOf(e) }));
+  }
+
+  private onAgentStream(id: number, sessionId: string, afterSeq: number): void {
+    const bridge = this.events.agent;
+    if (!bridge || !this.hasScope("stream")) {
+      this.send({ t: "agent.end", id, error: { code: "agent_denied", message: `plugin ${this.name} lacks permissions.agent "sessions.read"` } });
+      return;
+    }
+    try {
+      this.streams.set(id, bridge.stream(String(sessionId), Number(afterSeq) || 0, (event) => this.send({ t: "agent.event", id, event })));
+    } catch (e) {
+      this.send({ t: "agent.end", id, error: wireOf(e) });
+    }
+  }
+
   async runContext(name: string, input: ContextInput): Promise<ChatMessage[]> {
     await this.whenRunning();
     const id = ++this.nextId;
@@ -282,6 +411,13 @@ export class PluginProcess {
       this.send({ t: "journal.events", id: msg.id, events });
       return;
     }
+    if (msg.t === "agent.call") return this.onAgentCall(msg.id, msg.op, msg.args);
+    if (msg.t === "agent.stream") return this.onAgentStream(msg.id, msg.sessionId, msg.afterSeq);
+    if (msg.t === "agent.stream.close") {
+      this.streams.get(msg.id)?.();
+      this.streams.delete(msg.id);
+      return;
+    }
     if ("id" in msg) this.pending.get(msg.id)?.onMessage(msg);
   }
 
@@ -289,6 +425,8 @@ export class PluginProcess {
     const crash: WireError = { code: "plugin_crashed", message: `plugin ${this.name} exited with code ${code}`, hint: "The plugin process restarts automatically; retry once." };
     for (const p of [...this.pending.values()]) p.onCrash(crash);
     this.pending.clear();
+    for (const unsubscribe of this.streams.values()) unsubscribe();
+    this.streams.clear();
     this.child = undefined;
     if (this.stopping || !this.autoRestart) return;
 
@@ -340,6 +478,11 @@ export class PluginProcess {
     }
     return allow;
   }
+}
+
+function wireOf(e: unknown): WireError {
+  const code = e && typeof e === "object" && "code" in e && typeof e.code === "string" ? e.code : "internal";
+  return { code, message: e instanceof Error ? e.message : String(e) };
 }
 
 export class ProviderError extends Error {
@@ -444,3 +587,13 @@ export class PluginHost {
     for (const p of this.plugins.values()) p.forward(event);
   }
 }
+
+function httpHost(m: PluginManifest): string | undefined {
+  if (m.runtime !== "http" || !m.url) return undefined;
+  try {
+    return new URL(m.url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+

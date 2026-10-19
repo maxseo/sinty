@@ -1,6 +1,8 @@
 # Events and API protocol
 
-Version: `sinty/0.1` (draft). TypeScript types: [`packages/sdk/src/events.ts`](../../packages/sdk/src/events.ts).
+Version: `sinty/1.0` (frozen). TypeScript types: [`packages/sdk/src/events.ts`](../../packages/sdk/src/events.ts).
+
+Frozen means a client written for 1.0 keeps working. New optional fields and new event types may appear. Renaming or removing a field, or changing the meaning of an existing one, requires `sinty/2.0`. `GET /v1/health` returns this version.
 
 ## Event envelope
 
@@ -45,34 +47,50 @@ Agent states match Herdr's vocabulary so integrations need no mapping.
 
 ## HTTP API
 
-Base path `/v1`. Auth: `Authorization: Bearer <token>`; scopes `read`, `chat`, `approve`, `admin`.
+Base path `/v1`. Auth: `Authorization: Bearer <token>` (or `?token=` on GET, stripped before a plugin sees the request). One token today; finer scopes are in the [backlog](../backlog.md).
 
-| Method | Path | Scope | Purpose |
-|---|---|---|---|
-| GET | `/v1/health` | — | liveness and readiness |
-| GET | `/v1/agent` | read | agent card: name, skills, tools, models, channels |
-| POST | `/v1/sessions` | chat | create a session `{ title?, projectId?, metadata? }` |
-| GET | `/v1/sessions` | read | list sessions |
-| GET | `/v1/sessions/:id` | read | session with current state |
-| POST | `/v1/sessions/:id/messages` | chat | send a user message; starts a turn; returns `{ turnId }` |
-| GET | `/v1/sessions/:id/events?after=<seq>` | read | replay journaled events |
-| GET | `/v1/sessions/:id/stream?after=<seq>` | read | SSE stream: replay then live |
-| POST | `/v1/sessions/:id/approvals/:callId` | approve | `{ decision: "approve" | "deny", note? }` |
-| POST | `/v1/sessions/:id/interrupt` | chat | stop the current turn after the running step |
-| GET | `/v1/ws` | read | WebSocket multiplex of all sessions the token can see |
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/v1/health` | liveness and protocol version |
+| GET | `/v1/registry` | catalog of shipped plugins and which are enabled |
+| GET | `/v1/agent` | name, default model, tools, plugins, supervisor flag |
+| GET | `/v1/plugins` | installed plugins, their tools, HTTP routes and UI path |
+| POST | `/v1/sessions` | create `{ title?, projectId?, metadata? }` |
+| GET | `/v1/sessions` | list with `activeTurn` |
+| GET | `/v1/sessions/:id` | session plus `pending` (approvals / ask_human / supervisor / budget) |
+| GET | `/v1/sessions/:id/pending` | pending info for one session |
+| GET | `/v1/pending` | every blocked turn across sessions |
+| POST | `/v1/sessions/:id/messages` | user message; starts a turn; `{ turnId }` |
+| GET | `/v1/sessions/:id/events?after=<seq>` | replay journaled events |
+| GET | `/v1/sessions/:id/stream?after=<seq>` | SSE: replay then live (includes `model.delta`) |
+| POST | `/v1/sessions/:id/approvals/:callId` | `{ decision: "approve" \| "deny", note? }` |
+| POST | `/v1/sessions/:id/interrupt` | stop the current turn after the running step |
+| GET | `/v1/supervisor` | recent supervisor events, incidents, patches (file paths only) |
+| GET | `/v1/stream` | SSE of lifecycle events of all sessions (lists, badges, boards) |
+| GET | `/` | redirect to `/ui/<server.ui>/` |
+| GET | `/ui/:plugin/*` | static UI of a **non-editable** plugin |
+| * | `/p/:plugin/*` | HTTP routes the plugin registered; public routes skip the token |
 
-Plugins add surfaces: `/mcp` (`server-mcp`), `/.well-known/agent-card.json` and `/a2a` (`server-a2a`), `/v1/chat/completions` and `/v1/responses` (`server-openai-api`).
+Plugin surfaces (enable the plugin in `config.yaml`):
+
+| Plugin | Path |
+|---|---|
+| `server-mcp` | `POST /p/server-mcp/mcp` |
+| `server-openai-api` | `GET /p/server-openai-api/v1/models`, `POST …/v1/chat/completions` |
+| `server-agui` | `POST /p/server-agui/agui` |
+| `kanban` | `/p/kanban/board`, `/stream`, `/cards` |
 
 ## AG-UI mapping
 
-`/stream?format=ag-ui` emits AG-UI events so any AG-UI client can render Sinty:
+`POST /p/server-agui/agui` (plugin `server-agui`) accepts `RunAgentInput` and streams AG-UI events. `threadId` maps to a Sinty session.
 
 | Sinty | AG-UI |
 |---|---|
-| `turn.started` / `turn.completed` / `turn.failed` | `RUN_STARTED` / `RUN_FINISHED` / `RUN_ERROR` |
-| `model.delta` | `TEXT_MESSAGE_CONTENT` (between `TEXT_MESSAGE_START` and `TEXT_MESSAGE_END`) |
-| `tool.call.started` / `tool.call.completed` | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` |
-| `agent.state`, `supervisor.notice` | `STATE_DELTA`, `CUSTOM` |
+| start / end of the turn | `RUN_STARTED` / `RUN_FINISHED` or `RUN_ERROR` |
+| `model.request` / `model.response` | `STEP_STARTED` / `STEP_FINISHED` |
+| `model.delta` | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` |
+| tool calls | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_RESULT` |
+| approvals, supervisor | `CUSTOM` with `name: "sinty.<event type>"` |
 
 ## Idempotent message delivery
 

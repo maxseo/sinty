@@ -1,0 +1,10 @@
+{
+  "name": "web-ui-open",
+  "version": "0.0.1",
+  "description": "Static UI fixture that the agent could patch, so the core must not serve it",
+  "kinds": ["ui"],
+  "runtime": "node",
+  "permissions": {},
+  "ui": { "static": "public" },
+  "editable": true
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "channel-webhook",
+  "version": "0.1.0",
+  "description": "Sync chat webhook: one POST runs a turn and returns the agent's text. Same role as the n8n chat webhook.",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "write": ["$DATA"] },
+    "agent": ["sessions.read", "sessions.write"]
+  },
+  "editable": true
+}

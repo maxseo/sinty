@@ -3,7 +3,7 @@
 **Syntet AI agent that runs the same on a laptop and on any VPS.**
 One process, one SQLite file, plugins for everything else.
 
-> Status: **v0.2, core and supervisor working** — turn loop, journal with crash recovery, policy gate, sandboxed plugin host, HTTP API with SSE, CLI, providers for OpenAI-compatible APIs and Anthropic, file tools, a supervisor that sends the agent hints and escalates to a human, and a patch pipeline through which the agent fixes its own plugins (sandboxed tests, git history, automatic rollback). The Web UI is next. See [roadmap](docs/roadmap.md).
+> Status: **v0.4, channels working** — core, supervisor, Web UI, and optional plugins for a chat webhook, Telegram, voice text, A2A, delegating to Claude/Codex/Grok, Herdr state, a trace log, and the first Syntet site tools. Switching off n8n is the last milestone. See [roadmap](docs/roadmap.md) and [backlog](docs/backlog.md).
 
 [Русская версия](README.ru.md)
 
@@ -34,7 +34,7 @@ sinty secret set deepseek           # or anthropic, openai, xai
 # set models.default in ~/.sinty/config.yaml, e.g. deepseek/deepseek-chat
 sinty doctor
 sinty run "create notes/todo.md with three ideas for my weekend"
-sinty serve                         # HTTP API on 127.0.0.1:3180
+sinty web                           # API + Web UI; prints http://127.0.0.1:3180/ui/ui-web/#token=…
 ```
 
 ```sh

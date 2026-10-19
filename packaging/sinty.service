@@ -1,0 +1,17 @@
+[Unit]
+Description=Sinty agent
+After=network-online.target
+
+[Service]
+Type=simple
+User=sinty
+Group=sinty
+Environment=SINTY_HOME=/var/lib/sinty
+Environment=SINTY_INSTALL_ROOT=/usr/local/sinty
+ExecStart=/usr/local/sinty/bin/sinty web --host 127.0.0.1 --port 3180
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

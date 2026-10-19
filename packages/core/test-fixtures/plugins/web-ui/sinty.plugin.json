@@ -1,0 +1,10 @@
+{
+  "name": "web-ui",
+  "version": "0.0.1",
+  "description": "Static UI fixture",
+  "kinds": ["ui"],
+  "runtime": "node",
+  "permissions": {},
+  "ui": { "static": "public" },
+  "editable": false
+}

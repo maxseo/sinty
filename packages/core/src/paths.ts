@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,8 @@ export interface SintyPaths {
   bundledPlugins: string;
   skills: string;
   workspace: string;
+  /** Per-plugin data folders: `data/<plugin>`. */
+  data: string;
 }
 
 /** Files only the core may touch. A plugin permission covering any of them is rejected. */
@@ -23,9 +26,22 @@ export function coreOwnedPaths(p: SintyPaths): string[] {
   return [p.config, p.policy, p.agents, p.secrets, p.secretKey, p.journal, p.blobs, p.install];
 }
 
+/** Install root: `SINTY_INSTALL_ROOT`, else the nearest parent that has `integrity.json` or the repo workspace file. */
+export function findInstallRoot(from: string = dirname(fileURLToPath(import.meta.url))): string {
+  if (process.env.SINTY_INSTALL_ROOT) return resolve(process.env.SINTY_INSTALL_ROOT);
+  let dir = resolve(from);
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(dir, "integrity.json")) || existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolve(from, "..", "..", "..");
+}
+
 export function resolvePaths(home?: string): SintyPaths {
   const h = resolve(home ?? process.env.SINTY_HOME ?? join(homedir(), ".sinty"));
-  const install = resolve(process.env.SINTY_INSTALL_ROOT ?? join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."));
+  const install = findInstallRoot();
   return {
     home: h,
     install,
@@ -40,6 +56,7 @@ export function resolvePaths(home?: string): SintyPaths {
     bundledPlugins: join(install, "plugins"),
     skills: join(h, "skills"),
     workspace: join(h, "workspace"),
+    data: join(h, "data"),
   };
 }
 

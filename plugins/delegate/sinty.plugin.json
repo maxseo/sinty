@@ -1,0 +1,12 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "delegate",
+  "version": "0.1.0",
+  "description": "Run one task in Claude Code, Codex or Grok CLI and return only the final text",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "shell": true },
+  "tools": [{ "name": "delegate.run", "sideEffects": "external", "defaultPolicy": "ask" }],
+  "editable": true
+}

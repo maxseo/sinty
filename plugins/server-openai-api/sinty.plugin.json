@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "server-openai-api",
+  "version": "0.1.0",
+  "description": "OpenAI-compatible Chat Completions endpoint: any OpenAI client can talk to the agent as if it were a model",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "write": ["$DATA"] },
+    "agent": ["sessions.read", "sessions.write"]
+  },
+  "editable": true
+}

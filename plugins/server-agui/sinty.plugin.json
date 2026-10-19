@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "server-agui",
+  "version": "0.1.0",
+  "description": "AG-UI endpoint: stream the agent's runs to AG-UI clients such as CopilotKit",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "write": ["$DATA"] },
+    "agent": ["sessions.read", "sessions.write"]
+  },
+  "editable": true
+}

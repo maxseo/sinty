@@ -79,6 +79,11 @@ export class Journal {
         ended_at TEXT
       );
       CREATE INDEX IF NOT EXISTS turns_status ON turns (status);
+      CREATE TABLE IF NOT EXISTS turn_checkpoints (
+        turn_id TEXT PRIMARY KEY,
+        seq INTEGER NOT NULL,
+        view TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS idempotency (
         key TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -131,6 +136,23 @@ export class Journal {
     return this.db.prepare("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?").all(limit).map(toSession);
   }
 
+  deleteSession(id: string): boolean {
+    if (!this.getSession(id)) return false;
+    this.db.prepare("DELETE FROM events WHERE session_id = ?").run(id);
+    this.db.prepare("DELETE FROM turns WHERE session_id = ?").run(id);
+    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+    return true;
+  }
+
+  patchSession(id: string, patch: { title?: string | null; projectId?: string | null }): SessionRow | undefined {
+    const cur = this.getSession(id);
+    if (!cur) return undefined;
+    const title = patch.title === undefined ? cur.title : patch.title;
+    const projectId = patch.projectId === undefined ? (cur.projectId ?? null) : patch.projectId;
+    this.db.prepare("UPDATE sessions SET title = ?, project_id = ?, updated_at = ? WHERE id = ?").run(title, projectId, new Date().toISOString(), id);
+    return this.getSession(id);
+  }
+
   /** Writes the event durably and returns it. Stream-only types are rejected. */
   append<T extends EventType>(input: AppendInput<T>): SintyEvent<T> {
     if (STREAM_ONLY.has(input.type)) throw new Error(`${input.type} is stream-only`);
@@ -179,8 +201,21 @@ export class Journal {
     return this.db.prepare(sql).all(...params).map(toEvent);
   }
 
-  turnEvents(turnId: string): SintyEvent[] {
-    return this.db.prepare("SELECT * FROM events WHERE turn_id = ? ORDER BY seq").all(turnId).map(toEvent);
+  turnEvents(turnId: string, afterSeq = 0): SintyEvent[] {
+    return this.db.prepare("SELECT * FROM events WHERE turn_id = ? AND seq > ? ORDER BY seq").all(turnId, afterSeq).map(toEvent);
+  }
+
+  turnCheckpoint(turnId: string): { seq: number; view: string } | undefined {
+    const row = this.db.prepare("SELECT seq, view FROM turn_checkpoints WHERE turn_id = ?").get(turnId) as { seq: number; view: string } | undefined;
+    return row;
+  }
+
+  saveTurnCheckpoint(turnId: string, seq: number, view: string): void {
+    this.db.prepare("INSERT INTO turn_checkpoints (turn_id, seq, view) VALUES (?, ?, ?) ON CONFLICT(turn_id) DO UPDATE SET seq = excluded.seq, view = excluded.view").run(turnId, seq, view);
+  }
+
+  clearTurnCheckpoint(turnId: string): void {
+    this.db.prepare("DELETE FROM turn_checkpoints WHERE turn_id = ?").run(turnId);
   }
 
   startTurn(id: string, sessionId: string): void {
@@ -242,21 +277,42 @@ export class Journal {
 
   getPatch(id: string): PatchRow | undefined {
     const r = this.db.prepare("SELECT * FROM patches WHERE id = ?").get(id);
-    if (!r) return undefined;
-    return {
-      id: String(r.id),
-      plugin: String(r.plugin),
-      sessionId: String(r.session_id),
-      status: String(r.status) as PatchStatus,
-      reason: String(r.reason),
-      files: JSON.parse(String(r.files)) as PatchFile[],
-      permissionsChanged: Number(r.permissions_changed) === 1,
-      testOutput: String(r.test_output),
-      baseCommit: r.base_commit === null ? null : String(r.base_commit),
-      commit: r.commit_sha === null ? null : String(r.commit_sha),
-      createdAt: String(r.created_at),
-    };
+    return r ? toPatch(r) : undefined;
   }
+
+  listPatches(limit = 100): PatchRow[] {
+    return this.db.prepare("SELECT * FROM patches ORDER BY created_at DESC LIMIT ?").all(limit).map(toPatch);
+  }
+
+  /** Latest events of the given types across all sessions, newest first. */
+  recentEvents(types: readonly EventType[], limit = 100): SintyEvent[] {
+    if (!types.length) return [];
+    return this.db
+      .prepare(`SELECT * FROM events WHERE type IN (${types.map(() => "?").join(",")}) ORDER BY ts DESC LIMIT ?`)
+      .all(...types, limit)
+      .map(toEvent);
+  }
+
+  /** Active turn status per session, for list views. */
+  activeTurns(): TurnRow[] {
+    return this.db.prepare("SELECT * FROM turns WHERE status IN ('running', 'blocked')").all().map(toTurn);
+  }
+}
+
+function toPatch(r: Row): PatchRow {
+  return {
+    id: String(r.id),
+    plugin: String(r.plugin),
+    sessionId: String(r.session_id),
+    status: String(r.status) as PatchStatus,
+    reason: String(r.reason),
+    files: JSON.parse(String(r.files)) as PatchFile[],
+    permissionsChanged: Number(r.permissions_changed) === 1,
+    testOutput: String(r.test_output),
+    baseCommit: r.base_commit === null ? null : String(r.base_commit),
+    commit: r.commit_sha === null ? null : String(r.commit_sha),
+    createdAt: String(r.created_at),
+  };
 }
 
 export interface IncidentRow {

@@ -1,9 +1,7 @@
 import { EventEmitter } from "node:events";
-import type { EventDataMap, SintyEvent } from "@sinty/sdk";
+import type { SintyEvent, StreamEvent } from "@sinty/sdk";
 
-export type StreamOnlyEvent =
-  | { type: "model.delta"; sessionId: string; turnId: string; ts: string; data: EventDataMap["model.delta"] }
-  | { type: "tool.call.progress"; sessionId: string; turnId: string; ts: string; data: EventDataMap["tool.call.progress"] };
+export type StreamOnlyEvent = StreamEvent;
 
 export type BusMessage = { kind: "journal"; event: SintyEvent } | { kind: "stream"; event: StreamOnlyEvent };
 

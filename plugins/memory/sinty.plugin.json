@@ -1,0 +1,18 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "memory",
+  "version": "0.1.0",
+  "description": "Short facts in SQLite: profile, journal, notes, full-text and vector search",
+  "kinds": ["tool", "context"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$DATA"], "write": ["$DATA"] }
+  },
+  "tools": [
+    { "name": "memory.recall", "sideEffects": "read", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "memory.write", "sideEffects": "write", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "memory.forget", "sideEffects": "write", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" }
+  ],
+  "editable": true
+}

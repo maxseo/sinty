@@ -1,0 +1,16 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "channel-telegram",
+  "version": "0.1.0",
+  "description": "Telegram bot webhook: each chat is a Sinty session; the agent's answer is sent back with sendMessage",
+  "kinds": ["server"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "write": ["$DATA"] },
+    "net": ["api.telegram.org", "127.0.0.1", "localhost"],
+    "secrets": ["telegram.bot", "telegram.secret"],
+    "agent": ["sessions.read", "sessions.write"]
+  },
+  "editable": true
+}
