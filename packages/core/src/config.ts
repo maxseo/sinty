@@ -88,6 +88,26 @@ export const configSchema = z.object({
         })
         .optional(),
       hooks: z.object({ timeoutMs: z.number().int().positive().optional(), afterTurnTimeoutMs: z.number().int().positive().optional() }).optional(),
+      /** A/B arms for memory recall, assigned by a hash of the session id. See docs/spec/memory.md. */
+      experiments: z
+        .array(
+          z.object({
+            name: z.string().regex(/^[A-Za-z0-9_.-]+$/),
+            arms: z
+              .array(
+                z.object({
+                  name: z.string().regex(/^[A-Za-z0-9_.-]+$/),
+                  weight: z.number().nonnegative().default(1),
+                  recall: z.object({ auto: z.boolean().optional(), limit: z.number().int().positive().optional(), budgetTokens: z.number().int().positive().optional() }).optional(),
+                  providers: z.array(z.string()).optional(),
+                }),
+              )
+              .min(1),
+            /** Arms whose recall also runs for every turn, journaled with shadow: true, never shown to the model. */
+            shadow: z.array(z.string()).default([]),
+          }),
+        )
+        .optional(),
     })
     .prefault({}),
 });

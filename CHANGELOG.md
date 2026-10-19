@@ -30,6 +30,10 @@ All notable changes to this project are documented here. The format follows
 - `plugins/fact-extractor` (disabled by default): extracts durable facts after each turn via the `cheap` route and
   filters secrets from memory writes.
 - `$CONFIG.<key>` read grants in plugin manifests, resolved only from the human's `config.yaml`.
+- `memory.experiments`: session-hash arms with recall overrides, `memory.experiment` events and shadow arms journaled
+  as `memory.recalled {shadow: true}`.
+- `sinty memory eval`: offline recall replay with hit rate on labeled queries, memory-block tokens and latency per arm.
+- `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
 - Memory goes through a single `MemoryRouter` in the core with the SQLite store as the `builtin:sqlite` provider;
@@ -40,6 +44,9 @@ All notable changes to this project are documented here. The format follows
 - Core memory keeps one SQLite connection open instead of reopening `memory.db` on every step.
 - A plugin that registers a tool with a core tool name (for example `memory.write`) now fails to start; two plugins
   with the same tool name produce a warning.
+
+- Docs: `architecture.md` and `backlog.md` describe the core memory router instead of the old `memory-sqlite` /
+  `context-compress` plugin plans.
 
 ### Removed
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type {
   AfterTurnInput,
@@ -72,6 +73,53 @@ export interface RecallOverrides {
   limit?: number | undefined;
   budgetTokens?: number | undefined;
   providers?: string[] | undefined;
+}
+
+export interface ArmChoice {
+  experiment: string;
+  arm: string;
+  overrides: RecallOverrides;
+  shadow: { arm: string; overrides: RecallOverrides }[];
+}
+
+type ExperimentConfig = NonNullable<SintyConfig["memory"]["experiments"]>[number];
+type ArmConfig = ExperimentConfig["arms"][number];
+
+export function armOverrides(arm: ArmConfig): RecallOverrides {
+  return {
+    ...(arm.recall?.auto !== undefined ? { auto: arm.recall.auto } : {}),
+    ...(arm.recall?.limit !== undefined ? { limit: arm.recall.limit } : {}),
+    ...(arm.recall?.budgetTokens !== undefined ? { budgetTokens: arm.recall.budgetTokens } : {}),
+    ...(arm.providers ? { providers: arm.providers } : {}),
+  };
+}
+
+/** Stable arm for a session: sha256(experiment:sessionId) mapped onto the cumulative weights. */
+export function assignArms(experiments: ExperimentConfig[], sessionId: string): ArmChoice[] {
+  return experiments.map((x) => {
+    const raw = x.arms.map((a) => a.weight);
+    const weights = raw.some((w) => w > 0) ? raw : raw.map(() => 1);
+    const total = weights.reduce((n, w) => n + w, 0);
+    const h = Number.parseInt(createHash("sha256").update(`${x.name}:${sessionId}`).digest("hex").slice(0, 8), 16) / 0x1_0000_0000;
+    let point = h * total;
+    let chosen = x.arms[x.arms.length - 1]!;
+    for (const [i, a] of x.arms.entries()) {
+      if (point < weights[i]!) {
+        chosen = a;
+        break;
+      }
+      point -= weights[i]!;
+    }
+    return {
+      experiment: x.name,
+      arm: chosen.name,
+      overrides: armOverrides(chosen),
+      shadow: x.shadow.filter((s) => s !== chosen.name).flatMap((s) => {
+        const a = x.arms.find((y) => y.name === s);
+        return a ? [{ arm: s, overrides: armOverrides(a) }] : [];
+      }),
+    };
+  });
 }
 
 export function memorySettings(config: SintyConfig): MemorySettings {
@@ -159,7 +207,14 @@ export class MemoryRouter {
    * plan exists) the recalled blocks; processors' beforeContext may edit them. With no plugins and no auto recall
    * this is exactly the pre-router output.
    */
-  async contextMessages(ctx: MemoryCtx, turn?: TurnInfo, overrides?: RecallOverrides): Promise<ChatMessage[]> {
+  async contextMessages(ctx: MemoryCtx, turnIn?: TurnInfo, overridesIn?: RecallOverrides): Promise<ChatMessage[]> {
+    let turn = turnIn;
+    let overrides = overridesIn;
+    if (turn && !overrides) {
+      const exp = this.experiment(turn);
+      turn = exp.turn;
+      overrides = exp.overrides;
+    }
     const b = this.builtin;
     let blocks: ContextBlock[] = [{ id: "memory.profile", content: b.block({ agentId: ctx.agentId, chatId: ctx.sessionId }), source: BUILTIN }];
     const summary = b.summary(ctx.sessionId);
@@ -190,18 +245,39 @@ export class MemoryRouter {
       this.remember(turn.turnId, blocks);
       return blocks;
     }
-    const plan = await this.plan(turn, overrides);
-    if (!plan) {
-      this.remember(turn.turnId, []);
-      return [];
+    const choices = this.choices(turn.sessionId);
+    for (const c of choices) {
+      this.d.record({ sessionId: turn.sessionId, turnId: turn.turnId, type: "memory.experiment", actor: MEMORY_ACTOR, data: { experiment: c.experiment, arm: c.arm, ...(c.shadow.length ? { shadow: c.shadow.map((s) => s.arm) } : {}) } });
     }
-    const { blocks } = await this.runPlan(turn, plan, overrides);
+    const plan = await this.plan(turn, overrides);
+    const blocks = plan ? (await this.runPlan(turn, plan, overrides)).blocks : [];
     this.remember(turn.turnId, blocks);
+    // Shadow arms: same turn, their own overrides; journaled for comparison, never shown to the model.
+    for (const c of choices) {
+      for (const s of c.shadow) {
+        const shadowTurn = { ...turn, arm: `${c.experiment}=${s.arm}` };
+        const shadowPlan = await this.plan(shadowTurn, s.overrides);
+        if (shadowPlan) await this.runPlan(shadowTurn, shadowPlan, s.overrides, true);
+      }
+    }
     return blocks;
   }
 
+  /** Experiment arms of a session (empty without memory.experiments). */
+  choices(sessionId: string): ArmChoice[] {
+    const xs = this.d.config.memory.experiments ?? [];
+    return xs.length ? assignArms(xs, sessionId) : [];
+  }
+
+  /** TurnInfo with its arm label and the merged recall overrides of every experiment. */
+  experiment(turn: TurnInfo): { turn: TurnInfo; overrides: RecallOverrides | undefined } {
+    const choices = this.choices(turn.sessionId);
+    if (!choices.length) return { turn, overrides: undefined };
+    return { turn: { ...turn, arm: choices.map((c) => `${c.experiment}=${c.arm}`).join(",") }, overrides: Object.assign({}, ...choices.map((c) => c.overrides)) as RecallOverrides };
+  }
+
   /** Runs a plan and journals it; `shadow` runs never reach the prompt (experiments). */
-  async runPlan(turn: TurnInfo, plan: RecallPlan, overrides?: RecallOverrides, shadow = false): Promise<{ blocks: ContextBlock[]; records: MemoryRecord[]; tokens: number; ms: number }> {
+  async runPlan(turn: TurnInfo, plan: RecallPlan, overrides?: RecallOverrides, shadow = false, journal = true): Promise<{ blocks: ContextBlock[]; records: MemoryRecord[]; tokens: number; ms: number }> {
     const t0 = Date.now();
     let records = await this.recallRecords(turn, plan, overrides);
     for (const p of this.processors("afterRecall")) {
@@ -212,6 +288,7 @@ export class MemoryRouter {
     const blocks = this.renderRecalled(records, budget);
     const tokens = estimateTokens(blocks.map((x) => ({ role: "system" as const, content: x.content })));
     const ms = Date.now() - t0;
+    if (!journal) return { blocks, records, tokens, ms };
     this.d.record({
       sessionId: turn.sessionId,
       turnId: turn.turnId,
