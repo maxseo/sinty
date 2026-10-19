@@ -176,6 +176,18 @@ async function init(msg: InitMessage): Promise<void> {
       },
     },
     agent: agentApi,
+    models: {
+      complete: () => Promise.reject(new ToolError("not_supported", "ctx.models is not supported by this core version yet")),
+      embed: () => Promise.reject(new ToolError("not_supported", "ctx.models is not supported by this core version yet")),
+    },
+    memory: {
+      provider() {
+        log("warn")("memory providers are not supported by this core version yet");
+      },
+      processor() {
+        log("warn")("memory processors are not supported by this core version yet");
+      },
+    },
     tool(def) {
       tools.set(def.name, def as unknown as ToolDefinition);
     },

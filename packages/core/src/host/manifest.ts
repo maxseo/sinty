@@ -10,7 +10,7 @@ const manifestSchema = z
     name: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/),
     version: z.string().regex(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/),
     description: z.string().min(1).max(300),
-    kinds: z.array(z.enum(["provider", "tool", "context", "channel", "server", "schedule", "event", "ui"])).min(1),
+    kinds: z.array(z.enum(["provider", "tool", "context", "channel", "server", "schedule", "event", "ui", "memory"])).min(1),
     runtime: z.enum(["node", "mcp-stdio", "http"]),
     entry: z.string().optional(),
     command: z.array(z.string()).min(1).optional(),
@@ -23,6 +23,7 @@ const manifestSchema = z
         env: z.array(z.string()).optional(),
         shell: z.boolean().optional(),
         agent: z.array(z.enum(["sessions.read", "sessions.write"])).optional(),
+        models: z.array(z.string().min(1)).optional(),
       })
       .strict(),
     tools: z

@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format follows
 - Golden-prompt tests that pin what the model receives from memory (`packages/core/src/__tests__/golden`).
 - `memory.written` journal event for facts stored by compaction summaries.
 - Change journal in `docs/journal/` and this changelog.
+- Memory contract: `docs/spec/memory.md` and SDK types (`MemoryProvider`, `MemoryProcessor` with hooks
+  `onTurnStart`/`afterRecall`/`beforeContext`/`afterTurn`/`onCompaction`/`onWrite`, `ModelsApi`, `TurnInfo`,
+  `ContextBlock`); manifest kind `memory` and permission `models`; events `memory.recalled`, `memory.compacted`,
+  `memory.degraded`, `memory.experiment`, `models.called`.
 
 ### Changed
 - The memory profile and recent-journal blocks only show facts the speaking persona and chat may see (user-wide,
