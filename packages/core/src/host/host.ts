@@ -6,6 +6,7 @@ import type { AgentScope, ChatMessage, ContextInput, EventType, LiveEvent, Plugi
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
+import { CORE_TOOL_NAMES } from "../coretools.js";
 import { findPlugin, pluginDataDir, resolveFsGrants, type LoadedManifest } from "./manifest.js";
 import type { AgentOp, CallCtx, FromChild, ProviderWireRequest, RouteInfo, ToChild, ToolInfo, WireError } from "./protocol.js";
 
@@ -108,6 +109,13 @@ export class PluginProcess {
         if (msg.t === "ready") {
           clearTimeout(timer);
           child.off("message", onMsg);
+          const reserved = msg.tools.filter((t) => CORE_TOOL_NAMES.has(t.name)).map((t) => t.name);
+          if (reserved.length) {
+            this.stopping = true;
+            child.kill();
+            reject(new Error(`plugin ${this.name}: tool name ${reserved.join(", ")} is reserved by the core; rename the tool (core tools cannot be replaced by plugins)`));
+            return;
+          }
           this.tools = msg.tools;
           this.providers = msg.providers;
           this.contexts = msg.contexts;
@@ -517,7 +525,20 @@ export class PluginHost {
         }
       }),
     );
+    this.warnDuplicateTools();
     return { failed };
+  }
+
+  /** Two plugins with the same tool name: the first one wins in toolOwner(); say so loudly. */
+  private warnDuplicateTools(): void {
+    const owners = new Map<string, string>();
+    for (const p of this.plugins.values()) {
+      for (const t of p.tools) {
+        const first = owners.get(t.name);
+        if (first && first !== p.name) this.events.log(p.name, "warn", `tool ${t.name} is also registered by plugin ${first}; calls go to ${first}`);
+        else owners.set(t.name, p.name);
+      }
+    }
   }
 
   stop(): void {

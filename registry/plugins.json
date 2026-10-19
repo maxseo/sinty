@@ -52,15 +52,6 @@
       ]
     },
     {
-      "name": "memory",
-      "version": "0.1.0",
-      "description": "Short facts in SQLite: profile, journal, notes, full-text and vector search",
-      "kinds": [
-        "tool",
-        "context"
-      ]
-    },
-    {
       "name": "otel",
       "version": "0.1.0",
       "description": "Writes turn, model and tool events as JSON lines for later OpenTelemetry export",

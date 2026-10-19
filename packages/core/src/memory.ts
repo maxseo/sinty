@@ -52,14 +52,24 @@ interface FactRow {
   last_used_at: string;
 }
 
-/** Facts, FTS5 and sqlite-vec in one file. Empty agent_id/chat_id means "not scoped there". */
+/** Who is asking: the persona (roster agent id) and the chat. Missing agentId falls back to the store default. */
+export interface MemoryWho {
+  agentId?: string | undefined;
+  chatId?: string | undefined;
+}
+
+/**
+ * Facts, FTS5 and sqlite-vec in one file. Empty agent_id/chat_id means "not scoped there".
+ * One instance stays open for the life of the core (see MemoryRouter); agentId is passed per call
+ * so one connection serves every persona.
+ */
 export class MemoryStore {
   private readonly db: DatabaseSync;
   readonly vec: boolean;
 
   constructor(
     file: string,
-    private readonly opts: { userId: string; agentId: string; dimensions: number },
+    private readonly opts: { userId: string; agentId?: string; dimensions: number },
   ) {
     mkdirSync(dirname(file), { recursive: true });
     const opened = openDatabase(file);
@@ -98,8 +108,21 @@ export class MemoryStore {
     }
   }
 
+  get dimensions(): number {
+    return this.opts.dimensions;
+  }
+
+  /** The raw connection, for tables that live next to the facts (the afterTurn job queue). */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   close(): void {
-    this.db.close();
+    if (this.db.isOpen) this.db.close();
+  }
+
+  private agent(agentId?: string): string {
+    return agentId ?? this.opts.agentId ?? "";
   }
 
   expire(now = new Date()): number {
@@ -115,15 +138,17 @@ export class MemoryStore {
     about: MemoryAbout;
     source: string;
     chatId?: string;
+    agentId?: string;
     embedding?: Float32Array;
   }): { id: string; action: "inserted" | "updated" } {
+    const agentId = this.agent(input.agentId);
     const text = input.text.trim();
     if (!text) throw new MemoryError("empty", "a memory fact needs one sentence");
     if (input.scope === "chat" && !input.chatId) throw new MemoryError("scope", "chat scope needs a chat id");
     if (input.embedding && input.embedding.length !== this.opts.dimensions) {
       throw new MemoryError("embedding", `embedding length ${input.embedding.length} does not match ${this.opts.dimensions}`);
     }
-    const scope = this.scopeKeys(input.scope, input.chatId);
+    const scope = this.scopeKeys(input.scope, agentId, input.chatId);
     const hash = factHash(text);
     const now = new Date();
     const existing = this.db
@@ -131,10 +156,10 @@ export class MemoryStore {
       .all(this.opts.userId, hash) as { id: string; agent_id: string; chat_id: string; created_at: string }[];
 
     if (input.about === "work") {
-      const agentCopy = existing.find((r) => r.agent_id === this.opts.agentId);
-      if (agentCopy && scope.agentId !== this.opts.agentId) return { id: agentCopy.id, action: "updated" };
-      if (scope.agentId === this.opts.agentId) {
-        for (const row of existing) if (row.agent_id !== this.opts.agentId) this.deleteId(row.id);
+      const agentCopy = agentId ? existing.find((r) => r.agent_id === agentId) : undefined;
+      if (agentCopy && scope.agentId !== agentId) return { id: agentCopy.id, action: "updated" };
+      if (agentId && scope.agentId === agentId) {
+        for (const row of existing) if (row.agent_id !== agentId) this.deleteId(row.id);
       }
     }
     if (input.about === "user") {
@@ -188,10 +213,10 @@ export class MemoryStore {
   }
 
   /** Journal and notes. Profile is omitted: it is already in the prompt. */
-  recall(input: { query: string; chatId: string; embedding?: Float32Array; limit?: number }): MemoryFact[] {
+  recall(input: { query: string; chatId: string; agentId?: string; embedding?: Float32Array; limit?: number }): MemoryFact[] {
     this.expire();
     const limit = Math.min(input.limit ?? 15, 20);
-    const pool = this.visible(input.chatId).filter((r) => r.tier !== "profile");
+    const pool = this.visible(input.chatId, this.agent(input.agentId)).filter((r) => r.tier !== "profile");
     const byId = new Map(pool.map((r) => [r.id, r]));
     const fts = this.ftsIds(input.query).filter((id) => byId.has(id));
     const vec = this.vecIds(input.embedding).filter((id) => byId.has(id));
@@ -219,17 +244,30 @@ export class MemoryStore {
     return scored.map((s) => this.toFact(s.row));
   }
 
-  profile(): MemoryFact[] {
+  /** Profile facts this persona may see: user-wide, its own agent facts and facts of this chat. */
+  profile(who: MemoryWho = {}): MemoryFact[] {
     this.expire();
-    return rows<FactRow>(this.db.prepare("SELECT * FROM memory_facts WHERE user_id = ? AND tier = 'profile' ORDER BY created_at").all(this.opts.userId)).map((r) => this.toFact(r));
+    return this.visible(who.chatId ?? "", this.agent(who.agentId))
+      .filter((r) => r.tier === "profile")
+      .sort((a, b) => cmp(a.created_at, b.created_at))
+      .map((r) => this.toFact(r));
   }
 
-  recentLog(limit = 10): MemoryFact[] {
+  /** The newest journal facts this persona may see, oldest first. */
+  recentLog(limit = 10, who: MemoryWho = {}): MemoryFact[] {
     this.expire();
-    return (
-      rows<FactRow>(this.db.prepare("SELECT * FROM memory_facts WHERE user_id = ? AND tier = 'log' AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?").all(this.opts.userId, new Date().toISOString(), limit))
-    )
+    return this.visible(who.chatId ?? "", this.agent(who.agentId))
+      .filter((r) => r.tier === "log")
+      .sort((a, b) => cmp(b.created_at, a.created_at))
+      .slice(0, limit)
       .reverse()
+      .map((r) => this.toFact(r));
+  }
+
+  /** Every fact this persona may see, newest first; used by offline eval and exports. */
+  all(who: MemoryWho = {}): MemoryFact[] {
+    return this.visible(who.chatId ?? "", this.agent(who.agentId))
+      .sort((a, b) => cmp(b.created_at, a.created_at))
       .map((r) => this.toFact(r));
   }
 
@@ -247,7 +285,7 @@ export class MemoryStore {
       .run(chatId, coversUntil, text, tokens, new Date().toISOString());
   }
 
-  private visible(chatId: string): FactRow[] {
+  private visible(chatId: string, agentId: string): FactRow[] {
     const now = new Date().toISOString();
     return rows<FactRow>(
       this.db
@@ -256,7 +294,7 @@ export class MemoryStore {
            WHERE user_id = ? AND (agent_id = '' OR agent_id = ?) AND (chat_id = '' OR chat_id = ?)
              AND (expires_at IS NULL OR expires_at > ?)`,
         )
-        .all(this.opts.userId, this.opts.agentId, chatId, now),
+        .all(this.opts.userId, agentId, chatId, now),
     );
   }
 
@@ -286,10 +324,10 @@ export class MemoryStore {
     }
   }
 
-  private scopeKeys(scope: MemoryScope, chatId?: string): { agentId: string; chatId: string } {
+  private scopeKeys(scope: MemoryScope, agentId: string, chatId?: string): { agentId: string; chatId: string } {
     if (scope === "user") return { agentId: "", chatId: "" };
-    if (scope === "agent") return { agentId: this.opts.agentId, chatId: "" };
-    return { agentId: this.opts.agentId, chatId: chatId ?? "" };
+    if (scope === "agent") return { agentId, chatId: "" };
+    return { agentId, chatId: chatId ?? "" };
   }
 
   private syncFts(id: string, text: string): void {
@@ -388,6 +426,10 @@ export function renderMemoryBlock(profile: MemoryFact[], logs: MemoryFact[]): st
   lines.push(logs.length ? logs.map((f) => `- ${f.createdAt.slice(0, 10)} ${f.text}`).join("\n") : "- (empty)");
   lines.push("Write a durable fact with memory.write. Remove a wrong one with memory.forget. Search older facts with memory.recall when the answer is not in this block.");
   return lines.join("\n");
+}
+
+function cmp(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function rows<T>(value: unknown): T[] {

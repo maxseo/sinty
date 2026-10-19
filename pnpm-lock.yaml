@@ -112,15 +112,6 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
-  plugins/memory:
-    dependencies:
-      '@sinty/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@sinty/sdk':
-        specifier: workspace:*
-        version: link:../../packages/sdk
-
   plugins/otel:
     dependencies:
       '@sinty/sdk':

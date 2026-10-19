@@ -117,6 +117,7 @@ export interface AgentDeps {
 /** The turn loop. All state is derived from the journal, so the same code serves normal work, approvals and crash recovery. */
 export class Agent {
   private readonly running = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  private memoryStore: MemoryStore | undefined;
 
   constructor(private readonly d: AgentDeps) {}
 
@@ -213,6 +214,8 @@ export class Agent {
   async stop(): Promise<void> {
     for (const r of this.running.values()) r.controller.abort();
     await this.idle();
+    this.memoryStore?.close();
+    this.memoryStore = undefined;
   }
 
   toolSchemas(): ToolSchema[] {
@@ -743,19 +746,22 @@ export class Agent {
 
   private memoryPreface(sessionId: string): ChatMessage[] {
     const store = this.openMemory();
-    try {
-      store.expire();
-      const out: ChatMessage[] = [{ role: "system", content: renderMemoryBlock(store.profile(), store.recentLog(10)) }];
-      const summary = store.getSummary(sessionId);
-      if (summary) out.push({ role: "system", content: `<conversation_summary>\n${summary.text}\n</conversation_summary>` });
-      return out;
-    } finally {
-      store.close();
-    }
+    const who = { agentId: this.memoryAgentId(sessionId), chatId: sessionId };
+    store.expire();
+    const out: ChatMessage[] = [{ role: "system", content: renderMemoryBlock(store.profile(who), store.recentLog(10, who)) }];
+    const summary = store.getSummary(sessionId);
+    if (summary) out.push({ role: "system", content: `<conversation_summary>\n${summary.text}\n</conversation_summary>` });
+    return out;
+  }
+
+  /** Agent-scoped memory belongs to the roster persona that speaks in this session, else to config.agent.name. */
+  private memoryAgentId(sessionId: string): string {
+    return this.speaker(sessionId)?.id ?? this.d.config.agent.name;
   }
 
   private memoryTool(sessionId: string, name: string, args: unknown): unknown {
     const store = this.openMemory();
+    const agentId = this.memoryAgentId(sessionId);
     try {
       const a = args as { text?: string; tier?: "profile" | "log" | "note"; scope?: "user" | "agent" | "chat"; about?: "user" | "work"; source?: string; id?: string; query?: string; embedding?: number[] };
       if (name === "memory.write") {
@@ -765,6 +771,7 @@ export class Agent {
           scope: a.scope ?? "user",
           about: a.about ?? "user",
           source: a.source ?? "agent",
+          agentId,
           ...(a.scope === "chat" ? { chatId: sessionId } : {}),
         });
         return saved;
@@ -773,7 +780,7 @@ export class Agent {
         return { deleted: store.forget({ ...(a.id ? { id: a.id } : {}), ...(a.text ? { text: a.text } : {}) }) };
       }
       const embedding = a.embedding ? Float32Array.from(a.embedding) : undefined;
-      return store.recall({ query: a.query ?? "", chatId: sessionId, ...(embedding ? { embedding } : {}) }).map((f) => ({
+      return store.recall({ query: a.query ?? "", chatId: sessionId, agentId, ...(embedding ? { embedding } : {}) }).map((f) => ({
         id: f.id,
         tier: f.tier,
         scope: f.scope,
@@ -784,17 +791,17 @@ export class Agent {
     } catch (e) {
       if (e instanceof MemoryError) throw new CoreToolError(e.code, e.message, e.hint);
       throw e;
-    } finally {
-      store.close();
     }
   }
 
+  /** One connection for the life of the agent; closed in stop(). */
   private openMemory(): MemoryStore {
-    return new MemoryStore(join(this.d.paths.data, "memory", "memory.db"), {
+    this.memoryStore ??= new MemoryStore(join(this.d.paths.data, "memory", "memory.db"), {
       userId: this.d.config.agent.userId,
       agentId: this.d.config.agent.name,
       dimensions: this.d.config.memory.dimensions,
     });
+    return this.memoryStore;
   }
 
   /** When history passes 65% of the window, fold the older part into a summary and keep the last 12 user turns. */
@@ -809,7 +816,8 @@ export class Agent {
     const last = head.at(-1);
     if (!last) return dialogue;
     const store = this.openMemory();
-    try {
+    const agentId = this.memoryAgentId(sessionId);
+    {
       const prev = store.getSummary(sessionId);
       const tailMessages = eventsToMessages(tail, this.d.paths.data);
       if (prev && prev.coversUntil >= last.seq && estimateTokens([{ role: "system", content: prev.text }, ...tailMessages]) < limit) return tailMessages;
@@ -818,14 +826,14 @@ export class Agent {
       store.saveSummary(sessionId, folded.summary, last.seq, estimateTokens([{ role: "system", content: folded.summary }]));
       for (const fact of folded.facts) {
         try {
-          store.write({ text: fact.text, tier: fact.tier, about: fact.about, scope: fact.about === "work" ? "agent" : "user", source: "summary", chatId: sessionId });
+          const scope = fact.about === "work" ? "agent" : "user";
+          const saved = store.write({ text: fact.text, tier: fact.tier, about: fact.about, scope, source: "summary", chatId: sessionId, agentId });
+          this.record({ sessionId, type: "memory.written", actor: SYSTEM, data: { id: saved.id, action: saved.action, tier: fact.tier, scope, source: "summary", provider: "builtin" } });
         } catch (e) {
           this.d.log?.("warn", "memory fact from summary was not stored", e instanceof Error ? e.message : e);
         }
       }
       return tailMessages;
-    } finally {
-      store.close();
     }
   }
 

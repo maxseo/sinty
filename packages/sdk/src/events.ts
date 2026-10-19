@@ -71,6 +71,8 @@ export interface EventDataMap {
   "plugin.patch.applied": { patchId: string; commit: string };
   "plugin.patch.rolled_back": { patchId: string; toCommit: string; reason: string };
 
+  "memory.written": { id: string; action: "inserted" | "updated" | "dropped"; tier: string; scope: string; source: string; provider: string };
+
   "usage.recorded": Usage;
   "checkpoint": { state: unknown };
 }
