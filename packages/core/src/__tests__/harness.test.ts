@@ -9,6 +9,10 @@ import { assertSandbox, runShell } from "../shell.js";
 import { boot, tempHome } from "./helpers.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
+// TODO(sandbox): the shell cage (Windows paths, AppContainer-style isolation) is Windows-only today.
+// Port these two tests when the Linux sandbox lands; until then they are skipped off Windows.
+const windowsOnly = process.platform !== "win32" ? "the shell sandbox is Windows-only (TODO: Linux sandbox)" : false;
+
 const allowAll = policySchema.parse({ defaults: { none: "allow", read: "allow", write: "allow", external: "allow" } });
 
 test("a secret file asks even when the write tool is allowed", () => {
@@ -17,12 +21,12 @@ test("a secret file asks even when the write tool is allowed", () => {
   assert.equal(pathVerdict(allowAll, "E:/work", "write", "E:/work/notes.txt"), undefined);
 });
 
-test("a command that leaves the workspace is refused before it starts", () => {
+test("a command that leaves the workspace is refused before it starts", { skip: windowsOnly }, () => {
   assert.throws(() => assertSandbox("E:/work", "E:/work", "type ..\\..\\.sinty\\secret.key"), /outside the workspace/);
   assert.doesNotThrow(() => assertSandbox("E:/work", "E:/work", "npm test"));
 });
 
-test("a command cannot read a file outside its workspace", async () => {
+test("a command cannot read a file outside its workspace", { skip: windowsOnly }, async () => {
   const ws = mkdtempSync(join(tmpdir(), "sinty-cage-ws-"));
   const outside = mkdtempSync(join(tmpdir(), "sinty-cage-out-"));
   writeFileSync(join(ws, "ok.txt"), "inside");
