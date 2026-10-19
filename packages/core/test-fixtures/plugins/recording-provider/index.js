@@ -16,6 +16,20 @@ export default definePlugin({
     const record = (row) => appendFileSync(file, JSON.stringify(row) + "\n");
     ctx.provider({
       protocol: "rec",
+      /** Deterministic toy embeddings: letter buckets, normalized; width from options.dims (default 4). */
+      async embed(req) {
+        const dims = Number(req.endpoint.options?.dims ?? 4);
+        record({ embed: req.model, input: req.input });
+        return {
+          vectors: req.input.map((text) => {
+            const v = new Array(dims).fill(0);
+            for (const ch of text.toLowerCase()) if (ch >= "a" && ch <= "z") v[(ch.charCodeAt(0) - 97) % dims] += 1;
+            const n = Math.hypot(...v) || 1;
+            return v.map((x) => x / n);
+          }),
+          usage: { inputTokens: req.input.join(" ").length },
+        };
+      },
       async *stream(req) {
         record({ model: req.model, messages: req.messages, tools: req.tools.map((t) => t.name), maxOutputTokens: req.maxOutputTokens });
         const opts = req.endpoint.options ?? {};

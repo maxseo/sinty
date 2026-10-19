@@ -43,6 +43,8 @@ export interface HostEvents {
   crashed(plugin: string, exitCode: number | null, restarts: number): void;
   readJournal(sessionId: string, afterSeq?: number, types?: EventType[]): SintyEvent[];
   agent?: AgentBridge;
+  /** ctx.models from a plugin; the core checks permissions.models, budgets and journals the call. */
+  models?: (plugin: string, allowed: string[] | undefined, op: "complete" | "embed", req: Record<string, unknown>) => Promise<unknown>;
 }
 
 interface Pending {
@@ -69,6 +71,9 @@ export class PluginProcess {
   contexts: { name: string; order: number }[] = [];
   subscriptions: (EventType | "*")[] = [];
   routes: RouteInfo[] = [];
+  embedders: string[] = [];
+  memoryProviders: string[] = [];
+  memoryProcessors: { name: string; order: number; hooks: string[] }[] = [];
   /** A `ui`-only plugin without an entry: the core serves its files, no process runs. */
   staticOnly = false;
   private readonly streams = new Map<number, () => void>();
@@ -121,6 +126,16 @@ export class PluginProcess {
           this.contexts = msg.contexts;
           this.subscriptions = msg.subscriptions;
           this.routes = msg.routes;
+          this.embedders = msg.embedders ?? [];
+          const memory = msg.memory ?? { providers: [], processors: [] };
+          if ((memory.providers.length || memory.processors.length) && !m.kinds.includes("memory")) {
+            this.events.log(this.name, "warn", 'registers memory providers or processors but "memory" is not in kinds; they are ignored');
+            this.memoryProviders = [];
+            this.memoryProcessors = [];
+          } else {
+            this.memoryProviders = memory.providers;
+            this.memoryProcessors = memory.processors;
+          }
           resolveReady();
         } else if (msg.t === "fatal") {
           clearTimeout(timer);
@@ -290,6 +305,74 @@ export class PluginProcess {
     }
   }
 
+  async embedProvider(protocol: string, req: { endpoint: ProviderWireRequest["endpoint"]; model: string; input: string[] }, signal?: AbortSignal, timeoutMs = 60_000): Promise<{ vectors: number[][]; usage?: { inputTokens: number } }> {
+    const value = await this.request<{ vectors: number[][]; usage?: { inputTokens: number } }>(
+      (id) => ({ t: "provider.embed", id, protocol, req }),
+      (msg) => (msg.t === "provider.embedded" ? msg : undefined),
+      timeoutMs,
+      `embeddings via ${protocol}`,
+      signal,
+    );
+    return value;
+  }
+
+  /** Calls a memory provider or processor method in the plugin process. */
+  async callMemory(kind: "provider" | "processor", name: string, method: string, args: unknown[], timeoutMs: number, signal?: AbortSignal): Promise<unknown> {
+    return this.request(
+      (id) => ({ t: "memory.call", id, kind, name, method, args }),
+      (msg) => (msg.t === "memory.result" ? msg : undefined),
+      timeoutMs,
+      `memory ${kind} ${name}.${method}`,
+      signal,
+    );
+  }
+
+  /** One request, one answer, with a timeout; rejects with a ProviderError carrying the wire error. */
+  private async request<T>(build: (id: number) => ToChild, match: (msg: FromChild) => ({ ok: true; value: unknown } | { ok: false; error: WireError }) | undefined, timeoutMs: number, what: string, signal?: AbortSignal): Promise<T> {
+    await this.whenRunning();
+    const id = ++this.nextId;
+    return new Promise<T>((resolveValue, reject) => {
+      let done = false;
+      const finish = (r: { ok: true; value: unknown } | { ok: false; error: WireError }): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        this.pending.delete(id);
+        if (r.ok) resolveValue(r.value as T);
+        else reject(new ProviderError(r.error));
+      };
+      const timer = setTimeout(() => {
+        this.send({ t: "cancel", id });
+        finish({ ok: false, error: { code: "timeout", message: `${what} did not answer in ${timeoutMs} ms` } });
+      }, timeoutMs);
+      const onAbort = (): void => {
+        this.send({ t: "cancel", id });
+        finish({ ok: false, error: { code: "aborted", message: "cancelled" } });
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.pending.set(id, {
+        onMessage: (msg) => {
+          const r = match(msg);
+          if (r) finish(r);
+        },
+        onCrash: (error) => finish({ ok: false, error }),
+      });
+      if (!this.send(build(id))) finish({ ok: false, error: { code: "plugin_unavailable", message: `plugin ${this.name} is not running` } });
+    });
+  }
+
+  private onModelsCall(id: number, op: "complete" | "embed", req: Record<string, unknown>): void {
+    const models = this.events.models;
+    if (!models) {
+      this.send({ t: "models.result", id, ok: false, error: { code: "models_unavailable", message: "this core has no model gateway" } });
+      return;
+    }
+    models(this.name, this.loaded.manifest.permissions.models, op, req && typeof req === "object" ? req : {})
+      .then((value) => this.send({ t: "models.result", id, ok: true, value }))
+      .catch((e: unknown) => this.send({ t: "models.result", id, ok: false, error: wireOf(e) }));
+  }
+
   /** Forwards an HTTP request to one of the plugin's routes; the response body streams back chunk by chunk. */
   async handleHttp(route: number, params: Record<string, string>, req: Request, relativeUrl: string): Promise<Response> {
     await this.whenRunning();
@@ -420,6 +503,7 @@ export class PluginProcess {
       return;
     }
     if (msg.t === "agent.call") return this.onAgentCall(msg.id, msg.op, msg.args);
+    if (msg.t === "models.call") return this.onModelsCall(msg.id, msg.op, msg.req);
     if (msg.t === "agent.stream") return this.onAgentStream(msg.id, msg.sessionId, msg.afterSeq);
     if (msg.t === "agent.stream.close") {
       this.streams.get(msg.id)?.();
@@ -490,7 +574,8 @@ export class PluginProcess {
 
 function wireOf(e: unknown): WireError {
   const code = e && typeof e === "object" && "code" in e && typeof e.code === "string" ? e.code : "internal";
-  return { code, message: e instanceof Error ? e.message : String(e) };
+  const hint = e && typeof e === "object" && "hint" in e && typeof e.hint === "string" ? e.hint : undefined;
+  return { code, message: e instanceof Error ? e.message : String(e), ...(hint ? { hint } : {}) };
 }
 
 export class ProviderError extends Error {
@@ -596,6 +681,25 @@ export class PluginHost {
   providerFor(protocol: string): PluginProcess | undefined {
     for (const p of this.plugins.values()) if (!p.disabled && p.providers.includes(protocol)) return p;
     return undefined;
+  }
+
+  embedderFor(protocol: string): PluginProcess | undefined {
+    for (const p of this.plugins.values()) if (!p.disabled && p.embedders.includes(protocol)) return p;
+    return undefined;
+  }
+
+  /** Memory providers registered by running plugins, as `{ plugin, name }`. */
+  memoryProviders(): { plugin: PluginProcess; name: string }[] {
+    const out: { plugin: PluginProcess; name: string }[] = [];
+    for (const p of this.plugins.values()) if (!p.disabled) for (const name of p.memoryProviders) out.push({ plugin: p, name });
+    return out;
+  }
+
+  /** Memory processors of running plugins, sorted by order, then plugin name. */
+  memoryProcessors(): { plugin: PluginProcess; name: string; order: number; hooks: string[] }[] {
+    const out: { plugin: PluginProcess; name: string; order: number; hooks: string[] }[] = [];
+    for (const p of this.plugins.values()) if (!p.disabled) for (const proc of p.memoryProcessors) out.push({ plugin: p, ...proc });
+    return out.sort((a, b) => a.order - b.order || a.plugin.name.localeCompare(b.plugin.name));
   }
 
   contexts(): { plugin: PluginProcess; name: string; order: number }[] {

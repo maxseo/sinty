@@ -31,6 +31,8 @@ export const configSchema = z.object({
       routes: z.record(z.string(), z.string()).default({}),
       catalog: z.array(z.object({ route: z.string(), enabled: z.boolean() })).default([]),
       maxOutputTokens: z.number().int().positive().default(8192),
+      /** Input+output tokens each plugin may spend per UTC day through ctx.models. 0 = unlimited. Default 200000. */
+      pluginTokensPerDay: z.number().int().nonnegative().optional(),
     })
     .prefault({}),
   /** Side calls: summary and facts. Empty model uses models.default. Empty prompts use the built-in text. */

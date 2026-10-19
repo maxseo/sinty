@@ -8,6 +8,7 @@ import { PluginHost } from "./host/host.js";
 import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
 import { MemoryRouter } from "./memory-router.js";
+import { ModelGateway } from "./models.js";
 import { PatchManager } from "./patches.js";
 import { createAgentBridge } from "./plugin-bridge.js";
 import { checkIntegrity, installLooksStrictUnsafe } from "./integrity.js";
@@ -74,6 +75,7 @@ export class Sinty {
   readonly supervisor: SupervisorClient | undefined;
   readonly agent: Agent;
   readonly memory: MemoryRouter;
+  readonly models: ModelGateway;
   private readonly log: LogFn;
 
   constructor(opts: SintyOptions = {}) {
@@ -90,7 +92,9 @@ export class Sinty {
       crashed: (plugin, code, restarts) => this.log("warn", `plugin ${plugin} exited with ${code} (crash ${restarts})`),
       readJournal: (sessionId, afterSeq, types) => this.journal.events(sessionId, { afterSeq, types }),
       agent: createAgentBridge(() => ({ agent: this.agent, journal: this.journal, bus: this.bus })),
+      models: (plugin, allowed, op, req) => this.models.pluginCall(plugin, allowed, op, req),
     });
+    this.models = new ModelGateway({ config: this.config, secrets: this.secrets, host: this.host, record: (input) => this.agent.emit(input), log: this.log });
 
     this.patches = new PatchManager(this.paths, this.journal, this.host, {
       proposed: (p) => this.agent.emit({ sessionId: p.sessionId, type: "plugin.patch.proposed", actor: PLUGIN_ACTOR, data: { patchId: p.id, plugin: p.plugin, reason: p.reason, branch: `.staging/${p.id}` } }),
@@ -128,6 +132,7 @@ export class Sinty {
 
     this.agent = new Agent({
       memory: this.memory,
+      models: this.models,
       paths: this.paths,
       config: this.config,
       policy: this.policy,

@@ -14,6 +14,7 @@ import type { AppendInput, Journal, SessionRow } from "./journal.js";
 import { PatchError, type PatchManager } from "./patches.js";
 import { MemoryError, parseSummaryPayload, trimOldToolResults } from "./memory.js";
 import type { MemoryRouter } from "./memory-router.js";
+import type { ModelGateway } from "./models.js";
 import { runShell } from "./shell.js";
 import { interactPage, readPage, searchWeb, shotPage } from "./web.js";
 import { editSkillFile, listSkillFiles, listSkills, readSkill, readSkillFile, skillCatalog, writeSkill, writeSkillFile } from "./skills.js";
@@ -113,6 +114,7 @@ export interface AgentDeps {
   patches?: PatchManager;
   supervisor?: SupervisorClient;
   memory: MemoryRouter;
+  models?: ModelGateway;
   log?: (level: string, msg: string, data?: unknown) => void;
 }
 
@@ -777,12 +779,6 @@ export class Agent {
     const speaker = this.speaker(sessionId);
     const route = speaker?.serviceModel || this.d.config.service.model || speaker?.model || this.d.config.models.default;
     if (!route) return undefined;
-    const slash = route.indexOf("/");
-    const providerId = slash > 0 ? route.slice(0, slash) : route;
-    const model = slash > 0 ? route.slice(slash + 1) : "";
-    const prov = this.d.config.providers[providerId];
-    const plugin = prov ? this.d.host.providerFor(prov.protocol) : undefined;
-    if (!prov || !plugin || !model) return undefined;
     const transcript = head
       .map((e) => `${e.type} ${truncate(JSON.stringify(e.data), 1500)}`)
       .join("\n")
@@ -795,15 +791,9 @@ export class Agent {
       "Transcript:",
       transcript,
     ].join("\n\n");
+    if (!route.includes("/") || !this.d.models) return undefined;
     try {
-      const apiKey = this.d.secrets.resolve(prov.apiKey);
-      let text = "";
-      const stream = plugin.streamProvider(
-        prov.protocol,
-        { endpoint: strip({ baseUrl: prov.baseUrl, apiKey, headers: prov.headers, options: prov.options }), model, messages: [{ role: "user", content: prompt }], tools: [], maxOutputTokens: 2000 },
-        signal,
-      );
-      for await (const chunk of stream) if (chunk.type === "text") text += chunk.text;
+      const { text } = await this.d.models.complete({ route, messages: [{ role: "user", content: prompt }], maxOutputTokens: 2000, signal });
       return parseSummaryPayload(text) ?? (text.trim() ? { summary: text.trim(), facts: [] } : undefined);
     } catch (e) {
       this.d.log?.("warn", "history summary failed; sending the full transcript", e instanceof Error ? e.message : e);

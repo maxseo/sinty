@@ -34,6 +34,8 @@ const routes: HttpRoute[] = [];
 const agentWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
 const agentStreams = new Map<number, { push(e: LiveEvent): void; end(error?: WireError): void }>();
 let agentSeq = 0;
+const modelWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
+let modelSeq = 0;
 let closeMcp: (() => void) | undefined;
 
 function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
@@ -41,6 +43,14 @@ function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     agentWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
     send({ t: "agent.call", id, op, args });
+  });
+}
+
+function modelsCall<T>(op: "complete" | "embed", req: object): Promise<T> {
+  const id = ++modelSeq;
+  return new Promise<T>((resolve, reject) => {
+    modelWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
+    send({ t: "models.call", id, op, req: { ...req } as Record<string, unknown> });
   });
 }
 
@@ -177,8 +187,8 @@ async function init(msg: InitMessage): Promise<void> {
     },
     agent: agentApi,
     models: {
-      complete: () => Promise.reject(new ToolError("not_supported", "ctx.models is not supported by this core version yet")),
-      embed: () => Promise.reject(new ToolError("not_supported", "ctx.models is not supported by this core version yet")),
+      complete: (req) => modelsCall("complete", req),
+      embed: (req) => modelsCall("embed", req),
     },
     memory: {
       provider() {
@@ -242,6 +252,7 @@ async function init(msg: InitMessage): Promise<void> {
     t: "ready",
     tools: toolInfos,
     providers: [...providers.keys()],
+    embedders: [...providers.values()].filter((p) => typeof p.embed === "function").map((p) => p.protocol),
     contexts: [...contexts.entries()].map(([name, c]) => ({ name, order: c.order })),
     subscriptions: [...listeners.keys()] as (EventType | "*")[],
     routes: routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, public: r.public === true })),
@@ -348,6 +359,27 @@ process.on("message", (raw: ToChild) => {
       agentWaiters.delete(raw.id);
       if (raw.ok) w?.resolve(raw.value);
       else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
+      break;
+    }
+    case "models.result": {
+      const w = modelWaiters.get(raw.id);
+      modelWaiters.delete(raw.id);
+      if (raw.ok) w?.resolve(raw.value);
+      else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
+      break;
+    }
+    case "provider.embed": {
+      const p = providers.get(raw.protocol);
+      if (!p?.embed) {
+        send({ t: "provider.embedded", id: raw.id, ok: false, error: { code: "embed_unsupported", message: `protocol ${raw.protocol} has no embed()` } });
+        break;
+      }
+      const ac = new AbortController();
+      running.set(raw.id, ac);
+      p.embed({ ...raw.req, signal: ac.signal })
+        .then((value) => send({ t: "provider.embedded", id: raw.id, ok: true, value }))
+        .catch((e: unknown) => send({ t: "provider.embedded", id: raw.id, ok: false, error: toWire(e) }))
+        .finally(() => running.delete(raw.id));
       break;
     }
     case "agent.event":

@@ -68,6 +68,27 @@ export default definePlugin({
         const body = (await res.json()) as { data?: { id: string }[] };
         return (body.data ?? []).map((m) => ({ id: m.id }));
       },
+      /** POST {baseUrl}/embeddings (OpenAI-compatible). Vectors are returned in input order. */
+      async embed(req) {
+        const baseUrl = (req.endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+        const res = await ctx.net.fetch(`${baseUrl}/embeddings`, {
+          method: "POST",
+          signal: req.signal,
+          headers: {
+            "content-type": "application/json",
+            ...(req.endpoint.apiKey ? { authorization: `Bearer ${req.endpoint.apiKey}` } : {}),
+            ...req.endpoint.headers,
+          },
+          body: JSON.stringify({ model: req.model, input: req.input }),
+        });
+        if (!res.ok) throw await httpError(res);
+        const body = (await res.json()) as { data?: { index?: number; embedding?: number[] }[]; usage?: { prompt_tokens?: number } };
+        const rows = [...(body.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+        if (rows.length !== req.input.length || rows.some((r) => !Array.isArray(r.embedding))) {
+          throw new ToolError("provider_error", `embeddings answer has ${rows.length} vectors for ${req.input.length} inputs`);
+        }
+        return { vectors: rows.map((r) => r.embedding!), ...(body.usage?.prompt_tokens !== undefined ? { usage: { inputTokens: body.usage.prompt_tokens } } : {}) };
+      },
     });
   },
 });

@@ -70,10 +70,29 @@ export type ToChild =
   | { t: "agent.result"; id: number; ok: false; error: WireError }
   | { t: "agent.event"; id: number; event: LiveEvent }
   | { t: "agent.end"; id: number; error?: WireError }
+  | { t: "provider.embed"; id: number; protocol: string; req: { endpoint: ProviderRequest["endpoint"]; model: string; input: string[] } }
+  | { t: "models.result"; id: number; ok: true; value: unknown }
+  | { t: "models.result"; id: number; ok: false; error: WireError }
+  | { t: "memory.call"; id: number; kind: "provider" | "processor"; name: string; method: string; args: unknown[] }
   | { t: "shutdown" };
 
 export type FromChild =
-  | { t: "ready"; tools: ToolInfo[]; providers: string[]; contexts: { name: string; order: number }[]; subscriptions: (EventType | "*")[]; routes: RouteInfo[] }
+  | {
+      t: "ready";
+      tools: ToolInfo[];
+      providers: string[];
+      contexts: { name: string; order: number }[];
+      subscriptions: (EventType | "*")[];
+      routes: RouteInfo[];
+      /** Provider protocols that implement embed(). */
+      embedders?: string[];
+      memory?: { providers: string[]; processors: { name: string; order: number; hooks: string[] }[] };
+    }
+  | { t: "provider.embedded"; id: number; ok: true; value: { vectors: number[][]; usage?: { inputTokens: number } } }
+  | { t: "provider.embedded"; id: number; ok: false; error: WireError }
+  | { t: "models.call"; id: number; op: "complete" | "embed"; req: Record<string, unknown> }
+  | { t: "memory.result"; id: number; ok: true; value: unknown }
+  | { t: "memory.result"; id: number; ok: false; error: WireError }
   | { t: "http.start"; id: number; status: number; headers: [string, string][] }
   | { t: "http.chunk"; id: number; chunk: Uint8Array }
   | { t: "http.end"; id: number }

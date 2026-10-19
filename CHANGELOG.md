@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows
   `onTurnStart`/`afterRecall`/`beforeContext`/`afterTurn`/`onCompaction`/`onWrite`, `ModelsApi`, `TurnInfo`,
   `ContextBlock`); manifest kind `memory` and permission `models`; events `memory.recalled`, `memory.compacted`,
   `memory.degraded`, `memory.experiment`, `models.called`.
+- `ctx.models.complete/embed` for plugins through the core `ModelGateway`: route names (`default`, `cheap`,
+  `embed`, `models.routes` keys), secrets stay in the core, `permissions.models`, per-plugin daily token budget
+  (`models.pluginTokensPerDay`), `models.called` / `usage.recorded` journaling.
+- `ProviderDefinition.embed()`; `provider-openai-compat` implements `POST /embeddings`.
 
 ### Changed
 - Memory goes through a single `MemoryRouter` in the core with the SQLite store as the `builtin:sqlite` provider;
