@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format follows
   `memory.degraded`, `memory.experiment`, `models.called`.
 
 ### Changed
+- Memory goes through a single `MemoryRouter` in the core with the SQLite store as the `builtin:sqlite` provider;
+  prompts and memory tool results are unchanged (golden tests).
 - The memory profile and recent-journal blocks only show facts the speaking persona and chat may see (user-wide,
   own agent facts, this chat), matching `memory.recall`.
 - Agent-scoped memory uses the roster persona id instead of `config.agent.name` when a persona speaks.

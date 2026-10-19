@@ -7,6 +7,7 @@ import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, loadConfig
 import { PluginHost } from "./host/host.js";
 import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
+import { MemoryRouter } from "./memory-router.js";
 import { PatchManager } from "./patches.js";
 import { createAgentBridge } from "./plugin-bridge.js";
 import { checkIntegrity, installLooksStrictUnsafe } from "./integrity.js";
@@ -72,6 +73,7 @@ export class Sinty {
   readonly patches: PatchManager;
   readonly supervisor: SupervisorClient | undefined;
   readonly agent: Agent;
+  readonly memory: MemoryRouter;
   private readonly log: LogFn;
 
   constructor(opts: SintyOptions = {}) {
@@ -117,7 +119,15 @@ export class Sinty {
         )
       : undefined;
 
+    this.memory = new MemoryRouter({
+      dataDir: this.paths.data,
+      config: this.config,
+      record: (input) => this.agent.emit(input),
+      log: this.log,
+    });
+
     this.agent = new Agent({
+      memory: this.memory,
       paths: this.paths,
       config: this.config,
       policy: this.policy,
@@ -154,6 +164,7 @@ export class Sinty {
     await this.agent.stop();
     this.supervisor?.stop();
     this.host.stop();
+    this.memory.close();
     this.journal.close();
   }
 

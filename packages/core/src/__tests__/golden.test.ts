@@ -106,6 +106,9 @@ test("golden: compaction folds old turns into a summary and stores its facts", a
     const all = requests(home) as { messages: { content: string }[] }[];
     const summaryCalls = all.filter((r) => r.messages.length === 1 && r.messages[0]!.content.includes("Reply with JSON only"));
     assert.ok(summaryCalls.length >= 1, "a summary call was made");
+    const written = sinty.journal.events(s.id).filter((e) => e.type === "memory.written");
+    assert.ok(written.length >= 1, "summary facts are journaled");
+    assert.equal((written[0]!.data as { source: string }).source, "summary");
     golden("compaction", normalize({ firstSummaryCall: summaryCalls[0], lastRequest: all.at(-1), summaryCalls: summaryCalls.length, requests: all.length }, home));
   } finally {
     await sinty.stop();
