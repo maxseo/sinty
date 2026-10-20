@@ -64,7 +64,7 @@ export interface MemorySettings {
   providers: string[] | undefined;
   writeTo: string[];
   recall: { auto: boolean; limit: number; budgetTokens: number; timeoutMs: number };
-  hooks: { timeoutMs: number; afterTurnTimeoutMs: number; compactionTimeoutMs: number };
+  hooks: { timeoutMs: number; afterTurnTimeoutMs: number; closeTimeoutMs: number; compactionTimeoutMs: number };
 }
 
 /** Per-turn overrides (experiments, eval). */
@@ -128,7 +128,12 @@ export function memorySettings(config: SintyConfig): MemorySettings {
     providers: m.providers,
     writeTo: m.writeTo ?? [],
     recall: { auto: m.recall?.auto ?? false, limit: m.recall?.limit ?? 8, budgetTokens: m.recall?.budgetTokens ?? 1200, timeoutMs: m.recall?.timeoutMs ?? 3000 },
-    hooks: { timeoutMs: m.hooks?.timeoutMs ?? 5000, afterTurnTimeoutMs: m.hooks?.afterTurnTimeoutMs ?? 60_000, compactionTimeoutMs: 60_000 },
+    hooks: {
+      timeoutMs: m.hooks?.timeoutMs ?? 5000,
+      afterTurnTimeoutMs: m.hooks?.afterTurnTimeoutMs ?? 60_000,
+      closeTimeoutMs: m.hooks?.closeTimeoutMs ?? Math.min(m.hooks?.afterTurnTimeoutMs ?? 60_000, 15_000),
+      compactionTimeoutMs: 60_000,
+    },
   };
 }
 
@@ -186,6 +191,36 @@ export class MemoryRouter {
   /** Waits for the afterTurn queue to go idle. */
   async idle(): Promise<void> {
     while (this.draining) await this.draining;
+  }
+
+  /**
+   * Gives queued afterTurn jobs up to `timeoutMs` to finish while plugins still run (called before shutdown).
+   * Returns how many jobs of running processors are still pending; those resume on the next start.
+   */
+  async drainBeforeClose(timeoutMs: number = this.settings.hooks.closeTimeoutMs): Promise<number> {
+    if (this.stopped || !this.processors("afterTurn").length) return 0;
+    this.kick();
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = await Promise.race([
+      this.idle().then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    const left = this.pendingJobs();
+    if (left) {
+      this.d.log?.("warn", `memory: ${left} afterTurn job(s) still pending at shutdown${timedOut ? ` after waiting ${timeoutMs} ms` : ""}; they resume on the next start`);
+    }
+    return left;
+  }
+
+  /** Pending queue rows whose processor is running now (rows of absent plugins wait for them and are not counted). */
+  private pendingJobs(): number {
+    const running = new Set(this.processors("afterTurn").map((p) => `${p.plugin.name}|${p.name}`));
+    if (!running.size) return 0;
+    const rows = this.jobsDb().prepare("SELECT plugin, processor FROM memory_jobs WHERE status = 'pending'").all() as { plugin: string; processor: string }[];
+    return rows.filter((r) => running.has(`${r.plugin}|${r.processor}`)).length;
   }
 
   /** Stops taking new queue work; a job in flight is abandoned without counting as a failed attempt. */
@@ -577,6 +612,7 @@ export class MemoryRouter {
         const input = JSON.parse(row.payload) as AfterTurnInput;
         try {
           const result = (await proc.plugin.callMemory("processor", proc.name, "afterTurn", [input], this.settings.hooks.afterTurnTimeoutMs)) as AfterTurnResult | null;
+          if (this.stopped) return; // shutting down: the job stays pending and runs again on the next start
           for (const f of Array.isArray(result?.facts) ? result.facts : []) {
             if (!f || typeof f.text !== "string" || !f.text.trim()) continue;
             const scope: MemoryScope = f.scope === "agent" || f.scope === "chat" ? f.scope : "user";

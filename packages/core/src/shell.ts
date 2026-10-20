@@ -84,9 +84,11 @@ function cageNode(): string | undefined {
   return dir;
 }
 
+/** Staged installs carry dist/sandbox/ShellBox.exe (scripts/stage.mjs); a source checkout has the tracked sandbox/ShellBox.exe. */
 function shellBoxExe(): string | undefined {
-  const nextToDist = join(dirname(fileURLToPath(import.meta.url)), "sandbox", "ShellBox.exe");
-  return existsSync(nextToDist) ? nextToDist : undefined;
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const p of [join(here, "sandbox", "ShellBox.exe"), join(here, "..", "sandbox", "ShellBox.exe")]) if (existsSync(p)) return p;
+  return undefined;
 }
 
 /** Rejects a command that names a file outside the workspace. The process still starts only after approval. */

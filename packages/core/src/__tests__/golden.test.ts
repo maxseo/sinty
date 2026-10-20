@@ -40,6 +40,8 @@ function normalize(value: unknown, home: string): unknown {
     .join("<HOME>")
     .split(home)
     .join("<HOME>")
+    // Windows: paths under the temp home use backslashes; snapshots use "/".
+    .replace(/<HOME>(?:\\\\[\w.-]+)+/g, (m) => m.replaceAll("\\\\", "/"))
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "<TIME>")
     .replace(/\d{4}-\d{2}-\d{2}/g, "<DATE>")
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<UUID>")
