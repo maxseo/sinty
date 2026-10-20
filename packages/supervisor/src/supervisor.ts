@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { EventDataMap, SintyEvent } from "@sinty/sdk";
-import type { CheckpointPhase, Incident, SupervisedTool, SupervisorAction, SupervisorSettings } from "./protocol.js";
+import { budgetTokens, resolveSettings, type CheckpointPhase, type Incident, type ResolvedSupervisorSettings, type SupervisedTool, type SupervisorAction, type SupervisorSettings } from "./protocol.js";
+import { maskArgs, scrubText } from "./scrub.js";
 
 interface Failure {
   tool: string;
@@ -40,13 +41,21 @@ export class Supervisor {
   private readonly failingTurns = new Map<string, Set<string>>();
   private readonly docsCache = new Map<string, string>();
   private tools = new Map<string, SupervisedTool>();
+  private settings: ResolvedSupervisorSettings;
 
   constructor(
-    private readonly settings: SupervisorSettings,
+    settings: SupervisorSettings,
     tools: SupervisedTool[],
     private readonly incidents: Incident[],
   ) {
+    this.settings = resolveSettings(settings);
     this.setTools(tools);
+  }
+
+  /** New limits from the settings page; they apply from the next checkpoint. */
+  setSettings(settings: SupervisorSettings): void {
+    this.settings = resolveSettings(settings);
+    this.docsCache.clear();
   }
 
   setTools(tools: SupervisedTool[]): void {
@@ -73,7 +82,7 @@ export class Supervisor {
       case "model.response": {
         const d = e.data as EventDataMap["model.response"];
         st.steps++;
-        st.tokens += d.usage.inputTokens + d.usage.outputTokens;
+        st.tokens += budgetTokens(d.usage, this.settings.budget.count, this.settings.budget.cachedWeight);
         st.lastResponse = { text: d.text ?? "", toolCalls: d.toolCalls.length, stopReason: d.stopReason, checked: false };
         break;
       }
@@ -125,35 +134,39 @@ export class Supervisor {
       const fresh = st.failures.filter((f) => !f.noticed);
       if (fresh.length) {
         for (const f of fresh) f.noticed = true;
-        notices.push(this.failureNotice(st, fresh));
+        if (this.settings.checks.toolErrors) notices.push(this.failureNotice(st, fresh));
       }
-      for (const [key, c] of st.callCounts) {
-        if (c.count >= this.settings.loopThreshold + 2) return this.escalate(st, "loop", `${c.tool} was called ${c.count} times with the same arguments`);
-        if (c.count >= this.settings.loopThreshold && !st.loopNoticed.has(key)) {
-          st.loopNoticed.add(key);
-          notices.push({
-            type: "notice",
-            detector: "loop",
-            level: 2,
-            text: `You called ${c.tool} ${c.count} times with the same arguments. Repeating it will not change the result. Stop, look at what you already have, and either use it or try a different approach.`,
-          });
+      if (this.settings.checks.loop) {
+        for (const [key, c] of st.callCounts) {
+          const stopAt = this.settings.loopBlockAfter;
+          if (this.settings.escalate && stopAt > 0 && c.count >= stopAt) return this.escalate(st, "loop", `${c.tool} was called ${c.count} times with the same arguments`);
+          if (c.count >= this.settings.loopThreshold && !st.loopNoticed.has(key)) {
+            st.loopNoticed.add(key);
+            notices.push({
+              type: "notice",
+              detector: "loop",
+              level: 2,
+              text: `You called ${c.tool} ${c.count} times with the same arguments. Repeating it will not change the result. Stop, look at what you already have, and either use it or try a different approach.`,
+            });
+          }
         }
       }
       const b = this.settings.budget;
-      const nearSteps = b.steps !== undefined && st.steps >= Math.ceil(b.steps * 0.8);
-      const nearTokens = b.tokens !== undefined && st.tokens >= Math.ceil(b.tokens * 0.8);
-      if ((nearSteps || nearTokens) && !st.budgetWarned) {
+      const nearSteps = b.steps !== undefined && st.steps >= Math.ceil(b.steps * b.warnAt);
+      const nearTokens = b.tokens !== undefined && st.tokens >= Math.ceil(b.tokens * b.warnAt);
+      if (this.settings.checks.budget && b.warnAt > 0 && b.warnAt < 1 && (nearSteps || nearTokens) && !st.budgetWarned) {
         st.budgetWarned = true;
+        const counted = b.count === "all" ? "tokens" : b.count === "uncached" ? "uncached tokens" : "cost-weighted tokens";
         notices.push({
           type: "notice",
           detector: "budget",
           level: 1,
-          text: `This turn has used ${st.steps} steps and ${st.tokens} tokens, over 80% of its budget. Finish the most important part now and give the user a result; say what is left.`,
+          text: `This turn has used ${st.steps} steps and ${st.tokens} ${counted}, over ${Math.round(b.warnAt * 100)}% of its budget. Finish the most important part now and give the user a result; say what is left.`,
         });
       }
     } else {
       const r = st.lastResponse;
-      if (r && !r.checked) {
+      if (r && !r.checked && this.settings.checks.badOutput) {
         r.checked = true;
         if (TRUNCATED.has(r.stopReason)) {
           notices.push({ type: "notice", detector: "bad_output", level: 1, text: "Your last answer was cut off by the output limit. Continue from where it stopped, or give a shorter complete answer." });
@@ -169,6 +182,8 @@ export class Supervisor {
       st.noticesByDetector.set(n.detector, count);
       st.totalNotices++;
       if (count > this.settings.maxNoticesPerDetector || st.totalNotices > this.settings.maxNoticesPerTurn) {
+        // Without escalation the turn goes on; the supervisor just stops repeating itself.
+        if (!this.settings.escalate) continue;
         return this.escalate(st, n.detector, `supervisor notices did not help (${n.detector}: ${count}, total ${st.totalNotices})`);
       }
       out.push(n);
@@ -184,11 +199,12 @@ export class Supervisor {
       const sameInWindow = st.failures.filter((x) => x.tool === f.tool && x.code === f.code).length;
       const turnsFailing = this.failingTurns.get(f.tool)?.size ?? 0;
       const tool = this.tools.get(f.tool);
-      const fLevel: 1 | 2 | 3 = turnsFailing >= 3 && tool?.editable ? 3 : sameInWindow >= 2 ? 2 : 1;
+      const patchAfter = this.settings.patchAfterTurns;
+      const fLevel: 1 | 2 | 3 = patchAfter > 0 && turnsFailing >= patchAfter && tool?.editable ? 3 : sameInWindow >= this.settings.repeatFailures ? 2 : 1;
       if (fLevel > level) level = fLevel;
 
-      const lines = [`Pay attention: tool ${f.tool} failed (${f.code}: ${oneLine(f.message, 300)}).`];
-      if (f.hint) lines.push(`Hint from the tool: ${f.hint}`);
+      const lines = [`Pay attention: tool ${f.tool} failed (${f.code}: ${oneLine(scrubText(f.message), 300)}).`];
+      if (f.hint) lines.push(`Hint from the tool: ${scrubText(f.hint)}`);
       if (f.code === "interrupted") {
         lines.push("The process stopped while this call was running, so it may or may not have taken effect. Check the actual state before repeating it.");
       } else if (f.code === "invalid_args") {
@@ -202,14 +218,14 @@ export class Supervisor {
           `${f.tool} has failed in ${turnsFailing} different turns. If the plugin${tool?.plugin ? ` ${tool.plugin}` : ""} itself is wrong, read it with plugin.read and propose a fix with plugin.propose_patch; a human approves the change before it is applied.`,
         );
       }
-      const docs = tool?.docsPath ? this.docs(tool.docsPath) : undefined;
+      const docs = tool?.docsPath && this.settings.docsMaxChars > 0 ? this.docs(tool.docsPath) : undefined;
       if (docs) {
         lines.push(`Tool docs (${basename(tool!.docsPath!)}):\n${docs}`);
         refs.push(tool!.docsPath!);
       }
-      const similar = this.incidents.filter((i) => i.tool === f.tool && i.code === f.code).slice(-2);
+      const similar = this.settings.useIncidents ? this.incidents.filter((i) => i.tool === f.tool && i.code === f.code).slice(-2) : [];
       for (const i of similar) {
-        lines.push(`A similar incident was solved before: ${i.fixSummary}`);
+        lines.push(`A similar incident was solved before: ${scrubText(i.fixSummary)}`);
         refs.push(`incident:${i.id}`);
       }
       parts.push(lines.join("\n"));
@@ -234,8 +250,10 @@ export class Supervisor {
       out.push({
         tool: f.tool,
         code: f.code,
-        message: oneLine(f.message, 300),
-        fixSummary: `after ${f.code} ("${oneLine(f.message, 120)}") the call worked with arguments ${oneLine(stable(st.fixes.get(f.tool)), 300)}`,
+        message: oneLine(scrubText(f.message), 300),
+        // Arguments are masked before they are summarized: typed text, secret fields and long contents never reach
+        // incident memory (it is quoted in later notices and shown in the UI).
+        fixSummary: scrubText(`after ${f.code} ("${oneLine(scrubText(f.message), 120)}") the call worked with arguments ${oneLine(stable(maskArgs(st.fixes.get(f.tool))), 300)}`),
       });
     }
     return out;

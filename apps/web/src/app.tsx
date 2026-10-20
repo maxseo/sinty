@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
-import { api, ApiError, setUnauthorizedHandler, shortTime, subscribe, token, type SessionInfo, type SintyEvent } from "./api.js";
+import { api, ApiError, setUnauthorizedHandler, shortTime, subscribe, token, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { Board } from "./board.js";
 import { Chat } from "./chat.js";
-import { AgentsPage, PendingPage, SettingsPage, SupervisorPage } from "./pages.js";
+import { AgentsPage, SettingsPage } from "./pages.js";
+import { useSections } from "./supervisor-ui.js";
 import { KitPage } from "./kit.js";
 import { PluginTab, type PluginTabInfo } from "./plugin-tab.js";
 import { go, href, useRoute } from "./route.js";
@@ -55,15 +56,15 @@ function Shell() {
   const route = useRoute();
   const [agent, setAgent] = useState<AgentInfo>();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [pending, setPending] = useState<Pending[]>([]);
   const [live, setLive] = useState(false);
   const [lastEvent, setLastEvent] = useState<SintyEvent>();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
-    const [s, p] = await Promise.all([api<{ sessions: SessionInfo[] }>("/v1/sessions?limit=200"), api<{ pending: unknown[] }>("/v1/pending")]);
+    const [s, p] = await Promise.all([api<{ sessions: SessionInfo[] }>("/v1/sessions?limit=200"), api<{ pending: Pending[] }>("/v1/pending")]);
     setSessions(s.sessions);
-    setPendingCount(p.pending.length);
+    setPending(p.pending);
   }, []);
 
   useEffect(() => {
@@ -178,6 +179,7 @@ function Shell() {
     await refresh();
   };
   const settingsOn = route.page === "settings";
+  const sections = useSections([agent]);
   const agentsOn = route.page === "agents";
   const pinned = pins.map((id) => sessions.find((s) => s.id === id)).filter((s): s is SessionInfo => Boolean(s));
   const loose = sessions.filter((s) => !s.projectId);
@@ -198,13 +200,21 @@ function Shell() {
                   <nav>
                     <a class={route.page === "agents" ? "on" : ""} href={href({ page: "agents" })}>Агенты</a>
                     {hasKanban && <a class={route.page === "board" ? "on" : ""} href={href({ page: "board" })}>Канбан</a>}
-                    <a class={route.page === "pending" ? "on" : ""} href={href({ page: "pending" })}>Журнал {pendingCount > 0 && <span class="badge">{pendingCount}</span>}</a>
-                    <a class={route.page === "supervisor" ? "on" : ""} href={href({ page: "supervisor" })}>Супервизор</a>
                     <a class={route.page === "kit" ? "on" : ""} href={href({ page: "kit" })}>Набор</a>
                     {sideTabs.map((t) => (
                       <a key={`${t.plugin}/${t.id}`} class={route.page === "tab" && route.plugin === t.plugin && route.tab === t.id ? "on" : ""} href={href({ page: "tab", plugin: t.plugin, tab: t.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>
                     ))}
                   </nav>
+                  {pending.length > 0 && (
+                    <div class="side-pending">
+                      <div class="menu-label">Ждут ответа <span class="badge">{pending.length}</span></div>
+                      {pending.map((p) => {
+                        const s = sessions.find((x) => x.id === p.sessionId);
+                        const why = p.reason === "approval" ? "одобрение" : p.reason === "ask_human" ? "вопрос" : p.reason === "budget" ? "бюджет" : "супервизор";
+                        return <a key={p.turnId} class={route.page === "chat" && route.sessionId === p.sessionId ? "on" : ""} href={href({ page: "chat", sessionId: p.sessionId })} title={p.detail ?? why}>{s?.title || p.sessionId} <span class="small muted">· {why}</span></a>;
+                      })}
+                    </div>
+                  )}
                   <div class="proj-head">
                     <button class="nav-item" onClick={() => toggleProjectOpen("__all")}><IconChevron /> Проекты</button>
                     <button class="icon" title="Новый проект" onClick={() => setProjectDraft("")}><IconPlus /></button>
@@ -236,6 +246,9 @@ function Shell() {
                       <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>
                       <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>
                       <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>
+                      {sections.map((x) => (
+                        <a key={x.id} class={settingsOn && route.section === x.id ? "on" : ""} href={href({ page: "settings", section: x.id })} title={x.owner === "plugin" ? `Настройки плагина ${x.plugin}` : undefined}>{x.title}</a>
+                      ))}
                     </nav>
                   )}
                 </div>
@@ -263,8 +276,6 @@ function Shell() {
       <main class="main">
         {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} tabs={sessionTabs} /> : <Empty onNew={newChat} />)}
         {route.page === "board" && <Board />}
-        {route.page === "pending" && <PendingPage tick={lastEvent} />}
-        {route.page === "supervisor" && <SupervisorPage tick={lastEvent} />}
         {route.page === "agents" && <AgentsPage agentId={route.agentId} />}
         {route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
         {route.page === "kit" && <KitPage />}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
-import { api, shortTime, type Pending, type SintyEvent } from "./api.js";
-import { go, href } from "./route.js";
+import { api } from "./api.js";
+import { go } from "./route.js";
+import { SectionPane } from "./supervisor-ui.js";
 
 function useLoad<T>(path: string, deps: unknown[]): { data: T | undefined; error: string; reload: () => void } {
   const [data, setData] = useState<T>();
@@ -15,130 +16,6 @@ function useLoad<T>(path: string, deps: unknown[]): { data: T | undefined; error
   };
   useEffect(reload, deps);
   return { data, error, reload };
-}
-
-export function PendingPage({ tick }: { tick: SintyEvent | undefined }) {
-  const { data, error, reload } = useLoad<{ pending: Pending[] }>("/v1/pending", [tick]);
-  const decide = async (p: Pending, callId: string, decision: "approve" | "deny"): Promise<void> => {
-    await api(`/v1/sessions/${encodeURIComponent(p.sessionId)}/approvals/${encodeURIComponent(callId)}`, { body: { decision } });
-    reload();
-  };
-  const reasons: Record<Pending["reason"], string> = { approval: "одобрение инструмента", ask_human: "вопрос агента", supervisor: "остановлен супервизором", budget: "исчерпан бюджет" };
-  return (
-    <section class="page">
-      <h2>Журнал</h2>
-      {error && <p class="error">{error}</p>}
-      {data && !data.pending.length && <p class="muted">Ничего не ждёт человека.</p>}
-      {data?.pending.map((p) => (
-        <div key={p.turnId} class="panel">
-          <div class="row">
-            <a href={href({ page: "chat", sessionId: p.sessionId })}>{p.sessionId}</a>
-            <span class="status blocked">{reasons[p.reason]}</span>
-          </div>
-          {p.detail && <p>{p.detail}</p>}
-          {p.approvals.map((a) => (
-            <div key={a.callId} class="tool approval">
-              <div class="tool-head">
-                <code>{a.tool}</code> <span class="muted small">{a.reason}</span>
-              </div>
-              <pre>{JSON.stringify(a.args, null, 2)}</pre>
-              <div class="tool-actions">
-                <button onClick={() => void decide(p, a.callId, "approve")}>Одобрить</button>
-                <button class="danger" onClick={() => void decide(p, a.callId, "deny")}>
-                  Отклонить
-                </button>
-              </div>
-            </div>
-          ))}
-          {p.reason !== "approval" && (
-            <p class="small muted">
-              Ответьте в <a href={href({ page: "chat", sessionId: p.sessionId })}>чате</a>, чтобы продолжить.
-            </p>
-          )}
-        </div>
-      ))}
-    </section>
-  );
-}
-
-interface SupervisorData {
-  enabled: boolean;
-  events: SintyEvent[];
-  incidents: { id: string; tool: string; code: string; message: string; fixSummary: string; createdAt: string }[];
-  patches: { id: string; plugin: string; sessionId: string; status: string; reason: string; files: string[]; permissionsChanged: boolean; commit: string | null; createdAt: string }[];
-}
-
-export function SupervisorPage({ tick }: { tick: SintyEvent | undefined }) {
-  const relevant = tick && (tick.type.startsWith("supervisor.") || tick.type.startsWith("plugin.patch.")) ? tick : undefined;
-  const { data, error } = useLoad<SupervisorData>("/v1/supervisor", [relevant]);
-  return (
-    <section class="page">
-      <h2>
-        Супервизор <span class={`status ${data?.enabled ? "running" : "idle"}`}>{data?.enabled ? "включён" : "выключен"}</span>
-      </h2>
-      {error && <p class="error">{error}</p>}
-      <h3>Последние замечания</h3>
-      {data && !data.events.length && <p class="muted">Пока замечаний нет.</p>}
-      <table>
-        <tbody>
-          {data?.events.map((e) => {
-            const d = e.data as Record<string, string>;
-            return (
-              <tr key={e.id}>
-                <td class="small">{shortTime(e.ts)}</td>
-                <td>
-                  <code>{e.type.replace("supervisor.", "")}</code>
-                </td>
-                <td class="small">{d.detector ?? d.tool ?? ""}</td>
-                <td>{d.text ?? d.reason ?? d.fixSummary ?? ""}</td>
-                <td>
-                  <a class="small" href={href({ page: "chat", sessionId: e.sessionId })}>
-                    чат
-                  </a>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <h3>Патчи плагинов</h3>
-      {data && !data.patches.length && <p class="muted">Патчей не было.</p>}
-      <table>
-        <tbody>
-          {data?.patches.map((p) => (
-            <tr key={p.id}>
-              <td class="small">{shortTime(p.createdAt)}</td>
-              <td>
-                <code>{p.plugin}</code>
-              </td>
-              <td>
-                <span class={`status ${p.status}`}>{p.status}</span>
-                {p.permissionsChanged && <span class="status blocked">права</span>}
-              </td>
-              <td>{p.reason}</td>
-              <td class="small muted">{p.files.join(", ")}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <h3>Память инцидентов</h3>
-      {data && !data.incidents.length && <p class="muted">Решённых инцидентов пока нет.</p>}
-      <table>
-        <tbody>
-          {data?.incidents.map((i) => (
-            <tr key={i.id}>
-              <td class="small">{shortTime(i.createdAt)}</td>
-              <td>
-                <code>{i.tool}</code> <span class="small muted">{i.code}</span>
-              </td>
-              <td class="small">{i.message}</td>
-              <td>{i.fixSummary}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
 }
 
 interface PluginInfo {
@@ -457,7 +334,7 @@ function PluginsSettings({ enabled, setEnabled }: { enabled: string[]; setEnable
   );
 }
 
-export function SettingsPage({ onSaved, section }: { onSaved: () => void; section: "general" | "models" | "plugins" }) {
+export function SettingsPage({ onSaved, section }: { onSaved: () => void; section: string }) {
   const { data, error, reload } = useLoad<SettingsData>("/v1/settings", []);
   const [model, setModel] = useState("");
   const [enabled, setEnabled] = useState<string[]>([]);
@@ -488,6 +365,7 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       <h2>Настройки</h2>
       {error && <p class="error">{error}</p>}
       {section === "general" && <GeneralPane />}
+      {section !== "general" && section !== "models" && section !== "plugins" && <SectionPane key={section} id={section} />}
       {section === "models" && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
       {section === "plugins" && data && (
         <>

@@ -64,13 +64,53 @@ export const configSchema = z.object({
       ui: z.string().default("ui-web"),
     })
     .prefault({}),
+  /** Supervisor limits; editable in the Web UI (Settings → Супервизор). See docs/spec/supervisor.md. */
   supervisor: z
     .object({
       enabled: z.boolean().default(true),
-      loopThreshold: z.number().int().default(3),
-      stallSeconds: z.number().int().default(180),
-      maxNoticesPerTurn: z.number().int().default(6),
-      docsMaxChars: z.number().int().default(1500),
+      /** Identical calls before a loop notice. */
+      loopThreshold: z.number().int().min(1).default(3),
+      /** Identical calls before the turn is stopped; 0 never stops. Unset: loopThreshold + 2. */
+      loopBlockAfter: z.number().int().min(0).optional(),
+      /** Silence of a model or tool call before a warning; twice as long stops the turn (stallBlock). 0 = off. */
+      stallSeconds: z.number().int().min(0).default(180),
+      stallBlock: z.boolean().default(true),
+      maxNoticesPerTurn: z.number().int().min(1).default(6),
+      maxNoticesPerDetector: z.number().int().min(1).default(2),
+      /** When notices exceed their limits: stop the turn and ask the human (true), or just stop sending notices. */
+      escalate: z.boolean().default(true),
+      /** Same tool + error code in a turn before the notice says "do not repeat". */
+      repeatFailures: z.number().int().min(1).default(2),
+      /** Turns a tool failed in before the notice suggests a plugin patch; 0 never. */
+      patchAfterTurns: z.number().int().min(0).default(3),
+      /** Tool docs quoted in failure notices, characters; 0 none. */
+      docsMaxChars: z.number().int().min(0).default(1500),
+      useIncidents: z.boolean().default(true),
+      checks: z
+        .object({
+          toolErrors: z.boolean().default(true),
+          loop: z.boolean().default(true),
+          budget: z.boolean().default(true),
+          badOutput: z.boolean().default(true),
+        })
+        .prefault({}),
+      /**
+       * Turn budget. steps/tokens/seconds set here override `budgets.turn` in policy.yaml; unset ones come from it.
+       * `count` decides what a token is (see budgetTokens in @sinty/supervisor): "weighted" (default) counts cached
+       * prompt tokens at `cachedWeight`, "uncached" ignores them, "all" counts every prompt token.
+       */
+      budget: z
+        .object({
+          steps: z.number().int().min(0).optional(),
+          tokens: z.number().int().min(0).optional(),
+          seconds: z.number().int().min(0).optional(),
+          count: z.enum(["all", "uncached", "weighted"]).default("weighted"),
+          cachedWeight: z.number().min(0).max(1).default(0.1),
+          warnAt: z.number().min(0).max(1).default(0.8),
+          /** Stop the turn at the limit (true) or only warn (false). */
+          stop: z.boolean().default(true),
+        })
+        .prefault({}),
     })
     .prefault({}),
   memory: z
@@ -337,3 +377,21 @@ export const DEFAULT_AGENTS_MD = `# Agent rules
 - Work inside the workspace folder. Ask before destructive actions.
 - When a tool fails, read the error and the hint, fix the arguments, do not repeat the same call blindly.
 `;
+
+/** The turn budget in effect: config.yaml `supervisor.budget` values win; 0 there means "no limit"; unset ones come from policy.yaml. */
+export function effectiveBudget(config: SintyConfig, policy: SintyPolicy): { steps?: number; tokens?: number; seconds?: number; count: "all" | "uncached" | "weighted"; cachedWeight: number; warnAt: number; stop: boolean } {
+  const c = config.supervisor.budget;
+  const p = policy.budgets.turn;
+  const pick = (own: number | undefined, fromPolicy: number | undefined): number | undefined => {
+    const v = own ?? fromPolicy;
+    return v ? v : undefined;
+  };
+  const out: ReturnType<typeof effectiveBudget> = { count: c.count, cachedWeight: c.cachedWeight, warnAt: c.warnAt, stop: c.stop };
+  const steps = pick(c.steps, p.steps);
+  const tokens = pick(c.tokens, p.tokens);
+  const seconds = pick(c.seconds, p.seconds);
+  if (steps) out.steps = steps;
+  if (tokens) out.tokens = tokens;
+  if (seconds) out.seconds = seconds;
+  return out;
+}

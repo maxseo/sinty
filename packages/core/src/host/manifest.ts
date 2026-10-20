@@ -18,6 +18,24 @@ const uiTabSchema = z
   })
   .strict();
 
+const settingsFieldSchema = z
+  .object({
+    key: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*){0,3}$/),
+    label: z.string().min(1).max(80),
+    type: z.enum(["number", "boolean", "select", "text"]),
+    help: z.string().max(400).optional(),
+    group: z.string().max(60).optional(),
+    min: z.number().optional(),
+    max: z.number().optional(),
+    step: z.number().positive().optional(),
+    integer: z.boolean().optional(),
+    optional: z.boolean().optional(),
+    options: z.array(z.object({ value: z.string().max(80), label: z.string().max(80) }).strict()).min(1).max(30).optional(),
+    unit: z.string().max(20).optional(),
+  })
+  .strict()
+  .refine((f) => f.type !== "select" || (f.options?.length ?? 0) > 0, { message: "a select field needs options" });
+
 const manifestSchema = z
   .object({
     $schema: z.string().optional(),
@@ -67,6 +85,11 @@ const manifestSchema = z
       .strict()
       .refine((u) => u.static !== undefined || u.tabs !== undefined, { message: 'ui needs "static", "tabs" or both' })
       .refine((u) => new Set((u.tabs ?? []).map((t) => t.id)).size === (u.tabs ?? []).length, { message: "ui.tabs ids must be unique" })
+      .optional(),
+    settings: z
+      .object({ title: z.string().min(1).max(40), description: z.string().max(400).optional(), fields: z.array(settingsFieldSchema).min(1).max(40) })
+      .strict()
+      .refine((s) => new Set(s.fields.map((f) => f.key)).size === s.fields.length, { message: "settings field keys must be unique" })
       .optional(),
   })
   .strict();

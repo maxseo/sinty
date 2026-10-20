@@ -112,7 +112,9 @@ Base path `/v1`. Auth: `Authorization: Bearer <token>` (or `?token=` on GET, str
 | GET | `/v1/sessions/:id/stream?after=<seq>` | SSE: replay then live (includes `model.delta`) |
 | POST | `/v1/sessions/:id/approvals/:callId` | `{ decision: "approve" \| "deny", note? }` |
 | POST | `/v1/sessions/:id/interrupt` | stop the current turn after the running step |
-| GET | `/v1/supervisor` | recent supervisor events, incidents, patches (file paths only) |
+| GET | `/v1/supervisor` | recent supervisor events, incidents, patches (file paths only); `?sessionId=` only that chat's; texts masked (see supervisor.md, "Masking") |
+| GET | `/v1/settings/sections` | settings sections: the core's `supervisor` and plugins' manifest `settings` (`plugin.<name>`), with fields, values and defaults |
+| PUT | `/v1/settings/sections/:id` | `{ values: { "<field key>": value \| null } }`: validates, writes `config.yaml` (comments kept); the supervisor section applies live, plugin sections after a restart |
 | GET | `/v1/stream` | SSE of lifecycle events of all sessions (lists, badges, boards) |
 | GET | `/` | redirect to `/ui/<server.ui>/` |
 | GET | `/ui/:plugin/*` | static UI of a **non-editable** plugin |

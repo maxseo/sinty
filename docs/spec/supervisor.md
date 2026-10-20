@@ -18,10 +18,10 @@ Actions are `notice` (recorded as `supervisor.notice` and shown to the model as 
 | `tool_error` | `tool.call.failed` | done |
 | `invalid_args` | schema validation failed before the call | done |
 | `interrupted` | resume found a tool call with unknown outcome (`code: interrupted`) | done, as a `tool_error` notice with a "check the state first" hint |
-| `loop` | same tool with the same arguments ≥ `loopThreshold` times; `loopThreshold + 2` escalates | done |
-| `budget` | 80% of the step or token budget → notice. 100% → the core blocks the turn with reason `budget` | done |
+| `loop` | same tool with the same arguments ≥ `loopThreshold` times; `loopBlockAfter` (default `loopThreshold + 2`) escalates | done |
+| `budget` | `budget.warnAt` (80%) of the step or token budget → notice. 100% → the core blocks the turn with reason `budget` (`budget.stop: false`: warning only) | done |
 | `bad_output` | empty final answer, or output cut off (`stopReason` `length` / `max_tokens`) | done |
-| `stall` | no progress for `stallSeconds` | planned |
+| `stall` | a model or tool call silent for `stallSeconds` → notice; twice as long → the call is aborted (`stallBlock`). Runs in the core | done |
 | `provider` | provider error rate or latency above threshold → `model.fallback` | planned; the core already falls back on errors |
 
 ## Notice
@@ -43,9 +43,9 @@ The docs file is `tools[].docs` from the manifest, otherwise the plugin's `READM
 | Level | Trigger | Action |
 |---|---|---|
 | 1. Hint | first failure | notice with hint, docs and similar incidents |
-| 2. Strategy | same tool and code failed twice in the turn | notice: do not repeat, change the approach |
-| 3. Patch | the tool failed in ≥ 3 different turns and its plugin is editable | notice suggesting `plugin.read` → `plugin.propose_patch` |
-| 4. Human | more than `maxNoticesPerDetector` (2) notices from one detector or `maxNoticesPerTurn` in total, or a hard loop | `supervisor.escalated` + `turn.blocked{reason: supervisor}` |
+| 2. Strategy | same tool and code failed `repeatFailures` (2) times in the turn | notice: do not repeat, change the approach |
+| 3. Patch | the tool failed in ≥ `patchAfterTurns` (3) different turns and its plugin is editable | notice suggesting `plugin.read` → `plugin.propose_patch` |
+| 4. Human | more than `maxNoticesPerDetector` (2) notices from one detector or `maxNoticesPerTurn` in total, or a hard loop; with `escalate: false` extra notices are dropped instead | `supervisor.escalated` + `turn.blocked{reason: supervisor}` |
 
 A blocked turn (reason `supervisor` or `budget`) continues when a human sends a message to the session: the message is recorded in the same turn, and the step, token and time budgets and the supervisor counters restart from it.
 
@@ -53,15 +53,50 @@ A blocked turn (reason `supervisor` or `budget`) continues when a human sends a 
 
 When a turn completes, the supervisor looks for tools that failed and then succeeded in that turn. It reports `{ tool, code, message, fixSummary }`, which says which arguments worked. The core stores this in the `incidents` table and records `supervisor.incident_resolved`. Later failures of the same tool with the same error code include the last two such incidents. Matching is exact on tool and code. Summaries written by a model come later.
 
+## Masking
+
+Incidents and notices never carry raw arguments. Before anything is stored or quoted (`packages/supervisor/src/scrub.ts`):
+
+- values of secret-looking keys (`password`, `token`, `secret`, `apiKey`, `authorization`, `cookie`, `pin`, …) become `[hidden]`;
+- text typed into a page (`web.interact` actions `type`, and `fill` / `input` / `insert` / `setValue` in other tools) becomes `[hidden]`;
+- secret query parameters and known token shapes (`sk-…`, `ghp_…`, `xox…`, JWTs, `Bearer …`) become `[hidden]`;
+- long string values are cut to 120 characters (`…[N chars]`), long JSON values in older texts to 80.
+
+The core also passes incident texts through the secret store's redaction, rewrites incidents stored before masking existed when it starts, and masks `supervisor.*` texts again when `/v1/supervisor` serves them. Journal events themselves stay append-only: the chat's «Журнал» tab still shows the raw arguments of that chat's tool calls.
+
 ## Configuration
+
+Stored in `config.yaml` (core-owned) and editable in the Web UI: Settings → **Супервизор**. Changes apply at the next checkpoint without a restart, except `enabled`.
 
 ```yaml
 supervisor:
   enabled: true
-  loopThreshold: 3
-  stallSeconds: 180    # reserved for the stall detector
+  loopThreshold: 3          # identical calls before a loop notice
+  # loopBlockAfter: 5       # identical calls before the turn stops; default loopThreshold + 2; 0 never
+  stallSeconds: 180         # silence before a warning; 0 off; agents may set their own
+  stallBlock: true          # abort the silent call after twice stallSeconds
   maxNoticesPerTurn: 6
-  docsMaxChars: 1500
+  maxNoticesPerDetector: 2
+  escalate: true            # false: never stop the turn for notice limits or loops, just stop sending notices
+  repeatFailures: 2         # same tool + code in a turn before "do not repeat" (level 2)
+  patchAfterTurns: 3        # turns a tool failed in before the patch suggestion (level 3); 0 never
+  docsMaxChars: 1500        # tool docs quoted in a notice; 0 none
+  useIncidents: true        # quote earlier fixes of the same error
+  checks: { toolErrors: true, loop: true, budget: true, badOutput: true }
+  budget:
+    # steps: 60             # unset: policy.yaml budgets.turn; 0 = no limit
+    # tokens: 600000
+    # seconds: 1200
+    count: weighted         # weighted | uncached | all
+    cachedWeight: 0.1       # weight of a cached prompt token for "weighted"
+    warnAt: 0.8             # notice at this share of the step or token budget
+    stop: true              # false: warn, never block
 ```
 
-Stored in `config.yaml` (core-owned).
+`checks.budget` turns off only the warning notice; the hard stop is `budget.stop`.
+
+### What a budget token is
+
+With prompt caching a long turn re-reads the same prefix on every step. Counting every prompt token (`all`, the behaviour before this setting) makes a 60-step turn with a 10k-token context "spend" 600k tokens while the provider bills most of them at a tenth of the price. The default `weighted` counts `input − cached + output + cached × cachedWeight`, which tracks cost for DeepSeek, OpenAI and Anthropic (cache reads at about 10% of the input price) without needing per-model prices. `uncached` ignores cached tokens entirely. A dollar budget is not offered yet: providers do not report `costUsd`.
+
+`policy.yaml budgets.turn` still works and is the fallback for numbers not set in `config.yaml`.

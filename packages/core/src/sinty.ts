@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { SintyEvent } from "@sinty/sdk";
 import { Agent } from "./agent.js";
 import { Bus } from "./bus.js";
-import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, loadConfig, loadPolicy, type SintyConfig, type SintyPolicy } from "./config.js";
+import { scrubText, type SupervisorSettings } from "@sinty/supervisor";
+import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, effectiveBudget, loadConfig, loadPolicy, type SintyConfig, type SintyPolicy } from "./config.js";
 import { PluginHost } from "./host/host.js";
 import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
@@ -111,18 +112,19 @@ export class Sinty {
       toolsChanged: () => this.supervisor?.setTools(this.agent.supervisedTools()),
     });
 
-    const s = this.config.supervisor;
-    const budget = this.policy.budgets.turn;
-    this.supervisor = s.enabled
+    // Incident memory written before arguments were masked may hold typed passwords or whole files: scrub it once.
+    const scrubbed = this.journal.scrubIncidents((t) => scrubText(t));
+    if (scrubbed) this.log("info", `supervisor: masked ${scrubbed} stored incident(s)`);
+    this.supervisor = this.config.supervisor.enabled
       ? new SupervisorClient(
           this.paths,
-          { loopThreshold: s.loopThreshold, maxNoticesPerTurn: s.maxNoticesPerTurn, maxNoticesPerDetector: 2, docsMaxChars: s.docsMaxChars, budget: { steps: budget.steps, tokens: budget.tokens } },
+          this.supervisorSettings(),
           () => this.journal.incidents(),
           {
             log: (level, msg) => this.log(level, msg),
             replay: () => this.openTurnEvents(),
             incidentResolved: (sessionId, turnId, incident) => {
-              const row = this.journal.addIncident({ id: newId("inc"), ...incident });
+              const row = this.journal.addIncident({ id: newId("inc"), tool: incident.tool, code: incident.code, message: this.secrets.redact(scrubText(incident.message)), fixSummary: this.secrets.redact(scrubText(incident.fixSummary)) });
               this.agent.emit({ sessionId, ...(turnId ? { turnId } : {}), type: "supervisor.incident_resolved", actor: { kind: "supervisor", id: "supervisor" }, data: { incidentId: row.id, tool: row.tool, code: row.code, fixSummary: row.fixSummary } });
               this.supervisor?.incidentStored(row);
             },
@@ -157,6 +159,25 @@ export class Sinty {
       ...(this.supervisor ? { supervisor: this.supervisor } : {}),
       log: this.log,
     });
+  }
+
+  /** Supervisor process settings from config.yaml `supervisor` (budget numbers fall back to policy.yaml). */
+  supervisorSettings(): SupervisorSettings {
+    const s = this.config.supervisor;
+    const b = effectiveBudget(this.config, this.policy);
+    return {
+      loopThreshold: s.loopThreshold,
+      ...(s.loopBlockAfter !== undefined ? { loopBlockAfter: s.loopBlockAfter } : {}),
+      maxNoticesPerTurn: s.maxNoticesPerTurn,
+      maxNoticesPerDetector: s.maxNoticesPerDetector,
+      docsMaxChars: s.docsMaxChars,
+      escalate: s.escalate,
+      repeatFailures: s.repeatFailures,
+      patchAfterTurns: s.patchAfterTurns,
+      useIncidents: s.useIncidents,
+      checks: { ...s.checks },
+      budget: { steps: b.steps, tokens: b.tokens, warnAt: b.warnAt, count: b.count, cachedWeight: b.cachedWeight },
+    };
   }
 
   /** Starts plugins and the supervisor, then resumes turns that were running when the process stopped. */

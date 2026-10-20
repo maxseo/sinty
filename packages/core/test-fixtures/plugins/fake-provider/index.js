@@ -35,7 +35,7 @@ export default definePlugin({
         for (const [i, c] of (step.toolCalls ?? []).entries()) {
           yield { type: "tool_call", id: `call_${n}_${i}`, name: c.name, args: fromLastTool(c.args, req.messages) };
         }
-        yield { type: "done", stopReason: step.toolCalls ? "tool_use" : "end_turn", usage: { inputTokens: 10, outputTokens: 5 } };
+        yield { type: "done", stopReason: step.toolCalls ? "tool_use" : "end_turn", usage: step.usage ?? { inputTokens: 10, outputTokens: 5 } };
       },
     });
   },

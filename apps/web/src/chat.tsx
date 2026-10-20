@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribe, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { IconBrain, IconMic, IconPlus } from "./icons.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
+import { SupervisorView } from "./supervisor-ui.js";
 
 const VIEW_KEY = "sinty.chatView";
 const NO_TABS: PluginTabInfo[] = [];
@@ -137,7 +138,8 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
     }
   }, [tabs]);
   const pluginTab = tabs.find((t) => tabViewKey(t) === view);
-  const tab = pluginTab ? "plugin" : view === "journal" ? "journal" : "chat";
+  const supCount = useMemo(() => events.filter((e) => e.type === "supervisor.notice" || e.type === "supervisor.escalated").length, [events]);
+  const tab = pluginTab ? "plugin" : view === "journal" ? "journal" : view === "supervisor" ? "supervisor" : "chat";
   const setTab = (v: string): void => {
     setView(v);
     try {
@@ -293,6 +295,9 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
           <button class={tab === "journal" ? "on" : ""} onClick={() => setTab("journal")}>
             Журнал
           </button>
+          <button class={tab === "supervisor" ? "on" : ""} title="Замечания и инциденты супервизора в этом чате" onClick={() => setTab("supervisor")}>
+            Супервизор{supCount > 0 && <span class="badge">{supCount}</span>}
+          </button>
           {tabs.map((t) => (
             <button key={tabViewKey(t)} class={pluginTab === t ? "on" : ""} title={`Вкладка плагина ${t.plugin}`} onClick={() => setTab(tabViewKey(t))}>
               {t.title}
@@ -320,6 +325,10 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
         </div>
       ) : tab === "journal" ? (
         <Journal events={events} />
+      ) : tab === "supervisor" ? (
+        <div class="session-tab">
+          <SupervisorView sessionId={sessionId} tick={supCount} />
+        </div>
       ) : (
         <div class="log">
           {items.map((it) => {
@@ -506,7 +515,7 @@ function Journal({ events }: { events: SintyEvent[] }) {
                 <button
                   key={event.seq ?? i}
                   type="button"
-                  class={`seg ${laneOf(event.type)} ${selected === event ? "on" : ""}`}
+                  class={`seg lane-${laneOf(event.type)} ${selected === event ? "on" : ""}`}
                   style={{ left: `${left}%`, width: `${width}%` }}
                   title={eventPreview(event.data) || event.type}
                   onClick={() => setPicked(i)}
@@ -526,7 +535,7 @@ function Journal({ events }: { events: SintyEvent[] }) {
                 const preview = eventPreview(event.data);
                 return (
                   <button key={event.seq ?? event.id} type="button" class={`trace-row ${selected === event ? "on" : ""}`} onClick={() => setPicked(i)}>
-                    <span class={`pill ${laneOf(event.type)}`}>{laneOf(event.type) === "input" ? "Ввод" : laneOf(event.type) === "model" ? "Модель" : "Вызов"}</span>
+                    <span class={`pill lane-${laneOf(event.type)}`}>{laneOf(event.type) === "input" ? "Ввод" : laneOf(event.type) === "model" ? "Модель" : "Вызов"}</span>
                     <span class="trace-text">{preview || event.type}</span>
                     <span class="muted small">{new Date(event.ts).toLocaleTimeString()}</span>
                   </button>

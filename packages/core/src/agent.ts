@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z, type TurnInfo, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
-import type { CheckpointPhase, SupervisedTool } from "@sinty/supervisor";
+import { budgetTokens, type CheckpointPhase, type SupervisedTool } from "@sinty/supervisor";
 import type { Bus, StreamOnlyEvent } from "./bus.js";
-import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, type SintyConfig, type SintyPolicy } from "./config.js";
+import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, effectiveBudget, type SintyConfig, type SintyPolicy } from "./config.js";
 import { CORE_TOOL_NAMES, CORE_TOOLS, coreToolSchema } from "./coretools.js";
 import { newId } from "./ids.js";
 import type { PluginHost, PluginProcess, RegisteredTool } from "./host/host.js";
@@ -369,10 +369,12 @@ export class Agent {
           turnId,
           type: "supervisor.notice",
           actor: SUPERVISOR,
-          data: { detector: "stall", level: 2, text: `Ход молчит дольше ${seconds} с. Если шаг завис, он остановится ещё через ${seconds} с.` },
+          data: { detector: "stall", level: 2, text: this.d.config.supervisor.stallBlock ? `Ход молчит дольше ${seconds} с. Если шаг завис, он остановится ещё через ${seconds} с.` : `Ход молчит дольше ${seconds} с.` },
         });
       },
       () => {
+        // supervisor.stallBlock: false keeps the call running after the warning.
+        if (!this.d.config.supervisor.stallBlock) return;
         escalated = true;
         child.abort();
         markEscalated?.();
@@ -450,10 +452,13 @@ export class Agent {
     return { sessionId: child.id, text: text?.text || "Дочерний ход закончился без текста." };
   }
 
+  /** The turn budget (config.yaml supervisor.budget over policy.yaml budgets.turn). With `stop: false` it only warns. */
   private overBudget(view: TurnView): string | undefined {
-    const b = this.d.policy.budgets.turn;
+    const b = effectiveBudget(this.d.config, this.d.policy);
+    if (!b.stop) return undefined;
+    const unit = b.count === "all" ? "tokens" : b.count === "uncached" ? "uncached tokens" : "cost-weighted tokens";
     if (b.steps && view.steps >= b.steps) return `turn reached ${b.steps} model steps`;
-    if (b.tokens && view.tokens >= b.tokens) return `turn used ${view.tokens} tokens (limit ${b.tokens})`;
+    if (b.tokens && view.tokens >= b.tokens) return `turn used ${view.tokens} ${unit} (limit ${b.tokens})`;
     if (b.seconds && Date.now() - view.windowStart > b.seconds * 1000) return `turn ran longer than ${b.seconds} s`;
     return undefined;
   }
@@ -996,7 +1001,7 @@ export class Agent {
           const r = e as SintyEvent<"model.response">;
           v.steps++;
           v.totalSteps++;
-          v.tokens += r.data.usage.inputTokens + r.data.usage.outputTokens;
+          v.tokens += budgetTokens(r.data.usage, this.d.config.supervisor.budget.count, this.d.config.supervisor.budget.cachedWeight);
           v.lastResponse = r;
           v.calls = r.data.toolCalls.map((call) => ({ call, status: { kind: "new" } }));
           v.agentMessageAfterResponse = false;
