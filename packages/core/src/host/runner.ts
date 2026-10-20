@@ -8,6 +8,8 @@ import {
   type EventType,
   type HttpRoute,
   type LiveEvent,
+  type MemoryProcessorDefinition,
+  type MemoryProviderDefinition,
   type PluginContext,
   type PluginDefinition,
   type ProviderDefinition,
@@ -26,6 +28,10 @@ const send = (msg: FromChild): void => {
 const tools = new Map<string, ToolDefinition>();
 const providers = new Map<string, ProviderDefinition>();
 const contexts = new Map<string, { fn: ContextContributor; order: number }>();
+const memoryProviders = new Map<string, MemoryProviderDefinition>();
+const memoryProcessors = new Map<string, MemoryProcessorDefinition>();
+const PROCESSOR_HOOKS = ["onTurnStart", "afterRecall", "beforeContext", "afterTurn", "onCompaction", "onWrite"] as const;
+const PROVIDER_METHODS = ["recall", "write", "forget"] as const;
 const listeners = new Map<string, ((e: SintyEvent) => void | Promise<void>)[]>();
 const running = new Map<number, AbortController>();
 const journalWaiters = new Map<number, (events: SintyEvent[]) => void>();
@@ -34,6 +40,8 @@ const routes: HttpRoute[] = [];
 const agentWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
 const agentStreams = new Map<number, { push(e: LiveEvent): void; end(error?: WireError): void }>();
 let agentSeq = 0;
+const modelWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
+let modelSeq = 0;
 let closeMcp: (() => void) | undefined;
 
 function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
@@ -41,6 +49,14 @@ function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     agentWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
     send({ t: "agent.call", id, op, args });
+  });
+}
+
+function modelsCall<T>(op: "complete" | "embed", req: object): Promise<T> {
+  const id = ++modelSeq;
+  return new Promise<T>((resolve, reject) => {
+    modelWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
+    send({ t: "models.call", id, op, req: { ...req } as Record<string, unknown> });
   });
 }
 
@@ -176,6 +192,18 @@ async function init(msg: InitMessage): Promise<void> {
       },
     },
     agent: agentApi,
+    models: {
+      complete: (req) => modelsCall("complete", req),
+      embed: (req) => modelsCall("embed", req),
+    },
+    memory: {
+      provider(def) {
+        memoryProviders.set(def.name, def);
+      },
+      processor(def) {
+        memoryProcessors.set(def.name, def);
+      },
+    },
     tool(def) {
       tools.set(def.name, def as unknown as ToolDefinition);
     },
@@ -230,6 +258,15 @@ async function init(msg: InitMessage): Promise<void> {
     t: "ready",
     tools: toolInfos,
     providers: [...providers.keys()],
+    embedders: [...providers.values()].filter((p) => typeof p.embed === "function").map((p) => p.protocol),
+    memory: {
+      providers: [...memoryProviders.keys()],
+      processors: [...memoryProcessors.values()].map((p) => ({
+        name: p.name,
+        order: p.order ?? 100,
+        hooks: PROCESSOR_HOOKS.filter((h) => typeof p[h] === "function"),
+      })),
+    },
     contexts: [...contexts.entries()].map(([name, c]) => ({ name, order: c.order })),
     subscriptions: [...listeners.keys()] as (EventType | "*")[],
     routes: routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, public: r.public === true })),
@@ -276,6 +313,19 @@ async function streamProvider(id: number, protocol: string, req: Omit<Parameters
     send({ t: "provider.error", id, error: toWire(e) });
   } finally {
     running.delete(id);
+  }
+}
+
+async function callMemory(id: number, kind: "provider" | "processor", name: string, method: string, args: unknown[]): Promise<void> {
+  const target = kind === "provider" ? memoryProviders.get(name) : memoryProcessors.get(name);
+  const allowed: readonly string[] = kind === "provider" ? PROVIDER_METHODS : PROCESSOR_HOOKS;
+  const fn = target && allowed.includes(method) ? (target as unknown as Record<string, unknown>)[method] : undefined;
+  if (typeof fn !== "function") return send({ t: "memory.result", id, ok: false, error: { code: "unknown_method", message: `memory ${kind} ${name} has no ${method}` } });
+  try {
+    const value: unknown = await (fn as (...a: unknown[]) => unknown).apply(target, Array.isArray(args) ? args : []);
+    send({ t: "memory.result", id, ok: true, value: value === undefined ? null : value });
+  } catch (e) {
+    send({ t: "memory.result", id, ok: false, error: toWire(e) });
   }
 }
 
@@ -338,6 +388,30 @@ process.on("message", (raw: ToChild) => {
       else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
       break;
     }
+    case "models.result": {
+      const w = modelWaiters.get(raw.id);
+      modelWaiters.delete(raw.id);
+      if (raw.ok) w?.resolve(raw.value);
+      else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
+      break;
+    }
+    case "provider.embed": {
+      const p = providers.get(raw.protocol);
+      if (!p?.embed) {
+        send({ t: "provider.embedded", id: raw.id, ok: false, error: { code: "embed_unsupported", message: `protocol ${raw.protocol} has no embed()` } });
+        break;
+      }
+      const ac = new AbortController();
+      running.set(raw.id, ac);
+      p.embed({ ...raw.req, signal: ac.signal })
+        .then((value) => send({ t: "provider.embedded", id: raw.id, ok: true, value }))
+        .catch((e: unknown) => send({ t: "provider.embedded", id: raw.id, ok: false, error: toWire(e) }))
+        .finally(() => running.delete(raw.id));
+      break;
+    }
+    case "memory.call":
+      void callMemory(raw.id, raw.kind, raw.name, raw.method, raw.args);
+      break;
     case "agent.event":
       agentStreams.get(raw.id)?.push(raw.event);
       break;

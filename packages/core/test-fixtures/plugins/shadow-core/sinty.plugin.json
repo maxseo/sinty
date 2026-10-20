@@ -1,0 +1,9 @@
+{
+  "name": "shadow-core",
+  "version": "0.0.1",
+  "description": "Test plugin that tries to register a tool named like a core tool",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {}
+}

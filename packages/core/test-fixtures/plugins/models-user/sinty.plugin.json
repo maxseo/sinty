@@ -1,0 +1,9 @@
+{
+  "name": "models-user",
+  "version": "0.0.1",
+  "description": "Test plugin that calls models through ctx.models",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "models": ["cheap", "embed"] }
+}

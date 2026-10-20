@@ -7,6 +7,8 @@ import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, loadConfig
 import { PluginHost } from "./host/host.js";
 import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
+import { MemoryRouter } from "./memory-router.js";
+import { ModelGateway } from "./models.js";
 import { PatchManager } from "./patches.js";
 import { createAgentBridge } from "./plugin-bridge.js";
 import { checkIntegrity, installLooksStrictUnsafe } from "./integrity.js";
@@ -72,6 +74,8 @@ export class Sinty {
   readonly patches: PatchManager;
   readonly supervisor: SupervisorClient | undefined;
   readonly agent: Agent;
+  readonly memory: MemoryRouter;
+  readonly models: ModelGateway;
   private readonly log: LogFn;
 
   constructor(opts: SintyOptions = {}) {
@@ -88,7 +92,9 @@ export class Sinty {
       crashed: (plugin, code, restarts) => this.log("warn", `plugin ${plugin} exited with ${code} (crash ${restarts})`),
       readJournal: (sessionId, afterSeq, types) => this.journal.events(sessionId, { afterSeq, types }),
       agent: createAgentBridge(() => ({ agent: this.agent, journal: this.journal, bus: this.bus })),
+      models: (plugin, allowed, op, req) => this.models.pluginCall(plugin, allowed, op, req),
     });
+    this.models = new ModelGateway({ config: this.config, secrets: this.secrets, host: this.host, record: (input) => this.agent.emit(input), log: this.log });
 
     this.patches = new PatchManager(this.paths, this.journal, this.host, {
       proposed: (p) => this.agent.emit({ sessionId: p.sessionId, type: "plugin.patch.proposed", actor: PLUGIN_ACTOR, data: { patchId: p.id, plugin: p.plugin, reason: p.reason, branch: `.staging/${p.id}` } }),
@@ -117,7 +123,21 @@ export class Sinty {
         )
       : undefined;
 
+    this.memory = new MemoryRouter({
+      dataDir: this.paths.data,
+      config: this.config,
+      record: (input) => this.agent.emit(input),
+      log: this.log,
+      host: this.host,
+      redact: (t) => this.secrets.redact(t),
+      turnEvents: (turnId) => this.journal.turnEvents(turnId),
+      // Vector search in the builtin store turns on when models.routes.embed is configured.
+      embedder: () => (this.models.hasRoute("embed") ? { embed: async (texts, signal) => (await this.models.embed({ input: texts, signal })).vectors } : undefined),
+    });
+
     this.agent = new Agent({
+      memory: this.memory,
+      models: this.models,
       paths: this.paths,
       config: this.config,
       policy: this.policy,
@@ -132,7 +152,8 @@ export class Sinty {
   }
 
   /** Starts plugins and the supervisor, then resumes turns that were running when the process stopped. */
-  async start(): Promise<{ failedPlugins: { plugin: string; error: string }[]; resumedTurns: string[] }> {
+  /** `background: false` (offline tools such as `sinty memory eval`) starts plugins only: no supervisor, no resumed turns, no memory queue. */
+  async start(opts: { background?: boolean } = {}): Promise<{ failedPlugins: { plugin: string; error: string }[]; resumedTurns: string[] }> {
     const integrity = checkIntegrity(this.paths.install);
     if (!integrity.ok) throw new Error(`install integrity check failed:\n${integrity.problems.slice(0, 8).join("\n")}`);
     if (this.policy.mode === "strict") {
@@ -142,10 +163,12 @@ export class Sinty {
     }
     const { failed } = await this.host.start();
     for (const f of failed) this.log("error", `plugin ${f.plugin} failed to start: ${f.error}`);
+    if (opts.background === false) return { failedPlugins: failed, resumedTurns: [] };
     if (this.supervisor) {
       this.supervisor.setTools(this.agent.supervisedTools());
       await this.supervisor.start();
     }
+    this.memory.kick();
     const resumedTurns = this.agent.resumeAll();
     return { failedPlugins: failed, resumedTurns };
   }
@@ -153,7 +176,9 @@ export class Sinty {
   async stop(): Promise<void> {
     await this.agent.stop();
     this.supervisor?.stop();
+    this.memory.beginClose();
     this.host.stop();
+    await this.memory.close();
     this.journal.close();
   }
 

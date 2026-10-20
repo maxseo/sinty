@@ -1,0 +1,9 @@
+{
+  "name": "memory-test",
+  "version": "0.0.1",
+  "description": "Test memory plugin: one provider and one processor driven by plugin config",
+  "kinds": ["memory"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "write": ["$DATA"] } }
+}

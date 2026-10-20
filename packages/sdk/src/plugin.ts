@@ -1,8 +1,9 @@
 import type { z } from "zod";
 import type { AgentState, EventType, LiveEvent, SintyEvent, ToolSideEffects } from "./events.js";
 import type { PolicyDecision, ToolDefinition } from "./tool.js";
+import type { EmbedProviderRequest, MemoryProcessorDefinition, MemoryProviderDefinition, ModelsApi } from "./memory.js";
 
-export type PluginKind = "provider" | "tool" | "context" | "channel" | "server" | "schedule" | "event" | "ui";
+export type PluginKind = "provider" | "tool" | "context" | "channel" | "server" | "schedule" | "event" | "ui" | "memory";
 
 export type PluginRuntime = "node" | "mcp-stdio" | "http";
 
@@ -16,6 +17,8 @@ export interface PluginPermissions {
   env?: string[];
   shell?: boolean;
   agent?: AgentScope[];
+  /** Model routes the plugin may call through `ctx.models`: "default", "cheap", "embed", a models.routes key or "*". */
+  models?: string[];
 }
 
 export interface ManifestTool {
@@ -96,6 +99,8 @@ export interface ProviderDefinition {
   protocol: string;
   stream(req: ProviderRequest): AsyncIterable<ProviderChunk>;
   listModels?(endpoint: ProviderEndpoint): Promise<{ id: string; contextWindow?: number }[]>;
+  /** Embeddings for `ctx.models.embed` and the builtin vector search. */
+  embed?(req: EmbedProviderRequest): Promise<{ vectors: number[][]; usage?: { inputTokens: number } }>;
 }
 
 // ---- context ----
@@ -173,6 +178,10 @@ export interface PluginContext {
   readonly journal: { read(sessionId: string, opts?: { afterSeq?: number; types?: EventType[] }): AsyncIterable<SintyEvent> };
   /** Calls fail with `agent_denied` unless the manifest grants the scope. */
   readonly agent: AgentApi;
+  /** Model calls through the core. Fail with `models_denied` unless `permissions.models` lists the route. */
+  readonly models: ModelsApi;
+  /** Register memory providers and processors. Needs `"memory"` in the manifest kinds. */
+  readonly memory: { provider(def: MemoryProviderDefinition): void; processor(def: MemoryProcessorDefinition): void };
 
   tool<I extends z.ZodType>(def: ToolDefinition<I>): void;
   provider(def: ProviderDefinition): void;

@@ -100,6 +100,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/fact-extractor:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/herdr:
     dependencies:
       '@sinty/sdk':
@@ -112,11 +118,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
-  plugins/memory:
+  plugins/memory-obsidian:
     dependencies:
-      '@sinty/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@sinty/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

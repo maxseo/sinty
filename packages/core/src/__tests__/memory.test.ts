@@ -65,3 +65,21 @@ test("summary payload and old tool trim", () => {
   assert.match(trimmed[1]!.content, /truncated/);
   assert.doesNotMatch(trimmed.at(-1)!.content, /truncated/);
 });
+
+test("memory: profile and recent journal only show facts this persona and chat may see", () => {
+  const store = open();
+  store.write({ text: "The user is Max.", tier: "profile", scope: "user", about: "user", source: "t" });
+  store.write({ text: "Writer persona uses a formal tone.", tier: "profile", scope: "agent", about: "work", source: "t", agentId: "writer" });
+  store.write({ text: "Coder persona deployed build 7.", tier: "log", scope: "agent", about: "work", source: "t", agentId: "coder" });
+  store.write({ text: "This chat is about invoices.", tier: "log", scope: "chat", about: "work", source: "t", agentId: "coder", chatId: "ses_a" });
+  const writer = { agentId: "writer", chatId: "ses_b" };
+  assert.deepEqual(store.profile(writer).map((f) => f.text), ["The user is Max.", "Writer persona uses a formal tone."]);
+  assert.deepEqual(store.recentLog(10, writer).map((f) => f.text), []);
+  const coderA = { agentId: "coder", chatId: "ses_a" };
+  assert.deepEqual(store.profile(coderA).map((f) => f.text), ["The user is Max."]);
+  assert.deepEqual(store.recentLog(10, coderA).map((f) => f.text).sort(), ["Coder persona deployed build 7.", "This chat is about invoices."]);
+  assert.deepEqual(store.recentLog(10, { agentId: "coder", chatId: "ses_other" }).map((f) => f.text), ["Coder persona deployed build 7."]);
+  assert.equal(store.recall({ query: "build", chatId: "x", agentId: "writer" }).length, 0);
+  assert.equal(store.recall({ query: "build", chatId: "x", agentId: "coder" }).length, 1);
+  store.close();
+});

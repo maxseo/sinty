@@ -12,17 +12,21 @@ Things that are designed or promised in the docs but not built yet, and are not 
 - **Why:** answers often need fresh information from the internet.
 - **Effect on the agent:** it can search and read pages. Requests reach only hosts allowed in `policy.yaml`, and page text is marked as untrusted, so instructions inside a page are not followed.
 
-### `memory-sqlite`
-- **Why:** sessions are isolated today; facts the user told the agent last week are lost.
-- **Effect on the agent:** it remembers preferences and facts across sessions. A `context` plugin adds the relevant memories to each prompt. The journal stays the source of truth, so memory can be wiped or replaced without losing history.
+### Memory follow-ups
+Cross-session memory is built (core `MemoryRouter` + builtin SQLite store, see [spec/memory.md](spec/memory.md) and
+`docs/journal/`). Still open:
+- **Vector backfill:** facts written before `models.routes.embed` was configured have no vectors; a `sinty memory reindex` command would embed them.
+- **Vault embeddings:** `memory-obsidian` is lexical (BM25); semantic search through `ctx.models.embed` would find paraphrases.
+- **Durable plugin budgets:** `models.pluginTokensPerDay` is counted in memory and resets on restart.
+- **Memory UI:** browse, edit and forget facts and see `memory.*` events in the Web UI.
+- **Eval datasets:** `sinty memory eval` needs labeled query sets per install to be useful for tuning.
 
 ### `skills` loader (`SKILL.md`)
 - **Why:** repeatable procedures (publish an article, check a payment) are better written once than explained in every chat.
 - **Effect on the agent:** it loads matching skills into the prompt and can write new skills to `skills/` itself. Its behaviour improves without code changes.
 
 ### `context-compress`
-- **Why:** long sessions will overflow the model's context window.
-- **Effect on the agent:** old steps are summarised in the prompt, so long sessions keep working and cost less. Nothing is deleted: `context.recall` still reads exact old events from the journal.
+- **Status:** compaction is built into the core memory router (summary at 65% of `memory.contextTokens`, last 12 user turns kept, `onCompaction` hook for plugins, trim-to-window on failure). A separate plugin is no longer planned.
 
 ### `mcp-stdio` and `http` plugin runtimes
 - **Why:** thousands of tools already exist as MCP servers (GitHub, databases, browsers); writing Sinty plugins for each is wasteful.
@@ -37,8 +41,7 @@ Things that are designed or promised in the docs but not built yet, and are not 
 - **Effect on the agent:** messages sent while it works are queued and added to the running turn at the next step. The user can correct the agent mid-task without interrupting it.
 
 ### Model routes (`cheap`, per-task)
-- **Why:** `models.routes` exists in the config but is unused; summaries and checks do not need the most expensive model.
-- **Effect on the agent:** internal jobs (summaries, incident notes, compression) use a cheaper model. Costs drop, and the quality of the main answers is unchanged.
+- **Status:** partly built. `models.routes.cheap` and `models.routes.embed` are used by plugins through `ctx.models` (core `ModelGateway`). Still open: route the core's own summaries and incident notes through `cheap` by default (today they use `service.model` or the speaker's model).
 
 ### Checkpoints
 - **Why:** resume rebuilds a turn from all of its events; very long turns get slow to resume.

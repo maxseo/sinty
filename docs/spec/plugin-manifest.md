@@ -39,11 +39,12 @@ Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-mani
 
 | Field | Meaning |
 |---|---|
-| `kinds` | extension points the plugin uses: `provider`, `tool`, `context`, `channel`, `server`, `schedule`, `event`, `ui` |
+| `kinds` | extension points the plugin uses: `provider`, `tool`, `context`, `channel`, `server`, `schedule`, `event`, `ui`, `memory` (memory providers/processors, see `docs/spec/memory.md`) |
 | `runtime` | `node` (SDK, own process), `mcp-stdio` (any MCP server, any language), `http` (remote MCP endpoint) |
 | `entry` | required for a node plugin unless `kinds` is only `ui` (static files, no process) |
 | `permissions` | the only rights the plugin process receives; enforced by the host |
 | `permissions.agent` | `sessions.read` and/or `sessions.write`: the plugin may call the agent API over IPC |
+| `permissions.models` | model routes the plugin may call through `ctx.models` (`default`, `cheap`, `embed`, a `models.routes` key, or `*`) |
 | `ui.static` | folder of static files served at `/ui/<name>/`, **only** when `editable` is `false` |
 | `tools[].sideEffects` | `none`, `read`, `write`, `external`; drives default policy and resume behaviour |
 | `tools[].idempotent` | safe to repeat with the same arguments |
@@ -56,6 +57,10 @@ Input schemas are declared in code (zod) and exported by the plugin at load time
 ## `$DATA`, HTTP routes and agent access
 
 - `$DATA` expands to `$SINTY_HOME/data/<plugin>`. A grant that touches another plugin's data folder is rejected.
+- `$CONFIG.<key>` (read grants only) expands to the absolute path the human set in `config.yaml`
+  `plugins.config.<plugin>.<key>`; the manifest's own `config` defaults are ignored, and an unset or relative value
+  drops the grant. Used by `memory-obsidian` for its vault.
+- Tool names of core tools (`memory.write`, `ask_human`, …) are reserved: a plugin that registers one fails to start.
 - `ctx.http({ method, path, public?, handler })` registers a route under `/p/<plugin>`. `:param` is one segment, a trailing `*` the rest. The core strips `Authorization`, `Cookie` and hop-by-hop headers, and removes `token` from the query, before the plugin sees the request. `public: true` skips the bearer check.
 - `ctx.agent` is the same session API the HTTP clients use. Arguments are validated in the core (`plugin-bridge.ts`); write ops need `sessions.write`; idempotency keys are prefixed with the plugin name; the actor is `{ kind: "plugin" }`.
 - `createSSE` / `runTurn` in `@sinty/sdk` are helpers for streaming servers (MCP, OpenAI API, AG-UI).

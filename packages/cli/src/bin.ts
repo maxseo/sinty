@@ -9,7 +9,7 @@ process.removeAllListeners("warning");
 process.on("warning", (w) => {
   if (!(w.name === "ExperimentalWarning" && /SQLite/.test(w.message))) console.warn(w);
 });
-const { checkIntegrity, hashInstall, initHome, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, SecretStore, Sinty, startServer } = await import("@sinty/core");
+const { evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, SecretStore, Sinty, startServer } = await import("@sinty/core");
 
 const HELP = `sinty — thin-core AI agent
 
@@ -25,6 +25,9 @@ Usage:
   sinty upgrade --from <dir>      replace this install with a tree whose integrity.json matches
   sinty version
   sinty plugins                     catalog from registry/plugins.json and whether each is enabled
+  sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]
+                                   offline recall replay: hit rate on labeled queries, memory-block
+                                   tokens and recall latency per arm (no chat model calls)
 
 Global: --home <dir>, --mode strict, --verbose`;
 
@@ -40,6 +43,10 @@ const { values, positionals } = parseArgs({
     from: { type: "string" },
     verbose: { type: "boolean", short: "v" },
     help: { type: "boolean", short: "h" },
+    labels: { type: "string" },
+    arms: { type: "string" },
+    limit: { type: "string" },
+    json: { type: "boolean" },
   },
 });
 
@@ -72,6 +79,8 @@ async function main(): Promise<number> {
       return version();
     case "plugins":
       return plugins();
+    case "memory":
+      return memoryCmd(rest);
     default:
       console.error(`unknown command: ${command}\n\n${HELP}`);
       return 2;
@@ -330,3 +339,34 @@ main().then(
     process.exit(1);
   },
 );
+
+async function memoryCmd(args: string[]): Promise<number> {
+  if (args[0] !== "eval") {
+    console.error("usage: sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]");
+    return 2;
+  }
+  const labels = values.labels
+    ? readFileSync(values.labels, "utf8")
+        .split(/\r?\n/)
+        .filter((l) => l.trim())
+        .map((l, i) => {
+          const row = JSON.parse(l) as { query?: unknown; expect?: unknown };
+          if (typeof row.query !== "string" || !Array.isArray(row.expect)) throw new Error(`${values.labels}:${i + 1}: need {"query": "...", "expect": ["..."]}`);
+          return { query: row.query, expect: row.expect.map(String) };
+        })
+    : undefined;
+  const sinty = new Sinty({ ...(values.home ? { home: values.home } : {}), log });
+  try {
+    const { failedPlugins } = await sinty.start({ background: false });
+    for (const f of failedPlugins) console.error(`plugin ${f.plugin} failed to start: ${f.error}`);
+    const reports = await evalMemory(sinty, {
+      ...(labels ? { labels } : {}),
+      ...(values.arms ? { arms: values.arms.split(",").map((a) => a.trim()).filter(Boolean) } : {}),
+      ...(values.limit ? { limit: Number(values.limit) } : {}),
+    });
+    console.log(values.json ? JSON.stringify(reports, null, 2) : formatEval(reports));
+    return 0;
+  } finally {
+    await sinty.stop();
+  }
+}

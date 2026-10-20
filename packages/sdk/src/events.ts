@@ -71,6 +71,17 @@ export interface EventDataMap {
   "plugin.patch.applied": { patchId: string; commit: string };
   "plugin.patch.rolled_back": { patchId: string; toCommit: string; reason: string };
 
+  "memory.written": { id: string; action: "inserted" | "updated" | "dropped"; tier: string; scope: string; source: string; provider: string; by?: string };
+  /** Automatic recall for one turn; the router reuses it for every later step of the same turn. */
+  "memory.recalled": { queries: string[]; providers: string[]; records: { id: string; provider: string; text: string; ref?: string; untrusted?: boolean; createdAt?: string }[]; tokens: number; ms: number; arm?: string; shadow?: boolean };
+  "memory.compacted": { coversUntil: number; summaryTokens: number; facts: number; by: string; ok: boolean; reason?: string };
+  /** A memory plugin failed or timed out; the router fell back to the builtin store. */
+  "memory.degraded": { provider: string; hook?: string; reason: string };
+  /** Which experiment arm a session belongs to (once per turn when memory.experiments is set). */
+  "memory.experiment": { experiment: string; arm: string; shadow?: string[] };
+  /** A plugin called a model through ctx.models. */
+  "models.called": { plugin: string; op: "complete" | "embed"; route: string; provider: string; model: string; inputTokens: number; outputTokens: number; ms: number; ok: boolean; error?: string };
+
   "usage.recorded": Usage;
   "checkpoint": { state: unknown };
 }
