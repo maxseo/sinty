@@ -156,23 +156,32 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
 
   const loadInfo = async (): Promise<void> => setInfo(await api(`/v1/sessions/${encodeURIComponent(sessionId)}`));
 
+  // Same rule as the core (Agent.speaker): the chat's own agentIds, else the project's agents; lead answers by default.
+  const [membersKnown, setMembersKnown] = useState(false);
   useEffect(() => {
-    const projectId = info?.projectId;
-    if (!projectId) {
+    if (!info) return;
+    const projectId = info.projectId;
+    const picked = Array.isArray(info.metadata?.agentIds) ? (info.metadata.agentIds as unknown[]).filter((id): id is string => typeof id === "string") : [];
+    if (!projectId && picked.length === 0) {
       setMembers([]);
+      setMembersKnown(true);
       return;
     }
     void Promise.all([
       api<{ agents: { id: string; name: string }[] }>("/v1/roster/agents"),
-      api<{ projects: { id: string; leadId: string; agentIds: string[] }[] }>("/v1/roster/projects"),
+      projectId ? api<{ projects: { id: string; leadId: string; agentIds: string[] }[] }>("/v1/roster/projects") : Promise.resolve({ projects: [] as { id: string; leadId: string; agentIds: string[] }[] }),
     ]).then(([a, p]) => {
       const project = p.projects.find((x) => x.id === projectId);
-      const picked = info?.metadata?.agentIds;
-      const ids = Array.isArray(picked) ? picked.filter((id): id is string => typeof id === "string") : project?.agentIds ?? [];
+      const ids = picked.length ? picked : project?.agentIds ?? [];
       const list = a.agents.filter((agent) => ids.includes(agent.id));
+      const lead = project?.leadId && list.some((m) => m.id === project.leadId) ? project.leadId : "";
       setMembers(list);
-      setReplyAgent((cur) => cur || list[0]?.id || project?.leadId || "");
-    }).catch(() => setMembers([]));
+      setMembersKnown(true);
+      setReplyAgent((cur) => (cur && list.some((m) => m.id === cur) ? cur : lead || list[0]?.id || ""));
+    }).catch(() => {
+      setMembers([]);
+      setMembersKnown(false);
+    });
   }, [info?.projectId, info?.metadata]);
 
   useEffect(() => {
@@ -296,6 +305,14 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
           </button>
         )}
       </header>
+      {membersKnown && members.length === 0 && info?.projectId && (
+        <div class="banner soon" role="status">
+          <span class="grow">
+            В этом чате и в его проекте нет агентов. Отвечает агент по умолчанию с глобальным <code>~/.sinty/AGENTS.md</code>, а не карточка агента.
+            Добавьте агентов в проект на странице «Агенты» или создайте чат через «+» у проекта с выбором участников.
+          </span>
+        </div>
+      )}
 
       {pluginTab ? (
         <div class="session-tab">

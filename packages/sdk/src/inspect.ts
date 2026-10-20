@@ -66,6 +66,11 @@ export interface ContextSnapshot {
   step: number;
   at: string;
   agentId: string;
+  /**
+   * Where the persona (first system text) came from: `agent` = the roster agent's own AGENTS.md (`agentName`),
+   * `global` = `~/.sinty/AGENTS.md`, used when the chat and its project have no agents.
+   */
+  persona?: { source: "agent" | "global"; agentName?: string };
   /** First model route that will be tried. */
   route?: string;
   /** Exactly the messages handed to the provider (after redaction, see `redactions`). */

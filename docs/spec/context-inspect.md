@@ -58,6 +58,7 @@ plugin.
 | `id`, `stepId` | the step id (same as `model.request.stepId` in the journal) |
 | `sessionId`, `turnId`, `step` | `step` is the 1-based model step inside the turn |
 | `at`, `agentId`, `route` | time, memory agent id (roster persona or `agent.name`), first route tried |
+| `persona?` | where the first system text came from: `{ source: "agent", agentName }` (the roster agent's own AGENTS.md) or `{ source: "global", agentName? }` (`~/.sinty/AGENTS.md`; `agentName` is set when the speaking agent's AGENTS.md field is empty) |
 | `messages` | **exactly** the `ChatMessage[]` given to the provider, after redaction; inline images are replaced by their size |
 | `parts[]` | one per message: `index`, `kind`, `source`, `id?`, `role`, `tokens`, `untrusted?` |
 | `tools[]` | tool schemas offered on this step: wire name and token estimate |

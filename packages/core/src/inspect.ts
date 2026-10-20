@@ -133,6 +133,7 @@ export interface SnapshotInput {
   stepId: string;
   step: number;
   agentId: string;
+  persona?: ContextSnapshot["persona"];
   route?: string;
   messages: ChatMessage[];
   tools: ToolSchema[];
@@ -167,6 +168,7 @@ export function buildSnapshot(trace: ContextTrace, input: SnapshotInput, redact:
     step: input.step,
     at: new Date().toISOString(),
     agentId: input.agentId,
+    ...(input.persona ? { persona: input.persona } : {}),
     ...(input.route ? { route: input.route } : {}),
     messages: input.messages,
     parts,
