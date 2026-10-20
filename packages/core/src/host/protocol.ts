@@ -1,4 +1,4 @@
-import type { ChatMessage, ContextInput, EventType, LiveEvent, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, ToolSideEffects } from "@sinty/sdk";
+import type { ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, ToolSideEffects } from "@sinty/sdk";
 
 export interface RouteInfo {
   method: string;
@@ -74,6 +74,7 @@ export type ToChild =
   | { t: "models.result"; id: number; ok: true; value: unknown }
   | { t: "models.result"; id: number; ok: false; error: WireError }
   | { t: "memory.call"; id: number; kind: "provider" | "processor"; name: string; method: string; args: unknown[] }
+  | { t: "context.snapshot"; snapshot: ContextSnapshot }
   | { t: "shutdown" };
 
 export type FromChild =
@@ -87,6 +88,8 @@ export type FromChild =
       /** Provider protocols that implement embed(). */
       embedders?: string[];
       memory?: { providers: string[]; processors: { name: string; order: number; hooks: string[] }[] };
+      /** The plugin registered ctx.onContextSnapshot. */
+      inspects?: boolean;
     }
   | { t: "provider.embedded"; id: number; ok: true; value: { vectors: number[][]; usage?: { inputTokens: number } } }
   | { t: "provider.embedded"; id: number; ok: false; error: WireError }

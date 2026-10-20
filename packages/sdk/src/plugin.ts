@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type { AgentState, EventType, LiveEvent, SintyEvent, ToolSideEffects } from "./events.js";
 import type { PolicyDecision, ToolDefinition } from "./tool.js";
 import type { EmbedProviderRequest, MemoryProcessorDefinition, MemoryProviderDefinition, ModelsApi } from "./memory.js";
+import type { ContextSnapshot } from "./inspect.js";
 
 export type PluginKind = "provider" | "tool" | "context" | "channel" | "server" | "schedule" | "event" | "ui" | "memory";
 
@@ -19,7 +20,29 @@ export interface PluginPermissions {
   agent?: AgentScope[];
   /** Model routes the plugin may call through `ctx.models`: "default", "cheap", "embed", a models.routes key or "*". */
   models?: string[];
+  /**
+   * `inspect`: receive a ContextSnapshot for every model step (see `ctx.onContextSnapshot`). Snapshots hold the full
+   * prompt, private memory included, so the core also needs the plugin in config.yaml `plugins.inspect`.
+   */
+  context?: "inspect"[];
 }
+
+/** A tab in the Web UI. The UI loads `path` (a GET route of this plugin) in a sandboxed iframe. */
+export interface UiTab {
+  /** `[a-z][a-z0-9-]*`, unique within the plugin. */
+  id: string;
+  title: string;
+  /** Plugin HTTP route relative to `/p/<plugin>`, e.g. "/tab". It must be public (the iframe sends no token) and serve only static HTML. */
+  path: string;
+  /**
+   * Where the Web UI shows the tab. `sidebar` (default): a page of its own in the left navigation.
+   * `session`: a view toggle in the header of an open chat, next to "Чат" and "Журнал"; the bridge tells the page
+   * which session is open (`init.sessionId`, then `{ op: "session" }` when the user switches chats).
+   */
+  placement?: UiTabPlacement;
+}
+
+export type UiTabPlacement = "sidebar" | "session";
 
 export interface ManifestTool {
   name: string;
@@ -47,8 +70,11 @@ export interface PluginManifest {
   config?: Record<string, unknown>;
   tests?: string;
   editable?: boolean;
-  /** Static files served by the core at `/ui/<name>/`. Only for plugins with `editable: false`. */
-  ui?: { static: string };
+  /**
+   * `static`: files served by the core at `/ui/<name>/` (only for plugins with `editable: false`).
+   * `tabs`: pages the Web UI shows in a sandboxed iframe; data reaches them only through the UI's postMessage bridge.
+   */
+  ui?: { static?: string; tabs?: UiTab[] };
 }
 
 // ---- model provider ----
@@ -190,6 +216,8 @@ export interface PluginContext {
   schedule(name: string, cron: string, run: (signal: AbortSignal) => Promise<void>): void;
   on<T extends EventType>(type: T | "*", handler: (event: SintyEvent<T>) => void | Promise<void>): void;
   http(route: HttpRoute): void;
+  /** Called for every model step with what went into the prompt. Needs `permissions.context: ["inspect"]` and the plugin in config `plugins.inspect`; otherwise never called. */
+  onContextSnapshot(handler: (snapshot: ContextSnapshot) => void | Promise<void>): void;
 }
 
 export interface PluginDefinition {

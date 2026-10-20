@@ -48,6 +48,11 @@ export const configSchema = z.object({
       enabled: z.array(z.string()).default(["provider-openai-compat", "provider-anthropic", "tool-fs", "ui-web", "kanban"]),
       config: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
       searchPaths: z.array(z.string()).default([]),
+      /**
+       * Plugins allowed to receive context snapshots (the full prompt of every model step, private memory included).
+       * Off by default; the plugin's manifest must also ask for permissions.context ["inspect"]. See docs/spec/context-inspect.md.
+       */
+      inspect: z.array(z.string()).optional(),
     })
     .prefault({}),
   server: z

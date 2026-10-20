@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "context-inspector",
+  "version": "0.1.0",
+  "description": "Chat view (Контекст, next to Чат/Журнал) that shows what went into the prompt on every model step of the open chat: system prompt, skills, memory, recall, hooks, plugin contexts, tokens",
+  "kinds": ["ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "context": ["inspect"] },
+  "config": { "keep": 100, "maxMb": 64 },
+  "ui": { "tabs": [{ "id": "context", "title": "Контекст", "path": "/tab", "placement": "session" }] },
+  "editable": false
+}

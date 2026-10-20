@@ -2,7 +2,7 @@ import { fork, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentScope, ChatMessage, ContextInput, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent } from "@sinty/sdk";
+import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent } from "@sinty/sdk";
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
@@ -74,6 +74,8 @@ export class PluginProcess {
   embedders: string[] = [];
   memoryProviders: string[] = [];
   memoryProcessors: { name: string; order: number; hooks: string[] }[] = [];
+  /** Registered ctx.onContextSnapshot (see `inspector`). */
+  inspects = false;
   /** A `ui`-only plugin without an entry: the core serves its files, no process runs. */
   staticOnly = false;
   private readonly streams = new Map<number, () => void>();
@@ -94,7 +96,7 @@ export class PluginProcess {
   async start(): Promise<void> {
     const m = this.loaded.manifest;
     if (!m.entry && m.kinds.every((k) => k === "ui")) {
-      if (!m.ui) throw new Error(`plugin ${m.name}: a ui plugin without entry needs "ui": { "static": "<folder>" }`);
+      if (!m.ui?.static) throw new Error(`plugin ${m.name}: a ui plugin without entry needs "ui": { "static": "<folder>" }`);
       this.staticOnly = true;
       this.events.loaded(this.name, m.version);
       return;
@@ -135,6 +137,16 @@ export class PluginProcess {
           } else {
             this.memoryProviders = memory.providers;
             this.memoryProcessors = memory.processors;
+          }
+          this.inspects = msg.inspects === true;
+          if (this.inspects && !this.inspector) {
+            this.events.log(
+              this.name,
+              "warn",
+              (m.permissions.context ?? []).includes("inspect")
+                ? `registers onContextSnapshot but is not in plugins.inspect; add it to config.yaml plugins.inspect to send it the prompt of every step`
+                : `registers onContextSnapshot without permissions.context ["inspect"]; it gets no snapshots`,
+            );
           }
           resolveReady();
         } else if (msg.t === "fatal") {
@@ -208,6 +220,24 @@ export class PluginProcess {
       this.send({ t: "shutdown" });
       const c = this.child;
       setTimeout(() => c.exitCode === null && c.kill(), 2000).unref();
+    }
+  }
+
+  /**
+   * May receive context snapshots: the manifest asks for permissions.context ["inspect"], the human listed the plugin
+   * in config.yaml plugins.inspect, and the plugin registered a handler. Snapshots hold the whole prompt.
+   */
+  get inspector(): boolean {
+    return this.inspects && !this.disabled && (this.loaded.manifest.permissions.context ?? []).includes("inspect") && (this.config.plugins.inspect ?? []).includes(this.name);
+  }
+
+  /** Fire and forget; no-op unless `inspector`. */
+  sendSnapshot(snapshot: ContextSnapshot): void {
+    if (!this.inspector) return;
+    try {
+      this.send({ t: "context.snapshot", snapshot });
+    } catch (e) {
+      this.events.log(this.name, "warn", "context snapshot was not delivered", e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -706,6 +736,13 @@ export class PluginHost {
     const out: { plugin: PluginProcess; name: string; order: number }[] = [];
     for (const p of this.plugins.values()) if (!p.disabled) for (const c of p.contexts) out.push({ plugin: p, ...c });
     return out.sort((a, b) => a.order - b.order);
+  }
+
+  /** Running plugins that may receive context snapshots. Empty in the default install, so no snapshot is ever built. */
+  inspectors(): PluginProcess[] {
+    const out: PluginProcess[] = [];
+    for (const p of this.plugins.values()) if (p.inspector) out.push(p);
+    return out;
   }
 
   broadcast(event: SintyEvent): void {

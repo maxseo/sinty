@@ -166,7 +166,9 @@ export function createApp(sinty: Sinty): Hono {
         tools: p.tools.map((t) => t.name),
         routes: p.routes.map((r) => ({ method: r.method, path: `/p/${p.name}${r.path}`, public: r.public })),
         runtime: p.loaded.manifest.runtime,
-        ui: p.loaded.manifest.ui && p.loaded.manifest.editable === false ? `/ui/${p.name}/` : null,
+        ui: p.loaded.manifest.ui?.static && p.loaded.manifest.editable === false ? `/ui/${p.name}/` : null,
+        tabs: p.disabled || p.staticOnly ? [] : (p.loaded.manifest.ui?.tabs ?? []).map((t) => ({ id: t.id, title: t.title, src: `/p/${p.name}${t.path}`, placement: t.placement ?? "sidebar" })),
+        inspector: p.inspector,
         permissions: p.loaded.manifest.permissions,
         forAll: sharedPlugins(sinty.paths) === null || sharedPlugins(sinty.paths)!.includes(p.name),
       })),
@@ -419,7 +421,7 @@ export function createApp(sinty: Sinty): Hono {
   const uiRoot = (name: string): string | undefined => {
     const p = sinty.host.plugins.get(name);
     const ui = p?.loaded.manifest.ui;
-    if (!p || !ui || p.loaded.manifest.editable !== false) return undefined;
+    if (!p || !ui?.static || p.loaded.manifest.editable !== false) return undefined;
     return join(p.loaded.dir, ui.static);
   };
   app.get("/ui/:plugin/*", (c) => {

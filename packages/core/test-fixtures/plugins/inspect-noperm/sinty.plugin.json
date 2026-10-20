@@ -1,0 +1,9 @@
+{
+  "name": "inspect-noperm",
+  "version": "0.0.1",
+  "description": "Registers onContextSnapshot without permissions.context",
+  "kinds": ["context"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "write": ["$DATA"] } }
+}

@@ -1,6 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribe, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { IconBrain, IconMic, IconPlus } from "./icons.js";
+import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
+
+const VIEW_KEY = "sinty.chatView";
+const NO_TABS: PluginTabInfo[] = [];
+
+/** A plugin view stays open when the user switches chats (you look at each chat's context in turn); Чат/Журнал do not persist. */
+function savedView(tabs: PluginTabInfo[]): string {
+  try {
+    const v = localStorage.getItem(VIEW_KEY) ?? "";
+    return tabs.some((t) => tabViewKey(t) === v) ? v : "chat";
+  } catch {
+    return "chat";
+  }
+}
 
 interface ToolCall {
   callId: string;
@@ -109,12 +123,30 @@ function show(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
-export function Chat({ sessionId, onChange }: { sessionId: string; onChange: () => void }) {
+export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: string; onChange: () => void; tabs?: PluginTabInfo[] }) {
   const [events, setEvents] = useState<SintyEvent[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
   const [info, setInfo] = useState<SessionInfo & { pending: Pending | null }>();
-  const [tab, setTab] = useState<"chat" | "journal">("chat");
+  const [view, setView] = useState<string>(() => savedView(tabs));
+  // /v1/plugins may answer after the chat mounted: restore a saved plugin view once its tab is known.
+  useEffect(() => {
+    if (view === "chat") {
+      const saved = savedView(tabs);
+      if (saved !== "chat") setView(saved);
+    }
+  }, [tabs]);
+  const pluginTab = tabs.find((t) => tabViewKey(t) === view);
+  const tab = pluginTab ? "plugin" : view === "journal" ? "journal" : "chat";
+  const setTab = (v: string): void => {
+    setView(v);
+    try {
+      if (v.startsWith("tab:")) localStorage.setItem(VIEW_KEY, v);
+      else localStorage.removeItem(VIEW_KEY);
+    } catch {
+      /* storage off: the view just does not persist */
+    }
+  };
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
@@ -252,6 +284,11 @@ export function Chat({ sessionId, onChange }: { sessionId: string; onChange: () 
           <button class={tab === "journal" ? "on" : ""} onClick={() => setTab("journal")}>
             Журнал
           </button>
+          {tabs.map((t) => (
+            <button key={tabViewKey(t)} class={pluginTab === t ? "on" : ""} title={`Вкладка плагина ${t.plugin}`} onClick={() => setTab(tabViewKey(t))}>
+              {t.title}
+            </button>
+          ))}
         </div>
         {running && (
           <button class="danger" onClick={() => void interrupt()}>
@@ -260,7 +297,11 @@ export function Chat({ sessionId, onChange }: { sessionId: string; onChange: () 
         )}
       </header>
 
-      {tab === "journal" ? (
+      {pluginTab ? (
+        <div class="session-tab">
+          <PluginTab key={tabViewKey(pluginTab)} tab={pluginTab} sessionId={sessionId} />
+        </div>
+      ) : tab === "journal" ? (
         <Journal events={events} />
       ) : (
         <div class="log">

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
 import { api, ApiError, setUnauthorizedHandler, shortTime, subscribe, token, type SessionInfo, type SintyEvent } from "./api.js";
 import { Board } from "./board.js";
 import { Chat } from "./chat.js";
 import { AgentsPage, PendingPage, SettingsPage, SupervisorPage } from "./pages.js";
 import { KitPage } from "./kit.js";
+import { PluginTab, type PluginTabInfo } from "./plugin-tab.js";
 import { go, href, useRoute } from "./route.js";
 import { IconBack, IconChevron, IconDots, IconFolder, IconGear, IconMoon, IconPanelLeft, IconPin, IconPlus, IconSun, IconTrash } from "./icons.js";
 
@@ -101,6 +102,15 @@ function Shell() {
   const [pickedAgents, setPickedAgents] = useState<string[]>([]);
   const [projectId, setProjectId] = useState(localStorage.getItem("sinty.project") ?? "");
   const hasKanban = agent?.plugins.some((p) => p.name === "kanban" && !p.disabled) ?? false;
+  const [tabs, setTabs] = useState<PluginTabInfo[]>([]);
+  useEffect(() => {
+    void api<{ plugins: { name: string; tabs?: { id: string; title: string; src: string; placement?: "sidebar" | "session" }[] }[] }>("/v1/plugins")
+      .then((r) => setTabs(r.plugins.flatMap((p) => (p.tabs ?? []).map((t) => ({ plugin: p.name, ...t, placement: t.placement === "session" ? ("session" as const) : ("sidebar" as const) })))))
+      .catch(() => setTabs([]));
+  }, [agent]);
+  const sideTabs = tabs.filter((t) => t.placement === "sidebar");
+  const sessionTabs = useMemo(() => tabs.filter((t) => t.placement === "session"), [tabs]);
+  const openTab = route.page === "tab" ? sideTabs.find((t) => t.plugin === route.plugin && t.id === route.tab) : undefined;
   const loadProjects = useCallback(async () => {
     const r = await api<{ projects: { id: string; name: string; slug: string }[] }>("/v1/roster/projects");
     setProjects(r.projects);
@@ -191,6 +201,9 @@ function Shell() {
                     <a class={route.page === "pending" ? "on" : ""} href={href({ page: "pending" })}>Журнал {pendingCount > 0 && <span class="badge">{pendingCount}</span>}</a>
                     <a class={route.page === "supervisor" ? "on" : ""} href={href({ page: "supervisor" })}>Супервизор</a>
                     <a class={route.page === "kit" ? "on" : ""} href={href({ page: "kit" })}>Набор</a>
+                    {sideTabs.map((t) => (
+                      <a key={`${t.plugin}/${t.id}`} class={route.page === "tab" && route.plugin === t.plugin && route.tab === t.id ? "on" : ""} href={href({ page: "tab", plugin: t.plugin, tab: t.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>
+                    ))}
                   </nav>
                   <div class="proj-head">
                     <button class="nav-item" onClick={() => toggleProjectOpen("__all")}><IconChevron /> Проекты</button>
@@ -248,13 +261,14 @@ function Shell() {
         )}
       </aside>
       <main class="main">
-        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} /> : <Empty onNew={newChat} />)}
+        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} tabs={sessionTabs} /> : <Empty onNew={newChat} />)}
         {route.page === "board" && <Board />}
         {route.page === "pending" && <PendingPage tick={lastEvent} />}
         {route.page === "supervisor" && <SupervisorPage tick={lastEvent} />}
         {route.page === "agents" && <AgentsPage agentId={route.agentId} />}
         {route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
         {route.page === "kit" && <KitPage />}
+        {route.page === "tab" && (openTab ? <PluginTab key={`${openTab.plugin}/${openTab.id}`} tab={openTab} /> : <div class="empty"><p>Вкладка плагина {route.plugin} не найдена: плагин выключен или не запущен.</p></div>)}
       </main>
       <aside class="dock" />
       {projectDraft !== null && (

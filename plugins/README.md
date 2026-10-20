@@ -21,3 +21,4 @@ Each folder has a `sinty.plugin.json` ([schema](../schemas/plugin-manifest.schem
 | `herdr` | event | shipped (M4); optional |
 | `otel` | event | shipped (M4); optional |
 | `syntet` | tool | shipped (M4); optional |
+| `context-inspector` | ui | optional; needs `plugins.inspect`, see its README |

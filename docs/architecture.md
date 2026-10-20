@@ -21,6 +21,7 @@
 | **Supervisor** | Separate process that watches the bus and intervenes (see [spec](spec/supervisor.md)) |
 | **Core tools** | `ask_human`, `context.recall`, `memory.write/recall/forget`, `plugin.list`, `plugin.read`, `plugin.propose_patch`, `plugin.apply_patch` and the other names in `coretools.ts`; a plugin that registers one of these names fails to start |
 | **Memory router** | `MemoryRouter`: builtin SQLite store (`builtin:sqlite`: facts, FTS5, sqlite-vec), memory block and summary in the prompt, compaction, automatic recall, plugin memory providers/processors with timeouts and budgets, durable afterTurn queue (see [spec](spec/memory.md)) |
+| **Context snapshots** | `inspect.ts`: when a plugin holds `permissions.context ["inspect"]` and is listed in `plugins.inspect`, the agent hands it the labelled prompt of every model step; otherwise nothing is built (see [spec](spec/context-inspect.md)) |
 | **Model gateway** | `ModelGateway`: non-turn model calls (summaries, `ctx.models` for plugins, embeddings) with route names, secrets, budgets and journaling |
 
 Nothing else is in the core. In particular, these are plugins: model providers, file and shell tools, web search, extra memory stores and memory processors (`memory-obsidian`, `fact-extractor`), skills loader, channels, the Web UI, kanban, scheduler jobs, MCP/A2A/OpenAI servers. The builtin memory store lives in the core because sqlite-vec cannot load under the plugin permission model and because the memory tools are core tools.
@@ -39,7 +40,7 @@ Plugins attach to a small fixed set of extension points:
 | `server` | additional HTTP surfaces at `/p/<plugin>/…` | `server-mcp`, `server-openai-api`, `server-agui` |
 | `schedule` | durable timers and cron jobs | `scheduler` (backlog) |
 | `event` | subscribe to bus events (read-only) | `kanban`, later `herdr`, `otel` |
-| `ui` | static bundle served at `/ui/<plugin>/` (non-editable only) | `ui-web` |
+| `ui` | static bundle served at `/ui/<plugin>/` (non-editable only); Web UI tabs in a sandboxed iframe (`ui.tabs`) | `ui-web`, `context-inspector` |
 
 ## Runtime layout
 
