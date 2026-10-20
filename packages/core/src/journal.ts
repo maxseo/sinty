@@ -286,6 +286,21 @@ export class Journal {
       .map((r) => ({ id: String(r.id), tool: String(r.tool), code: String(r.code), message: String(r.message), fixSummary: String(r.fix_summary), createdAt: String(r.created_at) }));
   }
 
+  /** Rewrites stored incidents through `scrub` (secret masking); returns how many rows changed. */
+  scrubIncidents(scrub: (text: string) => string): number {
+    let changed = 0;
+    const update = this.db.prepare("UPDATE incidents SET message = ?, fix_summary = ? WHERE id = ?");
+    for (const r of this.db.prepare("SELECT id, message, fix_summary FROM incidents").all()) {
+      const message = scrub(String(r.message));
+      const fix = scrub(String(r.fix_summary));
+      if (message !== String(r.message) || fix !== String(r.fix_summary)) {
+        update.run(message, fix, String(r.id));
+        changed++;
+      }
+    }
+    return changed;
+  }
+
   savePatch(p: PatchRow): void {
     this.db
       .prepare(

@@ -3,6 +3,7 @@ import type { AgentState, EventType, LiveEvent, SintyEvent, ToolSideEffects } fr
 import type { PolicyDecision, ToolDefinition } from "./tool.js";
 import type { EmbedProviderRequest, MemoryProcessorDefinition, MemoryProviderDefinition, ModelsApi } from "./memory.js";
 import type { ContextSnapshot } from "./inspect.js";
+import type { SettingsSectionManifest } from "./settings.js";
 
 export type PluginKind = "provider" | "tool" | "context" | "channel" | "server" | "schedule" | "event" | "ui" | "memory";
 
@@ -75,6 +76,8 @@ export interface PluginManifest {
    * `tabs`: pages the Web UI shows in a sandboxed iframe; data reaches them only through the UI's postMessage bridge.
    */
   ui?: { static?: string; tabs?: UiTab[] };
+  /** A section of the Web UI settings for this plugin's `config` (values in config.yaml `plugins.config.<name>`). */
+  settings?: SettingsSectionManifest;
 }
 
 // ---- model provider ----

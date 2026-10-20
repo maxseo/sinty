@@ -3,11 +3,10 @@ import { useEffect, useState } from "preact/hooks";
 export type Route =
   | { page: "chat"; sessionId?: string }
   | { page: "board" }
-  | { page: "pending" }
-  | { page: "supervisor" }
   | { page: "plugins" }
   | { page: "agents"; agentId?: string }
-  | { page: "settings"; section: "general" | "models" | "plugins" }
+  /** `general`, `models`, `plugins`, or a settings section id from /v1/settings/sections (`supervisor`, `plugin.<name>`). */
+  | { page: "settings"; section: string }
   | { page: "kit" }
   | { page: "tab"; plugin: string; tab: string };
 
@@ -16,9 +15,8 @@ export function parse(hash: string): Route {
   switch (page) {
     case "s":
       return id ? { page: "chat", sessionId: decodeURIComponent(id) } : { page: "chat" };
+    // The global «Журнал» (#/pending) and «Супервизор» (#/supervisor) pages are now chat-header tabs; old links open the chat list.
     case "board":
-    case "pending":
-    case "supervisor":
     case "plugins":
       return { page };
     case "agents":
@@ -28,7 +26,7 @@ export function parse(hash: string): Route {
     case "t":
       return id && sub ? { page: "tab", plugin: decodeURIComponent(id), tab: decodeURIComponent(sub) } : { page: "chat" };
     case "settings":
-      return { page: "settings", section: id === "models" || id === "plugins" ? id : "general" };
+      return { page: "settings", section: id && /^[a-z][a-z0-9.-]{0,80}$/.test(decodeURIComponent(id)) ? decodeURIComponent(id) : "general" };
     default:
       return { page: "chat" };
   }
@@ -36,7 +34,7 @@ export function parse(hash: string): Route {
 
 export function href(r: Route): string {
   if (r.page === "chat") return r.sessionId ? `#/s/${encodeURIComponent(r.sessionId)}` : "#/";
-  if (r.page === "settings") return `#/settings/${r.section}`;
+  if (r.page === "settings") return `#/settings/${encodeURIComponent(r.section)}`;
   if (r.page === "tab") return `#/t/${encodeURIComponent(r.plugin)}/${encodeURIComponent(r.tab)}`;
   if (r.page === "agents") return r.agentId ? `#/agents/${encodeURIComponent(r.agentId)}` : "#/agents";
   return `#/${r.page}`;

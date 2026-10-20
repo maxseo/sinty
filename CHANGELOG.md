@@ -8,6 +8,21 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Supervisor settings in `config.yaml` `supervisor:`, editable in the Web UI under Settings → **Супервизор** and applied
+  without a restart:
+  - `checks.{toolErrors,loop,budget,badOutput}`, `escalate`, `loopBlockAfter`, `repeatFailures`, `patchAfterTurns`,
+    `maxNoticesPerDetector`, `useIncidents`, `stallBlock`;
+  - `budget.{tokens,steps,seconds,count,cachedWeight,warnAt,stop}`. Unset numbers fall back to `policy.yaml
+    budgets.turn`.
+  - See `docs/spec/supervisor.md`.
+- Budget token count `supervisor.budget.count`: `weighted` (default: cached prompt tokens at `cachedWeight` 0.1),
+  `uncached` or `all`.
+- Settings sections: plugins declare `settings` in their manifest (typed fields over their `config`), and the Web UI
+  shows them under Settings next to Основные / Модели / Плагины. API: `GET /v1/settings/sections`,
+  `PUT /v1/settings/sections/:id`. `context-inspector` declares one («Контекст»: `keep`, `maxMb`).
+- Chat header tab **Супервизор**: that chat's remarks, stops, incidents and patches, with «Все чаты» for the whole
+  install. `/v1/supervisor?sessionId=`.
+- Sidebar block «Ждут ответа» listing chats that wait for a human (approval, question, supervisor or budget stop).
 - Prompt caching (`docs/spec/protocol.md`, "Prompt caching"): every model request now only appends to the previous
   one, between steps, turns and restarts, so DeepSeek/OpenAI/Anthropic can bill the repeated prefix as cache hits.
   The core marks the end of stable zones with `ChatMessage.cacheHint` (`static`, `session`, `turn`) and passes a
@@ -70,6 +85,9 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- The left sidebar no longer has **Журнал** or **Супервизор**: both are chat-header tabs. `#/pending` and `#/supervisor` open the chat list.
+- Budget stops count cost-weighted tokens by default instead of every prompt token. Set `supervisor.budget.count: all`
+  for the old behaviour.
 - The system prompt no longer contains the current time. The time goes, to the minute and with the time zone
   (`agent.timezone`, else the system zone), into the turn context written once per turn.
 - Recall (`memory.recalled`) and new memory are no longer system messages after the memory block that change every
@@ -109,6 +127,7 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- Журнал tab: the «Вызов» badge of tool rows rendered as a wide card over the tool name (it picked up the global `.tool` style).
 - Chat agent selection: the core now picks the speaking agent from the chat's own `metadata.agentIds` first (what
   the Web UI saves when a chat is created with chosen participants), then from the project's agents (asked agent →
   project lead → first member), and only then falls back to the global `~/.sinty/AGENTS.md`. Before, a chat in a
@@ -128,3 +147,10 @@ All notable changes to this project are documented here. The format follows
   with a warning and resume on the next start.
 - Windows: golden prompt tests normalize path separators; `shell.ts` finds the tracked
   `packages/core/sandbox/ShellBox.exe` in a source checkout, so the shell sandbox works in a fresh clone.
+
+### Security
+- Supervisor incidents and notices no longer store or show raw arguments:
+  - text typed into pages (`web.interact` `type`) and password/token/secret fields are replaced by `[hidden]`;
+  - long values are cut;
+  - incidents stored earlier are masked at start;
+  - `/v1/supervisor` masks again on output.

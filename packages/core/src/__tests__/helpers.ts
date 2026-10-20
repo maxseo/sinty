@@ -12,6 +12,8 @@ export interface ScriptStep {
   text?: string;
   toolCalls?: { name: string; args: unknown }[];
   echoLastTool?: boolean;
+  /** Usage the fake provider reports for this step (default 10 in, 5 out). */
+  usage?: { inputTokens: number; outputTokens: number; cachedTokens?: number };
 }
 
 export function tempHome(): { home: string; cleanup: () => void } {

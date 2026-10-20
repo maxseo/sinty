@@ -8,6 +8,14 @@
   "entry": "dist/index.js",
   "permissions": { "context": ["inspect"] },
   "config": { "keep": 100, "maxMb": 64 },
+  "settings": {
+    "title": "Контекст",
+    "description": "Вкладка «Контекст» хранит снимки промпта последних шагов модели.",
+    "fields": [
+      { "key": "keep", "label": "Снимков на чат", "type": "number", "min": 1, "max": 2000, "integer": true },
+      { "key": "maxMb", "label": "Предел хранилища снимков", "type": "number", "min": 1, "max": 1024, "integer": true, "unit": "МБ" }
+    ]
+  },
   "ui": { "tabs": [{ "id": "context", "title": "Контекст", "path": "/tab", "placement": "session" }] },
   "editable": false
 }

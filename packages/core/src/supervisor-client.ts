@@ -25,7 +25,7 @@ export class SupervisorClient {
 
   constructor(
     private readonly paths: SintyPaths,
-    private readonly settings: SupervisorSettings,
+    private settings: SupervisorSettings,
     private readonly incidents: () => Incident[],
     private readonly hooks: SupervisorHooks,
   ) {}
@@ -63,6 +63,12 @@ export class SupervisorClient {
   stop(): void {
     this.stopping = true;
     this.child?.kill();
+  }
+
+  /** New limits from the settings page; the child applies them from its next checkpoint (and gets them again on restart). */
+  setSettings(settings: SupervisorSettings): void {
+    this.settings = settings;
+    this.send({ t: "settings", settings });
   }
 
   setTools(tools: SupervisedTool[]): void {

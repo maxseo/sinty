@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
+import { scrubText } from "@sinty/supervisor";
 import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
 import { saveBlob } from "../blobs.js";
@@ -13,6 +14,7 @@ import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, loadConfig, saveModelCat
 import { loadRegistry } from "../registry.js";
 import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
 import { listSkills } from "../skills.js";
+import { listSections, saveSection } from "../settings-sections.js";
 import { matchRoute, serveStatic } from "./static.js";
 
 async function discoverModels(protocol: string, baseUrl: string, apiKey: string): Promise<{ id: string }[]> {
@@ -370,14 +372,63 @@ export function createApp(sinty: Sinty): Hono {
     }),
   );
 
-  app.get("/v1/supervisor", (c) =>
-    c.json({
-      enabled: Boolean(sinty.supervisor),
-      events: sinty.journal.recentEvents(SUPERVISOR_EVENTS, Number(c.req.query("limit") ?? 100)),
-      incidents: sinty.journal.incidents(200).reverse(),
-      patches: sinty.journal.listPatches(50).map(({ files, ...p }) => ({ ...p, files: files.map((f) => f.path) })),
-    }),
-  );
+  /**
+   * Supervisor remarks, escalations, incidents and patches; `?sessionId=` limits them to one chat. Texts are masked
+   * (typed input, password/token fields, long values) also for entries written before masking existed.
+   */
+  app.get("/v1/supervisor", (c) => {
+    const sessionId = c.req.query("sessionId");
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 100) || 100, 1), 500);
+    const clean = (t: string): string => sinty.secrets.redact(scrubText(t));
+    const events = (sessionId ? sinty.journal.events(sessionId, { types: SUPERVISOR_EVENTS }).slice(-limit).reverse() : sinty.journal.recentEvents(SUPERVISOR_EVENTS, limit)).map((e) => {
+      const d = { ...(e.data as Record<string, unknown>) };
+      for (const k of ["text", "reason", "fixSummary"]) if (typeof d[k] === "string") d[k] = clean(d[k]);
+      return { ...e, data: d };
+    });
+    const ids = sessionId ? new Set(events.filter((e) => e.type === "supervisor.incident_resolved").map((e) => String((e.data as { incidentId?: unknown }).incidentId))) : undefined;
+    const incidents = sinty.journal
+      .incidents(500)
+      .filter((i) => !ids || ids.has(i.id))
+      .slice(-200)
+      .reverse()
+      .map((i) => ({ ...i, message: clean(i.message), fixSummary: clean(i.fixSummary) }));
+    const patches = sinty.journal
+      .listPatches(sessionId ? 500 : 50)
+      .filter((p) => !sessionId || p.sessionId === sessionId)
+      .slice(0, 50)
+      .map(({ files, ...p }) => ({ ...p, reason: clean(p.reason), testOutput: clean(p.testOutput), files: files.map((f) => f.path) }));
+    return c.json({ enabled: Boolean(sinty.supervisor), ...(sessionId ? { sessionId } : {}), events, incidents, patches });
+  });
+
+  // ---- settings sections (Settings → Супервизор and plugin sections) ----
+
+  const sectionSources = () => ({
+    paths: sinty.paths,
+    config: sinty.config,
+    policy: sinty.policy,
+    plugins: [...sinty.host.plugins.values()].map((p) => ({ name: p.name, ...(p.loaded.manifest.settings ? { settings: p.loaded.manifest.settings } : {}), ...(p.loaded.manifest.config ? { config: p.loaded.manifest.config } : {}) })),
+  });
+
+  app.get("/v1/settings/sections", (c) => c.json({ sections: listSections(sectionSources()) }));
+
+  app.put("/v1/settings/sections/:id", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { values?: unknown } | null;
+    if (!body || !body.values || typeof body.values !== "object" || Array.isArray(body.values)) throw new AgentError("bad_request", "values is required");
+    let saved: ReturnType<typeof saveSection>;
+    try {
+      saved = saveSection(sectionSources(), c.req.param("id"), body.values as Record<string, unknown>);
+    } catch (e) {
+      throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
+    }
+    if (c.req.param("id") === "supervisor") {
+      // Live: the agent reads config.supervisor on every step; the supervisor process gets the new limits now.
+      sinty.config.supervisor = saved.config.supervisor;
+      sinty.supervisor?.setSettings(sinty.supervisorSettings());
+    } else {
+      sinty.config.plugins.config = saved.config.plugins.config;
+    }
+    return c.json({ ok: true, restart: saved.restart, section: saved.section });
+  });
 
   /** Lifecycle events of all sessions, live only; for lists, boards and badges. */
   app.get("/v1/stream", (c) =>

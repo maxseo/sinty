@@ -14,6 +14,9 @@ process.on("message", (msg: ToSupervisor) => {
         sup = new Supervisor(msg.settings, msg.tools, msg.incidents);
         send({ t: "ready" });
         break;
+      case "settings":
+        sup?.setSettings(msg.settings);
+        break;
       case "tools":
         sup?.setTools(msg.tools);
         break;
