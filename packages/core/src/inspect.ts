@@ -1,5 +1,6 @@
-import type { ChatMessage, ContextHookTrace, ContextPart, ContextPartKind, ContextPluginTrace, ContextSnapshot, ToolSchema } from "@sinty/sdk";
+import type { ChatMessage, ContextCacheInfo, ContextHookTrace, ContextPart, ContextPartKind, ContextPluginTrace, ContextSnapshot, ToolSchema } from "@sinty/sdk";
 import { estimateTokens } from "./memory.js";
+import { isTurnContext, withoutHint } from "./prompt.js";
 
 /**
  * Context snapshots for inspector plugins (docs/spec/context-inspect.md).
@@ -8,15 +9,15 @@ import { estimateTokens } from "./memory.js";
  * that check, so a default install builds nothing and pays nothing.
  */
 
-type Label = Omit<ContextPart, "index" | "tokens" | "role">;
+type Label = Omit<ContextPart, "index" | "tokens" | "role" | "cacheHint">;
 
-/** What memory contributed; filled by MemoryRouter.contextMessages when it is given a trace. */
+/** What memory contributed; filled by MemoryRouter.sessionMessages / turnBlocks / traceTurn when given a trace. */
 export interface MemoryTrace {
   facts: ContextSnapshot["memory"]["facts"];
   summary?: ContextSnapshot["memory"]["summary"];
   recall?: ContextSnapshot["memory"]["recall"];
   hooks: ContextHookTrace[];
-  /** Final memory blocks, in the order of the messages contextMessages returned. */
+  /** Session memory blocks (profile snapshot, summary), in the order of the messages sessionMessages returned. */
   blocks: { id: string; source: string; untrusted?: boolean }[];
 }
 
@@ -38,8 +39,9 @@ export function newTrace(): ContextTrace {
 }
 
 const CUT = 4000;
-const key = (m: ChatMessage): string => JSON.stringify(m);
-const tok = (m: ChatMessage): number => estimateTokens([m]);
+// Cache hints move from step to step (the `turn` hint is always on the last message); they are not content.
+const key = (m: ChatMessage): string => JSON.stringify(withoutHint(m));
+const tok = (m: ChatMessage): number => estimateTokens([withoutHint(m)]);
 
 /** Whole-message multiset difference: what `after` has that `before` lacks and the other way round. */
 export function diffMessages(before: ChatMessage[], after: ChatMessage[]): { added: ContextPluginTrace["added"]; removed: ContextPluginTrace["removed"] } {
@@ -61,15 +63,32 @@ export function diffMessages(before: ChatMessage[], after: ChatMessage[]): { add
   return { added: pick(after, count(before)), removed: pick(before, count(after)) };
 }
 
+/**
+ * Context contributors may only append. Returns `after` when it starts with `before` unchanged. Otherwise the input is
+ * kept as it was and only the messages `after` has past the input's last message are appended (`reordered`):
+ * insertions, edits and removals earlier in the list are ignored.
+ */
+export function appendOnly(before: ChatMessage[], after: ChatMessage[]): { messages: ChatMessage[]; reordered: boolean } {
+  if (!Array.isArray(after)) return { messages: before, reordered: true };
+  const same = (a: ChatMessage, b: ChatMessage | undefined): boolean => b !== undefined && JSON.stringify(a) === JSON.stringify(b);
+  if (after.length >= before.length && before.every((m, i) => same(m, after[i]))) return { messages: after, reordered: false };
+  const last = before.at(-1);
+  const at = last ? after.findLastIndex((m) => same(last, m)) : -1;
+  return { messages: [...before, ...(at >= 0 ? after.slice(at + 1) : [])], reordered: true };
+}
+
 /** Records one context contributor run. */
-export function traceContributor(trace: ContextTrace, plugin: string, name: string, before: ChatMessage[], after: ChatMessage[], ms: number, error?: string): void {
+export function traceContributor(trace: ContextTrace, plugin: string, name: string, before: ChatMessage[], after: ChatMessage[], ms: number, error?: string, reordered?: boolean): void {
   const { added, removed } = error ? { added: [], removed: [] } : diffMessages(before, after);
-  trace.contexts.push({ plugin, name, ms, ok: !error, ...(error ? { error } : {}), tokensBefore: estimateTokens(before), tokensAfter: estimateTokens(error ? before : after), added, removed });
+  trace.contexts.push({ plugin, name, ms, ok: !error, ...(error ? { error } : {}), tokensBefore: estimateTokens(before), tokensAfter: estimateTokens(error ? before : after), added, removed, ...(reordered ? { reordered: true } : {}) });
   if (!error && added.length) trace.added.push({ label: { kind: "plugin", source: plugin, id: `${plugin}/${name}`, untrusted: true }, keys: new Set(added.map((a) => key(after[a.index]!))) });
 }
 
-/** Labels the messages built before plugin contributors: system, skills, memory blocks, dialogue. */
-export function traceBase(trace: ContextTrace, messages: ChatMessage[], memoryCount: number): void {
+/**
+ * Labels the messages built before plugin contributors: system, skills, session memory blocks, then the dialogue,
+ * where turn context messages are `turn` parts (their block ids come from the journaled `context.turn` events).
+ */
+export function traceBase(trace: ContextTrace, messages: ChatMessage[], memoryCount: number, turnBlocks: Map<string, string[]> = new Map()): void {
   trace.base = messages;
   trace.labels = messages.map((m, i): Label => {
     if (i === 0) return { kind: "system", source: "core", id: "system" };
@@ -77,11 +96,12 @@ export function traceBase(trace: ContextTrace, messages: ChatMessage[], memoryCo
     if (i < 2 + memoryCount) {
       const b = trace.memory.blocks[i - 2];
       const id = b?.id ?? "memory";
-      // Router blocks: memory.profile, memory.summary, memory.recalled(.external). Anything else, or a router block a
-      // beforeContext processor rewrote (source = that plugin), is the processor's.
-      const own = b ? b.source === "builtin:sqlite" || b.source === "plugins" : true;
-      const kind: ContextPartKind = !own ? "processor" : id === "memory.summary" ? "summary" : id.startsWith("memory.recalled") ? "recall" : "memory";
-      return { kind, source: b?.source ?? "builtin:sqlite", id, ...(m.untrusted ? { untrusted: true } : {}) };
+      const kind: ContextPartKind = id === "memory.summary" ? "summary" : "memory";
+      return { kind, source: b?.source ?? "builtin:sqlite", id };
+    }
+    if (isTurnContext(m)) {
+      const blocks = turnBlocks.get(m.content);
+      return { kind: "turn", source: "core", id: "context.turn", ...(blocks ? { blocks } : {}), ...(m.untrusted ? { untrusted: true } : {}) };
     }
     return { kind: "dialogue", source: "journal", ...(m.untrusted ? { untrusted: true } : {}) };
   });
@@ -137,6 +157,41 @@ export interface SnapshotInput {
   route?: string;
   messages: ChatMessage[];
   tools: ToolSchema[];
+  /** The previous step's prompt of this session (this process only), for `cache.reused`. */
+  previous?: PreviousPrompt;
+}
+
+/** What the agent keeps of the last prompt per session while an inspector runs. */
+export interface PreviousPrompt {
+  /** JSON of each message without its cache hint. */
+  keys: string[];
+  /** JSON of the tool schemas. */
+  tools: string;
+  /** Messages up to and including that prompt's last cache hint. */
+  cached: number;
+}
+
+/** The core's own view of the prompt cache on this step: hints, cacheable prefix, prefix shared with the last step. */
+export function cacheInfo(messages: ChatMessage[], tools: ToolSchema[], previous?: PreviousPrompt): ContextCacheInfo {
+  const toolTokens = tools.reduce((n, t) => n + Math.ceil(JSON.stringify(t).length / 4), 0);
+  const hints = messages.flatMap((m, index) => (m.cacheHint ? [{ index, hint: m.cacheHint }] : []));
+  const upTo = (hints.at(-1)?.index ?? -1) + 1;
+  const info: ContextCacheInfo = { hints, cacheable: { messages: upTo, tokens: (upTo ? estimateTokens(messages.slice(0, upTo).map(withoutHint)) : 0) + toolTokens } };
+  if (previous) {
+    const toolsSame = previous.tools === JSON.stringify(tools);
+    let same = 0;
+    while (same < messages.length && same < previous.keys.length && previous.keys[same] === key(messages[same]!)) same++;
+    // The uncached tail after the last hint (context plugins' notes) may change freely; only a change inside the
+    // previous step's cacheable prefix is a break worth showing.
+    const diverged = same < Math.min(previous.cached, previous.keys.length);
+    info.reused = {
+      messages: same,
+      tokens: toolsSame ? (same ? estimateTokens(messages.slice(0, same).map(withoutHint)) : 0) + toolTokens : 0,
+      toolsSame,
+      ...(diverged ? { divergedAt: same } : {}),
+    };
+  }
+  return info;
 }
 
 /** The snapshot for one model step; `messages` is the exact list given to the provider, then redacted. */
@@ -152,12 +207,12 @@ export function buildSnapshot(trace: ContextTrace, input: SnapshotInput, redact:
     const k = key(m);
     const own = queues.get(k)?.shift();
     const label = own ?? [...trace.added].reverse().find((a) => a.keys.has(k))?.label ?? { kind: "plugin", source: "unknown", untrusted: true };
-    return { index, ...label, role: m.role, tokens: tok(m) };
+    return { index, ...label, role: m.role, tokens: tok(m), ...(m.cacheHint ? { cacheHint: m.cacheHint } : {}) };
   });
   const byKind: Partial<Record<ContextPartKind, number>> = {};
   for (const p of parts) byKind[p.kind] = (byKind[p.kind] ?? 0) + p.tokens;
   const tools = input.tools.map((t) => ({ name: t.name, tokens: Math.ceil(JSON.stringify(t).length / 4) }));
-  const messagesTokens = estimateTokens(input.messages);
+  const messagesTokens = estimateTokens(input.messages.map(withoutHint));
   const toolTokens = tools.reduce((s, t) => s + t.tokens, 0);
   const raw: ContextSnapshot = {
     version: 1,
@@ -181,6 +236,7 @@ export function buildSnapshot(trace: ContextTrace, input: SnapshotInput, redact:
       hooks: trace.memory.hooks,
     },
     contexts: trace.contexts,
+    cache: cacheInfo(input.messages, input.tools, input.previous),
     redactions: 0,
   };
   // Inline images are replaced by their size: they are not text the inspector can show, and can be megabytes per step.

@@ -61,9 +61,35 @@ test("summary payload and old tool trim", () => {
     messages.push({ role: "user" as const, content: `q${i}` });
     messages.push({ role: "tool" as const, toolCallId: String(i), content: Array.from({ length: 20 }, (_, n) => `line ${n}`).join("\n") });
   }
-  const trimmed = trimOldToolResults(messages, 12);
+  const trimmed = trimOldToolResults(messages, 12, 1);
   assert.match(trimmed[1]!.content, /truncated/);
+  assert.match(trimmed[3]!.content, /truncated/);
+  assert.doesNotMatch(trimmed[5]!.content, /truncated/);
   assert.doesNotMatch(trimmed.at(-1)!.content, /truncated/);
+  // Default step 8: two turns past the 12 kept is not a full step yet, nothing is rewritten.
+  assert.deepEqual(trimOldToolResults(messages, 12), messages);
+});
+
+test("old tool trim moves in steps, so the prompt prefix stays the same between steps", () => {
+  const dialogue = (users: number) => {
+    const out = [];
+    for (let i = 0; i < users; i++) {
+      out.push({ role: "user" as const, content: `q${i}` });
+      out.push({ role: "user" as const, content: `<turn_context>\nturn ${i}\n</turn_context>` });
+      out.push({ role: "user" as const, content: `[supervisor] notice ${i}` });
+      out.push({ role: "tool" as const, toolCallId: String(i), content: Array.from({ length: 20 }, (_, n) => `line ${n}`).join("\n") });
+    }
+    return out;
+  };
+  const trimmedTurns = (users: number) => trimOldToolResults(dialogue(users), 12, 8).filter((m) => m.role === "tool" && m.content.includes("truncated")).length;
+  // Turn contexts and supervisor notices are not counted as human turns.
+  assert.deepEqual([12, 13, 19, 20, 21, 27, 28].map(trimmedTurns), [0, 0, 0, 8, 8, 8, 16]);
+  // Between two boundary moves each call is the previous one plus new messages at the end.
+  for (let users = 20; users < 27; users++) {
+    const a = trimOldToolResults(dialogue(users), 12, 8);
+    const b = trimOldToolResults(dialogue(users + 1), 12, 8);
+    assert.deepEqual(b.slice(0, a.length), a, `prefix changed between ${users} and ${users + 1} turns`);
+  }
 });
 
 test("memory: profile and recent journal only show facts this persona and chat may see", () => {

@@ -40,10 +40,57 @@ Every journal entry and every streamed event uses one envelope:
 | Supervisor | `supervisor.notice`, `supervisor.escalated`, `supervisor.incident_resolved` |
 | Agent state | `agent.state` with `idle | working | blocked | done | error` |
 | Plugins | `plugin.loaded`, `plugin.crashed`, `plugin.patch.proposed`, `plugin.patch.tested`, `plugin.patch.applied`, `plugin.patch.rolled_back` |
-| Accounting | `usage.recorded` (tokens, cost, provider, model) |
+| Context | `context.turn` (the frozen per-turn context block), `memory.snapshot` (the session's memory block) |
+| Accounting | `usage.recorded` (tokens, cost, provider, model; `cachedTokens`, `cacheMissTokens`, `cacheWriteTokens` when the provider reports them) |
 | Recovery | `checkpoint` |
 
 Agent states match Herdr's vocabulary so integrations need no mapping.
+
+## Prompt caching
+
+Providers bill the unchanged prefix of a request as a cache hit (DeepSeek and OpenAI automatically, Anthropic at
+`cache_control` breakpoints). The core builds every model request so that it only **appends** to the previous one:
+between the steps of a turn, between turns, and after a restart (everything that varies is read back from the journal).
+
+Layout, most stable first:
+
+| Zone | Content | Changes when | Hint |
+|---|---|---|---|
+| tools | tool schemas, sorted by wire name; plugins kept in `plugins.enabled` order | plugins, policy or skills change | covered by `static` |
+| system | system prompt (persona/agent, rules, project, workspace folder), skill catalog | config, agent or skills change | `static` on the skill catalog (last system block of the zone) |
+| session | memory snapshot (`memory.snapshot`), conversation summary | compaction, another agent speaks | `session` on the last of these |
+| dialogue | per turn: the turn context, then the human message, assistant/tool messages | appended only | `turn` on the last message |
+| tail | what `context` plugins append | every call | none |
+
+- **No clock in the system prompt.** The time (to the minute, with the zone: `agent.timezone`, else the process zone,
+  else UTC), the turn's recall and memory saved since the snapshot go into one **turn context** message
+  (`<turn_context>…</turn_context>`, role `user`, placed before the turn's first human message). It is computed on the
+  turn's first step, journaled as `context.turn { text, at, timezone, blocks[], factIds[] }` and replayed unchanged.
+- **Memory snapshot.** The profile/journal block is frozen per session in `memory.snapshot { text, factIds, reason:
+  start|compaction|agent, agentId }` and refreshed only after `memory.compacted` or when another agent speaks. New
+  facts reach the model through the next turn context's `<memory_updates>` block.
+- **Old tool results** are shortened in steps: the boundary moves once every 8 human turns (results older than the last
+  12–19 human turns), not on every turn.
+- **Compaction is stepped:** the summary and everything after it are kept while they fit; only then is the history
+  folded again (once per several turns instead of every turn).
+- **Context plugins may only append.** When a contributor inserts, edits or removes earlier messages, the core keeps
+  the input as it was, keeps only what the contributor added after the last input message and logs a warning
+  (the context snapshot marks it `reordered`).
+- **Cache hints.** `ChatMessage.cacheHint` (`static` | `session` | `turn`) marks the **last** message of a stable zone.
+  Hints are not content: providers strip them. `ProviderRequest.cacheKey` is stable per session
+  (`sinty-<sha256(sessionId)[:24]>`).
+
+Providers:
+
+| Plugin | What it does with the hints | Options |
+|---|---|---|
+| `provider-anthropic` | `system` as text blocks; `cache_control` on the hinted blocks (at most 4; the `turn` one always kept); system messages after the dialogue starts go in place as user `<system>…</system>` text instead of being merged into `system` | `promptCache: false` (no breakpoints), `cacheTtl: "1h"` |
+| `provider-openai-responses` | `instructions` = leading system messages only; later system messages stay in place as `developer` items; `prompt_cache_key` = `cacheKey` | `promptCacheKey: false` |
+| `provider-openai-compat` | strips hints; `prompt_cache_key` for `api.openai.com` or when enabled (some compatible servers reject unknown fields); reads DeepSeek `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` and OpenAI `prompt_tokens_details.cached_tokens` | `promptCacheKey: true \| false` |
+
+`usage.recorded` fields: `inputTokens` is always the whole prompt; `cachedTokens` the part read from the cache;
+`cacheMissTokens` the part that was not (Anthropic: plain input + cache writes); `cacheWriteTokens` what was written
+to the cache (Anthropic). Tests: `packages/core/src/__tests__/prompt-cache.test.ts`.
 
 ## HTTP API
 

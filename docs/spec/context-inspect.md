@@ -60,23 +60,25 @@ plugin.
 | `at`, `agentId`, `route` | time, memory agent id (roster persona or `agent.name`), first route tried |
 | `persona?` | where the first system text came from: `{ source: "agent", agentName }` (the roster agent's own AGENTS.md) or `{ source: "global", agentName? }` (`~/.sinty/AGENTS.md`; `agentName` is set when the speaking agent's AGENTS.md field is empty) |
 | `messages` | **exactly** the `ChatMessage[]` given to the provider, after redaction; inline images are replaced by their size |
-| `parts[]` | one per message: `index`, `kind`, `source`, `id?`, `role`, `tokens`, `untrusted?` |
+| `parts[]` | one per message: `index`, `kind`, `source`, `id?`, `role`, `tokens`, `untrusted?`, `cacheHint?` (the message closes a stable zone: `static`, `session`, `turn`), `blocks?` (ids of the blocks inside a turn context) |
 | `tools[]` | tool schemas offered on this step: wire name and token estimate |
 | `tokens` | `messages`, `tools`, `total`, and `byKind` (sum of `parts[].tokens` per kind) |
 | `memory.facts[]` | facts rendered in the `memory.profile` block: id, text, tier, scope, source, createdAt |
 | `memory.summary?` | conversation summary text, `coversUntil` seq, tokens |
 | `memory.recall?` | automatic recall: queries, records (id, provider, text, untrusted), tokens, `cached` (true on later steps of a turn) |
 | `memory.hooks[]` | processor hooks that ran: `onTurnStart` (queries), `afterRecall` (record ids before/after), `beforeContext` (block ids before/after); `ms`, `ok`, `changed` |
-| `contexts[]` | plugin context contributors (`ctx.context`): `ms`, `ok`, `error?`, tokens before/after, added and removed messages (content cut at 4000 chars) |
+| `contexts[]` | plugin context contributors (`ctx.context`): `ms`, `ok`, `error?`, tokens before/after, added and removed messages (content cut at 4000 chars), `reordered?` (the contributor changed earlier messages; the core kept the input and only its appended messages) |
+| `cache?` | prompt-cache view: `hints[]` (`index`, `hint`), `cacheable` (messages and estimated tokens up to the last hint, tools included) and `reused` (leading messages identical to the previous step of the session in this process, their tokens, `toolsSame`, `divergedAt?` when an earlier message changed). See "Prompt caching" in `protocol.md` |
 | `redactions` | number of strings in which a secret was masked |
 
 Kinds of parts:
 - `system`: the system prompt from the core;
 - `skills`: the skills catalog;
-- `memory`: `memory.profile`;
+- `memory`: `memory.profile` (the session's frozen snapshot);
 - `summary`: `memory.summary`;
-- `recall`: `memory.recalled`, `memory.recalled.external`;
-- `processor`: a block that a `beforeContext` processor added or rewrote (`source` = that plugin);
+- `turn`: a turn context (`<turn_context>`: time, recall, memory updates, blocks from `beforeContext` processors);
+  `blocks` lists what it contains (`memory.recalled`, `memory.updates`, a processor's block id);
+- `recall`, `processor`: kept for older snapshots; recall and processor blocks now travel inside `turn` parts;
 - `plugin`: a message that a context contributor added (`id` = `<plugin>/<context>`);
 - `dialogue`: messages from the journal.
 
@@ -88,8 +90,12 @@ How messages are labelled:
 - Messages are compared as whole JSON values, so a contributor that edits a message shows up as one removal plus one
   addition.
 
-On later steps of a turn, the `onTurnStart` and `afterRecall` hooks do not run again: their result is cached for the
-turn. Those steps show `recall.cached: true`, and `hooks` holds only `beforeContext`.
+On later steps of a turn, no memory hook runs again: the turn context is read back from the journal. Those steps
+show `recall.cached: true` and an empty `hooks`.
+
+The inspector also keeps the provider's real usage per step (`usage.recorded`: `inputTokens`, `cachedTokens`,
+`cacheMissTokens`, `cacheWriteTokens`) next to the estimates; the **Контекст** view marks the cache boundary (the
+last hinted message) and, when the prefix changed, the first differing message.
 
 ## Redaction
 

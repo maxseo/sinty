@@ -17,7 +17,12 @@ export interface Usage {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Prompt tokens read from the provider's cache (hit). */
   cachedTokens?: number;
+  /** Prompt tokens not read from the cache (miss), when the provider reports it. */
+  cacheMissTokens?: number;
+  /** Prompt tokens written to the cache on this call (Anthropic cache_creation, OpenAI cache_write). */
+  cacheWriteTokens?: number;
   costUsd?: number;
 }
 
@@ -74,6 +79,12 @@ export interface EventDataMap {
   "memory.written": { id: string; action: "inserted" | "updated" | "dropped"; tier: string; scope: string; source: string; provider: string; by?: string };
   /** Automatic recall for one turn; the router reuses it for every later step of the same turn. */
   "memory.recalled": { queries: string[]; providers: string[]; records: { id: string; provider: string; text: string; ref?: string; untrusted?: boolean; createdAt?: string }[]; tokens: number; ms: number; arm?: string; shadow?: boolean };
+  /**
+   * The session memory snapshot: the memory profile block as the prompt shows it from now on. Written on the first
+   * model step of a session, after each compaction and when another agent starts speaking; the prompt reuses it
+   * unchanged in between. Facts saved later reach the model through turn contexts (`memory.updates`).
+   */
+  "memory.snapshot": { text: string; factIds: string[]; reason: "start" | "compaction" | "agent"; agentId: string };
   "memory.compacted": { coversUntil: number; summaryTokens: number; facts: number; by: string; ok: boolean; reason?: string };
   /** A memory plugin failed or timed out; the router fell back to the builtin store. */
   "memory.degraded": { provider: string; hook?: string; reason: string };
@@ -81,6 +92,13 @@ export interface EventDataMap {
   "memory.experiment": { experiment: string; arm: string; shadow?: string[] };
   /** A plugin called a model through ctx.models. */
   "models.called": { plugin: string; op: "complete" | "embed"; route: string; provider: string; model: string; inputTokens: number; outputTokens: number; ms: number; ok: boolean; error?: string };
+
+  /**
+   * The turn context: written once, on the first model step of a turn, and shown to the model as a message right
+   * before that turn's first user message on every later step and turn, unchanged (time of the turn, recall, memory
+   * updates). `blocks` names its parts; `factIds` are the memory facts it announced.
+   */
+  "context.turn": { text: string; at: string; timezone: string; blocks: { id: string; source: string; untrusted?: boolean }[]; factIds: string[]; untrusted?: boolean };
 
   "usage.recorded": Usage;
   "checkpoint": { state: unknown };

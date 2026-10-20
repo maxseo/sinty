@@ -81,6 +81,16 @@ export interface PluginManifest {
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
+/**
+ * Prompt-cache boundary set by the core on the last message of a stability zone (docs/spec/protocol.md, "Prompt
+ * caching"). Everything up to and including a marked message is byte-identical on the next call while the zone holds:
+ * - `static`: tools, system prompt and skills; changes only when the persona, config, skills or tools change;
+ * - `session`: the session memory snapshot and summary; changes only at compaction;
+ * - `turn`: the last message of the dialogue; the next step or turn appends after it.
+ * Provider plugins turn hints into their cache controls (Anthropic `cache_control`) or ignore them.
+ */
+export type CacheHint = "static" | "session" | "turn";
+
 export interface ChatMessage {
   role: ChatRole;
   content: string;
@@ -89,6 +99,8 @@ export interface ChatMessage {
   toolCallId?: string;
   toolCalls?: { id: string; name: string; args: unknown }[];
   untrusted?: boolean;
+  /** Set by the core only; never part of the content a provider sends. */
+  cacheHint?: CacheHint;
 }
 
 export interface ToolSchema {
@@ -112,14 +124,32 @@ export interface ProviderRequest {
   tools: ToolSchema[];
   maxOutputTokens?: number;
   reasoning?: "off" | "low" | "medium" | "high";
+  /**
+   * Stable per conversation (derived from the session id). Providers with a routing key for their prompt cache
+   * (OpenAI `prompt_cache_key`) may send it; others ignore it.
+   */
+  cacheKey?: string;
   signal: AbortSignal;
+}
+
+/**
+ * Token usage of one call. `inputTokens` is the whole prompt, cached part included. `cachedTokens` were read from the
+ * provider's prompt cache (hit), `cacheMissTokens` were not (`cachedTokens + cacheMissTokens = inputTokens` when both
+ * are known), `cacheWriteTokens` were written to the cache on this call (Anthropic, OpenAI).
+ */
+export interface ProviderUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens?: number;
+  cacheMissTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export type ProviderChunk =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
-  | { type: "done"; stopReason: string; usage: { inputTokens: number; outputTokens: number; cachedTokens?: number } };
+  | { type: "done"; stopReason: string; usage: ProviderUsage };
 
 export interface ProviderDefinition {
   protocol: string;
@@ -138,7 +168,12 @@ export interface ContextInput {
   budgetTokens: number;
 }
 
-/** Context plugins run in order; each receives the previous output. */
+/**
+ * Context plugins run in order; each receives the previous output. They may only **append** messages at the tail:
+ * the input must come back unchanged as the prefix of the output, so the provider's prompt cache keeps working.
+ * When a contributor inserts, edits or removes earlier messages, the core keeps the input as it was, keeps only what
+ * the contributor added after the last input message, and logs a warning (the context snapshot shows `reordered`).
+ */
 export type ContextContributor = (input: ContextInput) => Promise<ChatMessage[]>;
 
 // ---- channels ----

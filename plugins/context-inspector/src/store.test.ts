@@ -86,3 +86,18 @@ test("tab page: no network in its CSP, data only through the tab/1 bridge, rende
   assert.doesNotMatch(TAB_HTML, /id="session"/);
   assert.match(TAB_HTML, /m\.op === "session"/);
 });
+
+test("store: real usage (usage.recorded) joins the step summary by stepId, with the core's cache estimates", () => {
+  const s = new SnapshotStore(10, 1e9);
+  const a = snap("u1");
+  a.cache = { hints: [{ index: 0, hint: "static" }], cacheable: { messages: 1, tokens: 48 }, reused: { messages: 1, tokens: 48, toolsSame: true, divergedAt: 1 } };
+  s.add(a);
+  assert.equal(s.list()[0]!.usage, undefined, "no usage until the model call finished");
+  assert.deepEqual(s.list()[0]!.cache, { cacheable: 48, reused: 48 });
+  s.addUsage("u1", { provider: "deepseek", model: "v4", inputTokens: 1000, outputTokens: 20, cachedTokens: 900, cacheMissTokens: 100, costUsd: 1 });
+  assert.deepEqual(s.list()[0]!.usage, { provider: "deepseek", model: "v4", inputTokens: 1000, outputTokens: 20, cachedTokens: 900, cacheMissTokens: 100 });
+  assert.equal(s.usageOf("u1")?.cachedTokens, 900);
+  // Bounded: at most twice `keep` usage entries.
+  for (let i = 0; i < 30; i++) s.addUsage(`x${i}`, { provider: "p", model: "m", inputTokens: 1, outputTokens: 1 });
+  assert.equal(s.usageOf("u1"), undefined);
+});

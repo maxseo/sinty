@@ -25,7 +25,7 @@ reference for plugin authors and for the core; code lives in `packages/core/src/
 | **Provider** | A store that can `recall` and optionally `write` / `forget`. The core ships `builtin:sqlite`. |
 | **Processor** | A set of hooks around the turn: `onTurnStart`, `afterRecall`, `beforeContext`, `afterTurn`, `onCompaction`, `onWrite`. |
 | **Router** | `MemoryRouter` in the core. Owns the builtin store, calls providers and processors, enforces budgets, journals. |
-| **Context block** | A system message the router adds to the prompt: `memory.profile`, `memory.summary`, `memory.recalled`. |
+| **Context block** | Text the router adds to the prompt: `memory.profile` and `memory.summary` (session system messages), `memory.recalled` and `memory.updates` (inside the turn context). |
 
 ## Visibility
 
@@ -51,24 +51,38 @@ refuses to start such a plugin). Their inputs and outputs are unchanged by the r
 message.user ─▶ turn starts
    │
    ├─ callModel step 1 ─▶ buildContext
-   │     ├─ router.turnStart(TurnInfo)            once per turn; result cached for later steps
-   │     │     ├─ processors.onTurnStart → RecallPlan   (or memory.recall.auto: query = user text)
-   │     │     ├─ providers.recall (timeout, budget)
-   │     │     ├─ processors.afterRecall
-   │     │     └─ journal memory.recalled (only when a plan existed)
-   │     ├─ maybeCompact (≥ 65% of memory.contextTokens and > 12 user turns)
+   │     ├─ turn context (once per turn, journaled as context.turn and replayed unchanged)
+   │     │     ├─ router.turnBlocks(TurnInfo)
+   │     │     │     ├─ recall: processors.onTurnStart → RecallPlan (or memory.recall.auto: query = user text)
+   │     │     │     │     ├─ providers.recall (timeout, budget) → processors.afterRecall
+   │     │     │     │     └─ journal memory.recalled (only when a plan existed)
+   │     │     │     ├─ memory.updates: facts saved since the session snapshot and not announced by an earlier turn
+   │     │     │     └─ processors.beforeContext(turn, blocks)  — once per turn, the result is frozen
+   │     │     └─ time (minutes, zone) + blocks → <turn_context> message before the turn's first human message
+   │     ├─ maybeCompact (≥ 65% of memory.contextTokens and > 12 user turns; stepped, see below)
    │     │     ├─ processors.onCompaction → else builtin summary call through the model gateway
    │     │     ├─ facts → write path with source "summary" → memory.written
    │     │     ├─ journal memory.compacted
    │     │     └─ failure → keep the last 12 user turns (trim to the window) + memory.degraded
-   │     └─ router.blocks() → [profile+journal, summary?, recalled?] → processors.beforeContext
-   ├─ callModel step 2..n ─▶ same blocks, recall reused from the cache / journal
+   │     └─ router.sessionMessages() → [memory snapshot (memory.snapshot), summary?]
+   ├─ callModel step 2..n ─▶ same prefix, the turn context is read from the journal
    │
 turn.completed ─▶ memory_jobs (turn_id, hook) row per afterTurn processor ─▶ drained asynchronously
 ```
 
-The prompt order is: system prompt, skills catalog, memory block, summary (if any), recalled block (if any),
-dialogue, then `context` plugins as before.
+The prompt order is: system prompt, skills catalog, memory snapshot, summary (if any), dialogue (each turn starts
+with its turn context, which carries the recalled block and memory updates), then what `context` plugins append.
+See "Prompt caching" in `protocol.md` for why.
+
+**Memory snapshot.** The memory block (profile + recent journal) is written into the session's `memory.snapshot`
+event on the first step and reused as is; it is refreshed after a compaction (`reason: "compaction"`) or when another
+agent speaks (`reason: "agent"`). Facts saved later (by `memory.write`, summaries or processors) reach the model in
+the next turn's `<memory_updates>` block, once. A forgotten fact stays in the snapshot until the next refresh; the
+`memory.forget` tool result tells the model in the same turn.
+
+**Stepped compaction.** Once the history was folded, the summary and everything after `coversUntil` are kept while
+they fit under 65% of `memory.contextTokens`; only then is it folded again to the last 12 user turns. The prompt
+prefix therefore changes once per fold, not on every turn.
 
 ## TurnInfo
 
@@ -84,7 +98,7 @@ interface TurnInfo { sessionId; turnId; agentId; userId; projectId?; text; arm? 
 |---|---|---|---|---|
 | `onTurnStart(turn)` | first model step of a turn | `RecallPlan` | `memory.hooks.timeoutMs` | ignored, `memory.degraded` |
 | `afterRecall(turn, records)` | after providers answered | filtered/reordered records | same | previous records kept |
-| `beforeContext(turn, blocks)` | every model step | edited blocks | same | previous blocks kept |
+| `beforeContext(turn, blocks)` | once per turn, on the turn context blocks (recall, memory updates); the result is frozen in `context.turn` | edited blocks | same | previous blocks kept |
 | `afterTurn({turn, reply, messages})` | after `turn.completed`, from a durable queue | `{ facts? }` written through the write path | `memory.hooks.afterTurnTimeoutMs` (60 s) | retried on the next drain/start, at most 3 attempts |
 | `onCompaction({turn, previous, transcript})` | when the dialogue is folded | `{summary, facts}` | 60 s | next processor, then builtin |
 | `onWrite(write, turn?)` | before every write | edited write or `null` | same | write goes through unchanged |
@@ -229,6 +243,8 @@ Labels are JSON lines `{ "query": "…", "expect": ["substring", …] }`.
 | `memory.written` | `{ id, action: inserted\|updated\|dropped, tier, scope, source, provider, by? }` — every builtin write: the `memory.write` tool, summaries, processors (one event per write) |
 | `memory.recalled` | `{ queries, providers, records[], tokens, ms, arm? }` — automatic recall, once per turn |
 | `memory.compacted` | `{ coversUntil, summaryTokens, facts, by, ok, reason? }` |
+| `memory.snapshot` | `{ text, factIds, reason: start\|compaction\|agent, agentId }` — the session's frozen memory block |
+| `context.turn` | `{ text, at, timezone, blocks[{id, source, untrusted?}], factIds }` — the frozen turn context (written by the agent) |
 | `memory.degraded` | `{ provider, hook?, reason }` |
 | `memory.experiment` | `{ experiment, arm, shadow? }` |
 | `models.called` | `{ plugin, op, route, provider, model, inputTokens, outputTokens, ms, ok, error? }` |

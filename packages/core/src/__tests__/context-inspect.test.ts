@@ -65,16 +65,28 @@ test("context snapshot: one per model step, messages identical to the provider r
     const kinds = last.parts.map((p) => p.kind);
     assert.equal(kinds[0], "system");
     assert.equal(kinds[1], "skills");
+    assert.equal(last.parts[1]!.cacheHint, "static");
     assert.equal(last.parts[2]!.id, "memory.profile");
-    assert.match(last.messages[2]!.content, /Deploy goes through staging first/);
-    const recall = last.parts.find((p) => p.kind === "recall");
-    assert.equal(recall?.id, "memory.recalled");
-    const extra = last.parts.find((p) => p.id === "inspect.extra");
-    assert.equal(extra?.kind, "processor");
-    assert.equal(extra?.source, "inspect-test");
-    const notePart = last.parts.find((p) => p.kind === "plugin");
-    assert.equal(notePart?.source, "inspect-test");
-    assert.equal(notePart?.id, "inspect-test/note");
+    assert.equal(last.parts[2]!.cacheHint, "session");
+    // The session snapshot was taken on the first step, before the fact was written: the fact reaches the model in
+    // the next turn's context (memory.updates), and the profile block stays byte-identical.
+    assert.equal(last.messages[2]!.content, snaps[0]!.messages[2]!.content);
+    assert.deepEqual(last.memory.facts, []);
+    const turns = last.parts.filter((p) => p.kind === "turn");
+    assert.equal(turns.length, 2, "one turn context per turn");
+    assert.deepEqual(turns[0]!.blocks, ["inspect.extra"]);
+    const now = turns[1]!;
+    assert.deepEqual(now.blocks, ["memory.recalled", "memory.updates", "inspect.extra"]);
+    assert.equal(now.source, "core");
+    const nowText = last.messages[now.index]!.content;
+    assert.match(nowText, /^<turn_context>\n/);
+    assert.match(nowText, /Current time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}, \w+ \(/);
+    assert.match(nowText, /<recalled_memory>[\s\S]*Frankfurt/);
+    assert.match(nowText, /<memory_updates>[\s\S]*\[profile\] Deploy goes through staging first\./);
+    assert.match(nowText, /<extra>block from inspect-test<\/extra>/);
+    // It sits right before the turn's user message, and the first turn's context is still the same text.
+    assert.equal(last.messages[now.index + 1]!.content, "staging");
+    assert.equal(last.messages[turns[0]!.index]!.content, snaps[1]!.messages[turns[0]!.index]!.content);
     assert.ok(kinds.includes("dialogue"));
     // Tokens: per part, by kind, totals.
     const sum = last.parts.reduce((n, p) => n + p.tokens, 0);
@@ -82,15 +94,20 @@ test("context snapshot: one per model step, messages identical to the provider r
     assert.equal(last.tokens.total, last.tokens.messages + last.tokens.tools);
     assert.ok(last.tools.some((t) => t.name === "memory__write" && t.tokens > 0));
     // Memory detail.
-    assert.deepEqual(last.memory.facts.find((f) => f.tier === "profile") && [last.memory.facts[0]!.text, last.memory.facts[0]!.scope, last.memory.facts[0]!.source], ["Deploy goes through staging first.", "user", "agent"]);
     assert.equal(last.memory.recall?.cached, false);
     assert.deepEqual(last.memory.recall?.queries, ["staging"]);
     assert.equal(last.memory.recall?.records[0]?.text, "The staging cluster lives in Frankfurt.");
-    assert.match(last.messages[last.parts.find((p) => p.kind === "recall")!.index]!.content, /Frankfurt/);
     assert.equal(snaps[1]!.memory.recall?.cached, true, "later steps reuse the turn's recall");
     const hook = last.memory.hooks.find((h) => h.hook === "beforeContext");
     assert.deepEqual([hook?.plugin, hook?.ok, hook?.changed], ["inspect-test", true, true]);
     assert.ok(hook?.after?.includes("inspect.extra"));
+    assert.deepEqual(snaps[1]!.memory.hooks, [], "beforeContext runs once per turn, not on every step");
+    // Cache view: hints in zone order, the last one on the last dialogue message; step 2 reuses step 1's prefix.
+    assert.deepEqual(last.cache?.hints.map((h) => h.hint), ["static", "session", "turn"]);
+    assert.equal(snaps[0]!.cache?.reused, undefined);
+    assert.equal(snaps[1]!.cache?.reused?.toolsSame, true);
+    assert.equal(snaps[1]!.cache?.reused?.messages, snaps[0]!.messages.length - 1, "everything but the plugin's tail note");
+    assert.equal(snaps[1]!.cache?.reused?.divergedAt, undefined, "a changed tail note after the last hint is not a cache break");
     // Plugin context contributor diff.
     assert.equal(last.contexts.length, 1);
     assert.equal(last.contexts[0]!.added.length, 1);

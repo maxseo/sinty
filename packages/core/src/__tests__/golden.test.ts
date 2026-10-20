@@ -44,6 +44,8 @@ function normalize(value: unknown, home: string): unknown {
     .replace(/<HOME>(?:\\\\[\w.-]+)+/g, (m) => m.replaceAll("\\\\", "/"))
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "<TIME>")
     .replace(/\d{4}-\d{2}-\d{2}/g, "<DATE>")
+    // Turn contexts: "Current time: 2026-10-20 16:09, Tuesday (Europe/Moscow, UTC+03:00)".
+    .replace(/Current time: <DATE> \d{2}:\d{2}, \w+ \([^)]*\)/g, "Current time: <TURN_TIME>")
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<UUID>")
     .replace(/(ses|trn|stp|call|evt|inc)_[0-9A-Za-z]{10,}/g, "$1_<ID>");
   return JSON.parse(text) as unknown;

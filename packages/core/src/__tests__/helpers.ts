@@ -40,8 +40,10 @@ export async function boot(home: string, script: ScriptStep[], opts: { config?: 
   return sinty;
 }
 
+/** Event types of the turn flow; bookkeeping events (state, usage, turn context, memory snapshot) are left out. */
 export function types(events: SintyEvent[]): string[] {
-  return events.map((e) => e.type).filter((t) => t !== "agent.state" && t !== "usage.recorded");
+  const skip = new Set(["agent.state", "usage.recorded", "context.turn", "memory.snapshot"]);
+  return events.map((e) => e.type).filter((t) => !skip.has(t));
 }
 
 export function find<T = Record<string, unknown>>(events: SintyEvent[], type: string): T | undefined {

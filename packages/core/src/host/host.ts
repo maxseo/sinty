@@ -640,8 +640,23 @@ export class PluginHost {
         }
       }),
     );
+    // Plugins start in parallel and finish in any order. Keep the map in plugins.enabled order so tools, contexts,
+    // memory providers and duplicate-tool ownership do not depend on that race (the tool list is part of the cached
+    // prompt prefix).
+    this.reorder();
     this.warnDuplicateTools();
     return { failed };
+  }
+
+  /** Puts the plugin map back in plugins.enabled order (after a parallel start or a reload). */
+  private reorder(): void {
+    const all = new Map(this.plugins);
+    this.plugins.clear();
+    for (const name of this.config.plugins.enabled) {
+      const p = all.get(name);
+      if (p) this.plugins.set(name, p);
+    }
+    for (const [name, p] of all) if (!this.plugins.has(name)) this.plugins.set(name, p);
   }
 
   /** Two plugins with the same tool name: the first one wins in toolOwner(); say so loudly. */
@@ -675,6 +690,7 @@ export class PluginHost {
       const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events);
       await proc.start();
       this.plugins.set(name, proc);
+      this.reorder();
       return undefined;
     } catch (e) {
       this.plugins.delete(name);

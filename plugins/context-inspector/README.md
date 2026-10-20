@@ -9,7 +9,10 @@ prompt on every model step of that chat and where each part came from:
 - what plugin context contributors added or removed;
 - the dialogue;
 - the tool schemas;
-- token estimates for every part and in total, for every step of every turn.
+- token estimates for every part and in total, for every step of every turn;
+- prompt caching: where the cacheable prefix ends (the **граница кэша** row), how much of the step repeats the
+  previous one, and, when the provider reports it, the real `usage.recorded` numbers (input, from cache, not from
+  cache, cache writes) next to the estimates. The step list shows «кэш N%» from the provider's numbers.
 
 The plugin is disabled by default, and so are snapshots. It keeps the newest snapshots in memory only: by default
 100, at most 64 MB. Nothing is written to disk, and everything is gone after a restart.
@@ -33,6 +36,9 @@ shows only that chat:
   live, refreshing every 3 s while «обновлять» is on.
 - Click an older step to pin it; click the last one to follow again.
 - Each step shows its parts in order, colour-coded by kind with token counts. Click a row to see its full text.
+  A turn context (kind `turn`) lists the blocks it carries (recall, memory updates). If an earlier message changed
+  since the previous step, a red row marks where the cached prefix broke; a context plugin that changed earlier
+  messages is flagged (the core kept only what it appended).
 - If you switch to another chat, the view stays on **Контекст** and shows that chat. Click **Чат** to go back.
 
 **No snapshots yet?** Snapshots live in memory, from the moment the plugin started. A chat whose messages are older

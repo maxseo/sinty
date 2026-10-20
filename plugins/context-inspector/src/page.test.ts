@@ -172,3 +172,36 @@ test("session tab page: says where the persona came from and warns when the chat
     assert.equal(warned, persona.source === "global" && !("agentName" in persona));
   }
 });
+
+test("session tab page: shows real cache usage next to the estimates, the cache boundaries and where the prompt diverged", async () => {
+  const p = boot();
+  p.post({ sinty: "tab/1", op: "init", sessionId: "ses_c" });
+  p.answer(/ses_c/, { snapshots: [{ ...sum("k1", "ses_c", "trn_1", 2, 30), usage: { provider: "deepseek", model: "v4", inputTokens: 1000, outputTokens: 7, cachedTokens: 870, cacheMissTokens: 130 } }] });
+  await p.flush();
+  assert.match(p.els.steps!.textContent, /кэш 87%/);
+  const snapshot = {
+    ...full("k1", "ses_c"),
+    messages: [{ role: "system", content: "sys" }, { role: "system", content: "skills", cacheHint: "static" }, { role: "user", content: "<turn_context>\nCurrent time: x\n</turn_context>" }, { role: "user", content: "hi", cacheHint: "turn" }],
+    parts: [
+      { index: 0, kind: "system", source: "core", id: "system", role: "system", tokens: 2 },
+      { index: 1, kind: "skills", source: "core", id: "skills", role: "system", tokens: 2, cacheHint: "static" },
+      { index: 2, kind: "turn", source: "core", id: "context.turn", role: "user", tokens: 5, blocks: ["memory.recalled"] },
+      { index: 3, kind: "dialogue", source: "journal", role: "user", tokens: 2, cacheHint: "turn" },
+    ],
+    cache: { hints: [{ index: 1, hint: "static" }, { index: 3, hint: "turn" }], cacheable: { messages: 4, tokens: 11 }, reused: { messages: 3, tokens: 9, toolsSame: true, divergedAt: 3 } },
+    usage: { provider: "deepseek", model: "v4", inputTokens: 1000, outputTokens: 7, cachedTokens: 870, cacheMissTokens: 130 },
+  };
+  p.answer(/^\/snapshots\/k1$/, snapshot);
+  await p.flush();
+  const text = p.els.main!.textContent;
+  assert.match(text, /870 · 87%из кэша, факт/);
+  assert.match(text, /130мимо кэша, факт/);
+  assert.match(text, /11кэшируемый префикс \(оценка\)/);
+  assert.match(text, /9совпало с прошлым шагом \(оценка\)/);
+  assert.match(text, /граница кэша «static»/);
+  assert.match(text, /граница кэша «turn»/);
+  assert.match(text, /контекст хода/);
+  assert.match(text, /context\.turn \[memory\.recalled\]/);
+  const rows = p.els.main!.find((e) => e.className === "div" || e.className === "cut").map((e) => e.className);
+  assert.deepEqual(rows, ["cut", "div", "cut"], "boundary after skills, divergence before the last message, boundary after it");
+});

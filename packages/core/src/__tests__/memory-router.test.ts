@@ -37,7 +37,8 @@ test("router: a processor plan recalls once per turn, external records are untru
     const reqs = lines(home, "recording-provider", "requests.jsonl") as { messages: { role: string; content: string; untrusted?: boolean }[] }[];
     assert.equal(reqs.length, 2, "two model steps");
     for (const r of reqs) {
-      const block = r.messages.find((m) => m.content.startsWith('<recalled_memory untrusted="true">'));
+      // Recall lives in the turn context, the same message (same text) on every step of the turn.
+      const block = r.messages.find((m) => m.role === "user" && m.content.startsWith("<turn_context>") && m.content.includes('<recalled_memory untrusted="true">'));
       assert.ok(block, "external block in every step");
       assert.equal(block.untrusted, true);
       assert.match(block.content, /\[memory-test\] notes\/a\.md: External note about deploy plan/);
@@ -134,8 +135,9 @@ test("router: when the summary call fails the prompt is trimmed to the last 12 u
       await sinty.agent.idle();
     }
     const reqs = lines(home, "recording-provider", "requests.jsonl") as { messages: { role: string }[] }[];
-    const users = reqs.at(-1)!.messages.filter((m) => m.role === "user").length;
-    assert.equal(users, 12);
+    const last = reqs.at(-1)!.messages as { role: string; content: string }[];
+    assert.equal(last.filter((m) => m.role === "user" && !m.content.startsWith("<turn_context>")).length, 12);
+    assert.equal(last.filter((m) => m.role === "user" && m.content.startsWith("<turn_context>")).length, 12, "each kept turn keeps its context");
     const events = sinty.journal.events(s.id);
     assert.ok(events.some((e) => e.type === "memory.compacted" && (e.data as { ok: boolean }).ok === false));
     assert.ok(events.some((e) => e.type === "memory.degraded"));

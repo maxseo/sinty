@@ -18,3 +18,10 @@ models:
 ```
 
 Enable it in `config.yaml`: add `provider-openai-responses` to `plugins.enabled`.
+
+## Prompt caching
+
+`instructions` hold only the leading system messages (system prompt, skills, session memory); system messages that
+come later (context plugins' notes) stay in place as `developer` items, so the cached instructions do not change
+between calls. `prompt_cache_key` (stable per chat) is sent unless `options.promptCacheKey` is `false`. Cached input
+is recorded as `cachedTokens` and `cacheMissTokens` in `usage.recorded`.

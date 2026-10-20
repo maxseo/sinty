@@ -127,6 +127,11 @@ export interface MemoryProcessorDefinition {
   order?: number;
   onTurnStart?(turn: TurnInfo): Promise<RecallPlan | void>;
   afterRecall?(turn: TurnInfo, records: MemoryRecord[]): Promise<MemoryRecord[] | void>;
+  /**
+   * Runs once per turn on the blocks of the turn context (`memory.recalled`, `memory.updates`); the result is frozen
+   * in the journal (`context.turn`) and replayed on later steps and after a restart, so it never rewrites earlier
+   * prompt text. The session-level blocks (memory snapshot, summary) are not passed.
+   */
   beforeContext?(turn: TurnInfo, blocks: ContextBlock[]): Promise<ContextBlock[] | void>;
   /**
    * Runs from a durable queue after the turn completed, at most once per turnId (retried up to 3 times on failure,
