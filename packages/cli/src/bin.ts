@@ -28,6 +28,9 @@ Usage:
   sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]
                                    offline recall replay: hit rate on labeled queries, memory-block
                                    tokens and recall latency per arm (no chat model calls)
+  sinty memory reindex [--dry-run] [--batch 64] [--json]
+                                   embed facts that have no vector yet (models.routes.embed);
+                                   idempotent, safe to rerun after an interruption
 
 Global: --home <dir>, --mode strict, --verbose`;
 
@@ -47,6 +50,8 @@ const { values, positionals } = parseArgs({
     arms: { type: "string" },
     limit: { type: "string" },
     json: { type: "boolean" },
+    "dry-run": { type: "boolean" },
+    batch: { type: "string" },
   },
 });
 
@@ -340,9 +345,42 @@ main().then(
   },
 );
 
+async function memoryReindex(): Promise<number> {
+  const batch = values.batch ? Number(values.batch) : 64;
+  if (!Number.isInteger(batch) || batch < 1) {
+    console.error("--batch must be a positive integer");
+    return 2;
+  }
+  const sinty = new Sinty({ ...(values.home ? { home: values.home } : {}), log });
+  try {
+    const { failedPlugins } = await sinty.start({ background: false });
+    for (const f of failedPlugins) console.error(`plugin ${f.plugin} failed to start: ${f.error}`);
+    const tty = process.stderr.isTTY && !values.json;
+    const r = await sinty.memory.reindexVectors({
+      dryRun: values["dry-run"] === true,
+      batchSize: batch,
+      onProgress: ({ done, total }) => {
+        if (!values.json) process.stderr.write(tty ? `\rembedded ${done}/${total}` : `embedded ${done}/${total}\n`);
+      },
+    });
+    if (tty && r.embedded) process.stderr.write("\n");
+    if (values.json) console.log(JSON.stringify(r));
+    else if (r.dryRun) console.log(`${r.total} fact(s) have no vector; run without --dry-run to embed them`);
+    else console.log(r.total ? `embedded ${r.embedded} of ${r.total} fact(s)` : "every fact already has a vector");
+    return r.embedded < r.total && !r.dryRun ? 1 : 0;
+  } catch (e) {
+    const err = e as { message?: string; hint?: string };
+    console.error(`reindex failed: ${err.message ?? String(e)}${err.hint ? `\n${err.hint}` : ""}`);
+    return 1;
+  } finally {
+    await sinty.stop();
+  }
+}
+
 async function memoryCmd(args: string[]): Promise<number> {
+  if (args[0] === "reindex") return memoryReindex();
   if (args[0] !== "eval") {
-    console.error("usage: sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]");
+    console.error("usage: sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]\n       sinty memory reindex [--dry-run] [--batch 64] [--json]");
     return 2;
   }
   const labels = values.labels

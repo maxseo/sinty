@@ -204,3 +204,79 @@ test("router: stop() gives up waiting after the close timeout; the job stays pen
     cleanup();
   }
 });
+
+test("router: memory.write through the tool journals memory.written once per write", async () => {
+  const { home, cleanup } = tempHome();
+  const write = { name: "memory__write", args: { text: "Max deploys on Fridays.", tier: "log", scope: "agent", about: "work" } };
+  const script = { "remember": [{ toolCalls: [write] }, { text: "ok" }], "again": [{ toolCalls: [write] }, { text: "ok" }] };
+  const sinty = await boot(home, [], { config: { ...config(script, {}), plugins: { enabled: ["recording-provider"], config: {}, searchPaths: [FIXTURES] } }, plugins: [] });
+  try {
+    const s = sinty.agent.createSession();
+    sinty.agent.send(s.id, "remember");
+    await sinty.agent.idle();
+    sinty.agent.send(s.id, "again");
+    await sinty.agent.idle();
+    const written = sinty.journal.events(s.id).filter((e) => e.type === "memory.written").map((e) => e.data as { id: string; action: string; tier: string; scope: string; source: string; provider: string });
+    assert.equal(written.length, 2, "one event per tool write, no duplicates");
+    assert.deepEqual(written.map((w) => [w.action, w.tier, w.scope, w.source, w.provider]), [
+      ["inserted", "log", "agent", "agent", "builtin:sqlite"],
+      ["updated", "log", "agent", "agent", "builtin:sqlite"],
+    ]);
+    assert.equal(written[0]!.id, written[1]!.id);
+    const tool = sinty.journal.events(s.id).find((e) => e.type === "tool.call.completed")?.data as { result: { id: string } };
+    assert.equal(tool.result.id, written[0]!.id);
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+test("router: reindexVectors embeds facts that have no vector, in batches, idempotently", async () => {
+  const { home, cleanup } = tempHome();
+  const w = (text: string) => ({ name: "memory__write", args: { text, tier: "log", scope: "user", about: "work" } });
+  const script = {
+    seed: [{ toolCalls: [w("abab abab baba"), w("cdcd dcdc cdcd"), w("abab cdcd")] }, { text: "ok" }],
+    find: [{ toolCalls: [{ name: "memory__recall", args: { query: "efef fefe" } }] }, { text: "ok" }],
+  };
+  const plugins = { enabled: ["recording-provider"], config: {}, searchPaths: [FIXTURES] };
+  const base = { providers: { rec: { protocol: "rec", options: { script, dims: 4 } } }, plugins, memory: { contextTokens: 128000, dimensions: 4 } };
+  const noEmbed = { ...base, models: { default: "rec/main", fallback: [], routes: {}, catalog: [], maxOutputTokens: 1000 } };
+  const withEmbed = { ...base, models: { default: "rec/main", fallback: [], routes: { embed: "rec/emb" }, catalog: [], maxOutputTokens: 1000 } };
+  const embedCalls = (): number => lines(home, "recording-provider", "requests.jsonl").filter((r) => "embed" in r).length;
+  try {
+    const first = await boot(home, [], { config: noEmbed, plugins: [] });
+    try {
+      const s = first.agent.createSession();
+      first.agent.send(s.id, "seed");
+      await first.agent.idle();
+      assert.equal(first.memory.builtin.store.countMissingVectors(), 3, "written without an embed route");
+      await assert.rejects(() => first.memory.reindexVectors(), /models.routes.embed is not set/);
+    } finally {
+      await first.stop();
+    }
+    const second = await boot(home, [], { config: withEmbed, plugins: [] });
+    try {
+      assert.deepEqual(await second.memory.reindexVectors({ dryRun: true }), { total: 3, embedded: 0, dryRun: true });
+      assert.equal(embedCalls(), 0, "dry run calls no model");
+      const progress: string[] = [];
+      const r = await second.memory.reindexVectors({ batchSize: 2, onProgress: (p) => progress.push(`${p.done}/${p.total}`) });
+      assert.deepEqual(r, { total: 3, embedded: 3, dryRun: false });
+      assert.deepEqual(progress, ["2/3", "3/3"]);
+      assert.equal(embedCalls(), 2, "two batches");
+      assert.equal(second.memory.builtin.store.countMissingVectors(), 0);
+      assert.deepEqual(await second.memory.reindexVectors(), { total: 0, embedded: 0, dryRun: false }, "rerun is a no-op");
+      assert.equal(embedCalls(), 2);
+      // the backfilled vectors are used: no word overlap, found by vector
+      const s = second.agent.createSession();
+      second.agent.send(s.id, "find");
+      await second.agent.idle();
+      const found = second.journal.events(s.id).filter((e) => e.type === "tool.call.completed").map((e) => (e.data as { result: { text: string }[] }).result).at(-1)!;
+      assert.ok(found.length >= 1);
+      assert.equal(found[0]!.text, "abab abab baba");
+    } finally {
+      await second.stop();
+    }
+  } finally {
+    cleanup();
+  }
+});
