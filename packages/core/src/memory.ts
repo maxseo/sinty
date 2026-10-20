@@ -298,20 +298,66 @@ export class MemoryStore {
     );
   }
 
+  /**
+   * Full-text candidates, best first: facts with every word (AND), then facts with any word of 3+ letters (OR),
+   * then facts with a word that starts like one of them (OR over prefixes, so "памяти" finds "память").
+   * Each stage is ranked by FTS5 bm25; later stages only add ids the earlier ones did not return.
+   */
   private ftsIds(query: string): string[] {
-    const terms = query
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}_-]+/u)
-      .filter((t) => t.length > 1)
-      .slice(0, 12)
-      .map((t) => `"${t.replaceAll('"', "")}"`);
-    if (!terms.length) return [];
-    try {
-      const rows = this.db.prepare("SELECT fact_id FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT 50").all(terms.join(" AND ")) as { fact_id: string }[];
-      return rows.map((r) => r.fact_id);
-    } catch {
-      return [];
+    const words = ftsWords(query);
+    if (!words.length) return [];
+    const loose = words.filter((t) => [...t].length >= 3);
+    const stages = [words.map((t) => `"${t}"`).join(" AND ")];
+    if (loose.length) {
+      stages.push(loose.map((t) => `"${t}"`).join(" OR "));
+      stages.push([...new Set(loose.map(ftsStem))].map((t) => `"${t}"*`).join(" OR "));
     }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const stmt = this.db.prepare("SELECT fact_id FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT 50");
+    for (const q of stages) {
+      if (out.length >= 50) break;
+      let rows: { fact_id: string }[] = [];
+      try {
+        rows = stmt.all(q) as { fact_id: string }[];
+      } catch {
+        continue;
+      }
+      for (const r of rows) {
+        if (seen.has(r.fact_id)) continue;
+        seen.add(r.fact_id);
+        out.push(r.fact_id);
+      }
+    }
+    return out.slice(0, 50);
+  }
+
+  /** How many live facts have no vector yet. 0 when sqlite-vec is not loaded. */
+  countMissingVectors(): number {
+    if (!this.vec) return 0;
+    const row = this.db
+      .prepare("SELECT count(*) AS n FROM memory_facts WHERE (expires_at IS NULL OR expires_at > ?) AND id NOT IN (SELECT fact_id FROM facts_vec)")
+      .get(new Date().toISOString()) as { n: number };
+    return Number(row.n);
+  }
+
+  /** The oldest live facts without a vector. */
+  missingVectors(limit: number): { id: string; text: string }[] {
+    if (!this.vec) return [];
+    return rows<{ id: string; text: string }>(
+      this.db
+        .prepare("SELECT id, text FROM memory_facts WHERE (expires_at IS NULL OR expires_at > ?) AND id NOT IN (SELECT fact_id FROM facts_vec) ORDER BY created_at, id LIMIT ?")
+        .all(new Date().toISOString(), limit),
+    );
+  }
+
+  /** Stores the vector of an existing fact (replacing an old one). Returns false when the fact is gone. */
+  setVector(id: string, embedding: Float32Array): boolean {
+    if (!this.vec) return false;
+    if (embedding.length !== this.opts.dimensions) throw new MemoryError("embedding", `embedding length ${embedding.length} does not match ${this.opts.dimensions}`);
+    if (!this.db.prepare("SELECT 1 FROM memory_facts WHERE id = ?").get(id)) return false;
+    this.syncVec(id, embedding);
+    return true;
   }
 
   private vecIds(embedding?: Float32Array): string[] {
@@ -367,6 +413,25 @@ function openDatabase(file: string): { db: DatabaseSync; vec: boolean } {
 
 export function factHash(text: string): string {
   return createHash("sha256").update(text.trim().toLowerCase().replace(/\s+/g, " ")).digest("hex");
+}
+
+/** Lowercased query words for FTS5 (letters, digits, _ and -), at most 12, quotes removed. */
+export function ftsWords(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}_-]+/u)
+    .map((t) => t.replaceAll('"', ""))
+    .filter((t) => [...t].length > 1)
+    .slice(0, 12);
+}
+
+/**
+ * Crude language-neutral stem for prefix search: words longer than 5 letters lose up to their last 3 letters,
+ * keeping at least 4 ("памяти" → "памя", "deploying" → "deploy", "компакции" → "компак").
+ */
+export function ftsStem(word: string): string {
+  const chars = [...word];
+  return chars.length > 5 ? chars.slice(0, Math.max(4, chars.length - 3)).join("") : word;
 }
 
 export function estimateTokens(messages: ChatMessage[]): number {

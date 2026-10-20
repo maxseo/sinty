@@ -112,7 +112,29 @@ export class Journal {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS plugin_model_usage (
+        plugin TEXT NOT NULL,
+        day TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        PRIMARY KEY (plugin, day)
+      );
     `);
+  }
+
+  /** Tokens a plugin spent through ctx.models on one UTC day (YYYY-MM-DD). Survives restarts. */
+  pluginModelUsage(plugin: string, day: string): number {
+    const row = this.db.prepare("SELECT tokens FROM plugin_model_usage WHERE plugin = ? AND day = ?").get(plugin, day) as { tokens: number } | undefined;
+    return row?.tokens ?? 0;
+  }
+
+  /** Adds to a plugin's daily usage and drops rows older than 30 days. Returns the new total for that day. */
+  addPluginModelUsage(plugin: string, day: string, tokens: number): number {
+    this.db
+      .prepare("INSERT INTO plugin_model_usage (plugin, day, tokens) VALUES (?, ?, ?) ON CONFLICT(plugin, day) DO UPDATE SET tokens = tokens + excluded.tokens")
+      .run(plugin, day, Math.max(0, Math.round(tokens)));
+    const cutoff = new Date(Date.parse(`${day}T00:00:00Z`) - 30 * 86_400_000).toISOString().slice(0, 10);
+    this.db.prepare("DELETE FROM plugin_model_usage WHERE day < ?").run(cutoff);
+    return this.pluginModelUsage(plugin, day);
   }
 
   close(): void {

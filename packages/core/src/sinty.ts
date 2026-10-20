@@ -94,7 +94,14 @@ export class Sinty {
       agent: createAgentBridge(() => ({ agent: this.agent, journal: this.journal, bus: this.bus })),
       models: (plugin, allowed, op, req) => this.models.pluginCall(plugin, allowed, op, req),
     });
-    this.models = new ModelGateway({ config: this.config, secrets: this.secrets, host: this.host, record: (input) => this.agent.emit(input), log: this.log });
+    this.models = new ModelGateway({
+      config: this.config,
+      secrets: this.secrets,
+      host: this.host,
+      record: (input) => this.agent.emit(input),
+      log: this.log,
+      usage: { get: (plugin, day) => this.journal.pluginModelUsage(plugin, day), add: (plugin, day, tokens) => void this.journal.addPluginModelUsage(plugin, day, tokens) },
+    });
 
     this.patches = new PatchManager(this.paths, this.journal, this.host, {
       proposed: (p) => this.agent.emit({ sessionId: p.sessionId, type: "plugin.patch.proposed", actor: PLUGIN_ACTOR, data: { patchId: p.id, plugin: p.plugin, reason: p.reason, branch: `.staging/${p.id}` } }),

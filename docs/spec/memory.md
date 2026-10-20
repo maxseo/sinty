@@ -41,7 +41,7 @@ refuses to start such a plugin). Their inputs and outputs are unchanged by the r
 - `memory.write` → processors' `onWrite` (in order; `null` drops the write) → builtin store → mirrored to providers
   listed in `memory.writeTo`. A dropped write returns `{ action: "dropped", by: "<processor>" }`.
 - `memory.recall` → builtin store (FTS5 + sqlite-vec when an embed route is configured, merged by reciprocal rank
-  fusion with age decay) → plus every enabled plugin provider (or only those in `memory.providers`) → `afterRecall`.
+  fusion with age decay; FTS runs AND → OR → prefix-OR, see "Full-text recall") → plus every enabled plugin provider (or only those in `memory.providers`) → `afterRecall`.
   Plugin results come after builtin results and carry `provider` and `untrusted: true`.
 - `memory.forget` → builtin store and every provider in `memory.writeTo` that implements `forget`.
 
@@ -101,7 +101,9 @@ and journaled as `memory.written` (`by` = plugin name). A job whose plugin is no
 later start.
 
 Shutdown (`Sinty.stop()`, used by `sinty run`, `sinty serve` and tests) first waits up to `memory.hooks.closeTimeoutMs`
-(default: `afterTurnTimeoutMs`, at most 15 s) for queued jobs while plugins still run, then stops plugins. Jobs that do
+(default: `afterTurnTimeoutMs`, at most 15 s) for a queue drain that is already running (one a turn started),
+while plugins still run, then stops plugins. It does not start a drain for old pending rows, so one-shot commands
+such as `sinty memory eval` / `reindex` make no extraction calls on exit. Jobs that do
 not finish in time stay `pending`, are logged with a warning and resume on the next start; a result that arrives after
 shutdown began is discarded and the job runs again.
 
@@ -136,7 +138,8 @@ ctx.models.embed({ route: "embed", input: ["…"] })
 - The core resolves the provider and its secret; the plugin never sees API keys.
 - Usage: each call is journaled as `models.called` and, with a `sessionId`, as `usage.recorded` in that session.
 - Budget: `models.pluginTokensPerDay` (default 200 000) input+output tokens per plugin per UTC day; past it calls
-  fail with `models_budget`.
+  fail with `models_budget`. Usage is kept in `journal.db` (`plugin_model_usage(plugin, day, tokens)`, core-owned,
+  rows older than 30 days are dropped), so a restart does not reset it.
 - `embed` is implemented by provider plugins through `ProviderDefinition.embed`; `provider-openai-compat` calls
   `POST {baseUrl}/embeddings`.
 
@@ -145,7 +148,32 @@ ctx.models.embed({ route: "embed", input: ["…"] })
 When `models.routes.embed` is set, the router embeds the text on every builtin write and the query on every
 builtin recall, and the store fuses FTS5 and sqlite-vec results. The vector width must equal `memory.dimensions`;
 a mismatch or an embed failure degrades to FTS only (journaled once per process as `memory.degraded`). Facts written
-before the embed route existed have no vector; they are still found by FTS.
+before the embed route existed have no vector; they are still found by FTS, and `sinty memory reindex` embeds them:
+
+```
+sinty memory reindex [--dry-run] [--batch 64] [--json]
+```
+
+- Picks live (not expired) facts that have no row in `facts_vec`, oldest first, `--batch` texts per embed call
+  (1–512, default 64), through the same embed route (`models.routes.embed`, core `ModelGateway`).
+- Idempotent: a second run, or a run after an interruption, only sends what is still missing.
+- `--dry-run` counts and calls no model. Errors (no embed route, wrong width, provider failure) stop the run with
+  exit code 1; vectors stored before the error stay.
+- API: `MemoryRouter.reindexVectors({ dryRun, batchSize, signal, onProgress })` →
+  `{ total, embedded, dryRun }`; store helpers `countMissingVectors()`, `missingVectors(limit)`, `setVector(id, v)`.
+
+## Full-text recall
+
+`MemoryStore.recall` builds FTS5 candidates in three stages and keeps the first 50 distinct ids:
+
+1. **AND** — every query word (lowercased, 2+ letters, at most 12), ranked by bm25;
+2. **OR** — any word of 3+ letters, ranked by bm25 (facts with more and rarer words come first);
+3. **prefix OR** — the same words cut to a crude stem (`ftsStem`: words over 5 letters lose up to 3 trailing
+   letters, keeping at least 4) with `*`, so other inflections match ("память" finds "памяти").
+
+Later stages only add ids the earlier ones did not return, so a fact with every word always ranks above a partial
+match. The list is fused with vector hits (RRF) and decayed by age as before; a plain substring scan runs only
+when both are empty. Two-letter words are used only in the AND stage, to keep OR from matching filler words.
 
 ## Writing a memory plugin
 
@@ -198,7 +226,7 @@ Labels are JSON lines `{ "query": "…", "expect": ["substring", …] }`.
 
 | Event | Data |
 |---|---|
-| `memory.written` | `{ id, action: inserted\|updated\|dropped, tier, scope, source, provider, by? }` — non-tool writes (summary, processors) |
+| `memory.written` | `{ id, action: inserted\|updated\|dropped, tier, scope, source, provider, by? }` — every builtin write: the `memory.write` tool, summaries, processors (one event per write) |
 | `memory.recalled` | `{ queries, providers, records[], tokens, ms, arm? }` — automatic recall, once per turn |
 | `memory.compacted` | `{ coversUntil, summaryTokens, facts, by, ok, reason? }` |
 | `memory.degraded` | `{ provider, hook?, reason }` |

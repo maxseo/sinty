@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `sinty memory reindex [--dry-run] [--batch 64] [--json]`: embeds facts that have no vector yet through
+  `models.routes.embed`; batched, idempotent, with progress (`MemoryRouter.reindexVectors`).
 - Golden-prompt tests that pin what the model receives from memory (`packages/core/src/__tests__/golden`).
 - `memory.written` journal event for facts stored by compaction summaries.
 - Change journal in `docs/journal/` and this changelog.
@@ -36,6 +38,12 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- Builtin full-text recall falls back from AND to OR (bm25-ranked) and then to word-prefix OR, so partial and
+  inflected matches are found; full matches still rank first.
+- `memory.write` through the tool now journals `memory.written` (one event per write), like every other write.
+- The plugin token budget (`models.pluginTokensPerDay`) is stored per plugin and UTC day in `journal.db`
+  (`plugin_model_usage`), so restarts no longer reset it.
+- Shutdown waits only for an afterTurn drain that is already running; one-shot commands no longer start one.
 - Memory goes through a single `MemoryRouter` in the core with the SQLite store as the `builtin:sqlite` provider;
   prompts and memory tool results are unchanged (golden tests).
 - The memory profile and recent-journal blocks only show facts the speaking persona and chat may see (user-wide,
@@ -58,3 +66,5 @@ All notable changes to this project are documented here. The format follows
 - `sinty run` (and any `Sinty.stop()`) no longer loses afterTurn memory jobs: shutdown waits up to
   `memory.hooks.closeTimeoutMs` (default 15 s) for the queue while plugins still run; unfinished jobs stay `pending`
   with a warning and resume on the next start.
+- Windows: golden prompt tests normalize path separators; `shell.ts` finds the tracked
+  `packages/core/sandbox/ShellBox.exe` in a source checkout, so the shell sandbox works in a fresh clone.

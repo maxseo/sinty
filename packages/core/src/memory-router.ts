@@ -198,8 +198,9 @@ export class MemoryRouter {
    * Returns how many jobs of running processors are still pending; those resume on the next start.
    */
   async drainBeforeClose(timeoutMs: number = this.settings.hooks.closeTimeoutMs): Promise<number> {
-    if (this.stopped || !this.processors("afterTurn").length) return 0;
-    this.kick();
+    // Wait only for work this process started (a turn's afterTurn kicks the queue). Old pending rows are not
+    // picked up here, so one-shot commands (eval, reindex) do not start extraction calls on their way out.
+    if (this.stopped || !this.draining) return 0;
     let timer: NodeJS.Timeout | undefined;
     const timedOut = await Promise.race([
       this.idle().then(() => false),
@@ -441,7 +442,7 @@ export class MemoryRouter {
         agentId: ctx.agentId,
         ...(a.scope === "chat" ? { chatId: ctx.sessionId } : {}),
       };
-      const r = await this.write(w, ctx.sessionId, { turn, journal: false });
+      const r = await this.write(w, ctx.sessionId, { turn, journal: true });
       return r.action === "dropped" ? { id: "", action: "dropped", by: r.by } : { id: r.id, action: r.action };
     }
     if (name === "memory.forget") {
@@ -639,6 +640,37 @@ export class MemoryRouter {
         }
       }
     }
+  }
+
+  /**
+   * Computes embeddings for facts that have no vector yet (`sinty memory reindex`). Batched and idempotent: only
+   * facts missing in facts_vec are sent, so an interrupted run continues where it stopped. Uses the core embed route
+   * (models.routes.embed through the ModelGateway); errors are thrown, not degraded, so the command can report them.
+   */
+  async reindexVectors(opts: { dryRun?: boolean; batchSize?: number; signal?: AbortSignal; onProgress?: (p: { done: number; total: number }) => void } = {}): Promise<{ total: number; embedded: number; dryRun: boolean }> {
+    const store = this.builtin.store;
+    const dryRun = opts.dryRun === true;
+    if (!store.vec) throw new MemoryError("vec_unavailable", "sqlite-vec is not loaded, so vectors cannot be stored", "Check that the sqlite-vec package is installed for this platform.");
+    const total = store.countMissingVectors();
+    if (dryRun || total === 0) return { total, embedded: 0, dryRun };
+    const embedder = this.d.embedder?.();
+    if (!embedder) throw new MemoryError("embed_route", "models.routes.embed is not set", "Set models.routes.embed in config.yaml, e.g. openai/text-embedding-3-small.");
+    const size = Math.min(Math.max(Math.floor(opts.batchSize ?? 64), 1), 512);
+    const dims = this.d.config.memory.dimensions;
+    let embedded = 0;
+    while (embedded < total) {
+      if (opts.signal?.aborted) break;
+      const batch = store.missingVectors(size);
+      if (!batch.length) break;
+      const vectors = await embedder.embed(batch.map((b) => b.text), opts.signal);
+      if (vectors.length !== batch.length) throw new MemoryError("embed_count", `embed route returned ${vectors.length} vectors for ${batch.length} facts`);
+      const bad = vectors.find((v) => v.length !== dims);
+      if (bad) throw new MemoryError("embed_width", `embed route returned width ${bad.length}, memory.dimensions is ${dims}`, "memory.dimensions is fixed for the life of memory.db; use an embedding model with that width.");
+      batch.forEach((b, i) => store.setVector(b.id, Float32Array.from(vectors[i]!)));
+      embedded += batch.length;
+      opts.onProgress?.({ done: embedded, total });
+    }
+    return { total, embedded, dryRun };
   }
 
   /** Job rows, for tests and `sinty memory` diagnostics. */

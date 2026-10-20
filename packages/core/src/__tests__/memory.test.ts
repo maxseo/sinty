@@ -83,3 +83,35 @@ test("memory: profile and recent journal only show facts this persona and chat m
   assert.equal(store.recall({ query: "build", chatId: "x", agentId: "coder" }).length, 1);
   store.close();
 });
+
+test("memory: recall falls back from AND to OR and to word prefixes, AND hits first", () => {
+  const store = open();
+  const pr = store.write({ text: "20 октября открыт PR #1 по памяти.", tier: "log", scope: "user", about: "work", source: "chat" });
+  const both = store.write({ text: "Deploy goes through staging first.", tier: "log", scope: "user", about: "work", source: "chat" });
+  const one = store.write({ text: "The staging server was down on Monday.", tier: "log", scope: "user", about: "work", source: "chat" });
+  store.write({ text: "Compaction folds old turns into a summary.", tier: "note", scope: "user", about: "work", source: "chat" });
+  const ids = (query: string): string[] => store.recall({ query, chatId: "ses_1" }).map((f) => f.id);
+  // every word: AND still wins and comes first
+  assert.deepEqual(ids("deploy staging")[0], both.id);
+  assert.ok(ids("deploy staging").includes(one.id), "OR adds the fact that has only one of the words");
+  // a natural question: no fact has every word, OR finds the one with "открыт" and "памяти"
+  assert.deepEqual(ids("какой PR открыт по памяти"), [pr.id]);
+  // another inflection of the same word: prefix stage ("память" → "памя*")
+  assert.deepEqual(ids("память"), [pr.id]);
+  assert.deepEqual(ids("deploying"), [both.id]);
+  // two-letter words alone do not drag in OR noise, and unrelated words find nothing
+  assert.deepEqual(ids("по"), [pr.id], "AND stage still matches short words");
+  assert.deepEqual(ids("кошка собака"), []);
+});
+
+test("memory: vector backfill helpers list only live facts without a vector", () => {
+  const store = open();
+  const a = store.write({ text: "alpha fact", tier: "log", scope: "user", about: "work", source: "chat" });
+  store.write({ text: "beta fact", tier: "log", scope: "user", about: "work", source: "chat", embedding: new Float32Array([0, 1, 0, 0]) });
+  assert.equal(store.countMissingVectors(), 1);
+  assert.deepEqual(store.missingVectors(10).map((r) => r.id), [a.id]);
+  assert.equal(store.setVector(a.id, new Float32Array([1, 0, 0, 0])), true);
+  assert.equal(store.countMissingVectors(), 0);
+  assert.equal(store.setVector("missing", new Float32Array([1, 0, 0, 0])), false);
+  assert.throws(() => store.setVector(a.id, new Float32Array([1, 0])), /does not match 4/);
+});

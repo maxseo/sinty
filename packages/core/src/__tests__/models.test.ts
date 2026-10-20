@@ -121,3 +121,32 @@ test("provider-openai-compat: embed() posts to /embeddings and keeps input order
     cleanup();
   }
 });
+
+test("ctx.models: the plugin token budget survives a restart", async () => {
+  const { home, cleanup } = tempHome();
+  const ask = async (sinty: Sinty): Promise<unknown> => {
+    const s = sinty.agent.createSession();
+    sinty.agent.send(s.id, "ask");
+    await sinty.agent.idle();
+    return results(sinty, s.id)[0];
+  };
+  try {
+    // each "ask" costs 15 tokens; the limit is 40
+    const first = await boot(home, [], { config: config({ pluginTokensPerDay: 40 }), plugins: ["recording-provider", "models-user"] });
+    try {
+      for (let i = 0; i < 2; i++) assert.equal((await ask(first) as { result: { text: string } }).result.text, "cheap answer");
+      assert.equal(first.journal.pluginModelUsage("models-user", new Date().toISOString().slice(0, 10)), 30);
+    } finally {
+      await first.stop();
+    }
+    const second = await boot(home, [], { config: config({ pluginTokensPerDay: 40 }), plugins: ["recording-provider", "models-user"] });
+    try {
+      assert.equal((await ask(second) as { result: { text: string } }).result.text, "cheap answer", "30 < 40: allowed");
+      assert.equal((await ask(second) as { code: string }).code, "models_budget", "45 >= 40 after the restart");
+    } finally {
+      await second.stop();
+    }
+  } finally {
+    cleanup();
+  }
+});
