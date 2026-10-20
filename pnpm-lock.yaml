@@ -88,6 +88,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/context-inspector:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/delegate:
     dependencies:
       '@sinty/sdk':

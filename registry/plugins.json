@@ -26,6 +26,14 @@
       ]
     },
     {
+      "name": "context-inspector",
+      "version": "0.1.0",
+      "description": "Web UI tab that shows what went into the prompt on every model step: system prompt, skills, memory, recall, hooks, plugin contexts, tokens",
+      "kinds": [
+        "ui"
+      ]
+    },
+    {
       "name": "delegate",
       "version": "0.1.0",
       "description": "Run one task in Claude Code, Codex or Grok CLI and return only the final text",

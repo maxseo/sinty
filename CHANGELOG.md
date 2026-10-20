@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Context snapshots: plugins with `permissions.context: ["inspect"]` that the human lists in `plugins.inspect` get
+  `ctx.onContextSnapshot(snapshot)` for every model step. A snapshot holds the exact messages sent to the provider,
+  labelled by part (system, skills, memory, summary, recall, processor, plugin, dialogue), with token estimates,
+  profile facts, recall records, memory hook traces, context-plugin diffs and tool schemas. Secrets are redacted.
+  Off by default, and nothing is built without an inspector (`docs/spec/context-inspect.md`).
+- Manifest `ui.tabs`: plugins can add Web UI tabs. They run in a sandboxed iframe (opaque origin) and reach their
+  own plugin's GET routes only through the `tab/1` postMessage bridge. `/v1/plugins` lists `tabs` and `inspector`.
+- `plugins/context-inspector` (disabled by default): a **Контекст** tab with per-step prompt parts, tokens, memory
+  facts, recall, hooks and plugin context diffs; snapshots are kept in memory only.
 - Golden-prompt tests that pin what the model receives from memory (`packages/core/src/__tests__/golden`).
 - `memory.written` journal event for facts stored by compaction summaries.
 - Change journal in `docs/journal/` and this changelog.
