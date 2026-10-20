@@ -2,6 +2,8 @@
  * The tab page. The Web UI loads it in `<iframe sandbox="allow-scripts">` (opaque origin): it has no token and, with
  * this CSP, no network at all. Data comes only from the UI's postMessage bridge ({ sinty: "tab/1", op: "get" }),
  * which forwards GETs to this plugin's own routes. All data is rendered with textContent, never as HTML.
+ * The tab sits in an open chat's header (manifest placement "session"): the bridge sends the chat's id in `init` and
+ * `{ op: "session" }` on every switch, and the page only ever shows that one chat.
  */
 export const TAB_CSP = ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", "img-src data:", "connect-src 'none'", "form-action 'none'", "base-uri 'none'"].join("; ");
 
@@ -19,7 +21,10 @@ body { margin:0; font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; c
 .top { display:flex; gap:12px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
 .top h1 { font-size:14px; margin:0 8px 0 0; }
 select, button { font:inherit; color:inherit; background:var(--soft); border:1px solid var(--line); border-radius:6px; padding:3px 8px; }
-.wrap { display:grid; grid-template-columns:240px 1fr; min-height:calc(100vh - 46px); }
+.wrap { display:grid; grid-template-columns:220px 1fr; min-height:calc(100vh - 46px); }
+.wrap.none { display:block; }
+.wrap.none .steps { display:none; }
+@media (max-width: 720px) { .wrap { grid-template-columns:1fr; } .steps { max-height:180px; border-right:0; border-bottom:1px solid var(--line); } }
 .steps { border-right:1px solid var(--line); overflow:auto; max-height:calc(100vh - 46px); }
 .turn { padding:6px 12px 2px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
 .step { display:block; width:100%; text-align:left; border:0; border-radius:0; background:none; padding:6px 12px; cursor:pointer; }
@@ -46,21 +51,22 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
 .kind { display:inline-block; padding:0 6px; border-radius:4px; font-size:11px; color:#fff; }
 .muted { color:var(--muted); }
 .warn { color:var(--warn); }
-.empty { padding:40px; color:var(--muted); }
+.empty { padding:40px; color:var(--muted); max-width:560px; }
+.empty b { display:block; color:var(--fg); font-size:14px; margin-bottom:6px; }
 .delta { font-size:11px; margin-left:4px; }
 .add { color:#1a7f37; } .rem { color:#cf222e; }
 </style>
 </head>
 <body>
 <div class="top">
-  <h1>Контекст</h1>
-  <select id="session" title="Сессия"></select>
-  <label class="muted"><input type="checkbox" id="live" checked> обновлять</label>
+  <h1>Контекст чата</h1>
   <span id="status" class="muted"></span>
+  <span style="flex:1"></span>
+  <label class="muted" title="Каждые 3 с; новый шаг открывается сам, если выбран последний"><input type="checkbox" id="live" checked> обновлять</label>
 </div>
-<div class="wrap">
+<div class="wrap none" id="wrap">
   <div class="steps" id="steps"></div>
-  <div class="main" id="main"><div class="empty">Нет снимков. Отправьте сообщение агенту: снимок появляется на каждом шаге модели.</div></div>
+  <div class="main" id="main"></div>
 </div>
 <script>
 (function () {
@@ -68,7 +74,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
   var PROTO = "tab/1";
   var COLORS = { system: "#5b6abf", skills: "#7c8b9a", memory: "#2e9d6a", summary: "#c08a1d", recall: "#1f8fb3", processor: "#b04fbf", plugin: "#d0573a", dialogue: "#8a8f98" };
   var NAMES = { system: "системный", skills: "навыки", memory: "память", summary: "сводка", recall: "recall", processor: "процессор", plugin: "плагин", dialogue: "диалог" };
-  var seq = 0, pending = {}, state = { session: "", step: "", list: [], snap: null, open: {} };
+  var seq = 0, pending = {}, state = { session: "", step: "", list: [], snap: null, open: {} }, epoch = 0, inited = false;
 
   function get(path) {
     return new Promise(function (resolve, reject) {
@@ -82,7 +88,8 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
     if (e.source !== parent) return;
     var m = e.data;
     if (!m || m.sinty !== PROTO) return;
-    if (m.op === "init") { document.documentElement.dataset.theme = m.theme === "dark" ? "dark" : "light"; refresh(); return; }
+    if (m.op === "init") { inited = true; document.documentElement.dataset.theme = m.theme === "dark" ? "dark" : "light"; setSession(m.sessionId); return; }
+    if (m.op === "session") { setSession(m.sessionId); return; }
     var p = pending[m.id];
     if (!p) return;
     delete pending[m.id];
@@ -100,29 +107,45 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
   function badge(kind) { return el("span", { class: "kind", style: "background:" + (COLORS[kind] || "#888"), text: NAMES[kind] || kind }); }
   function status(t) { document.getElementById("status").textContent = t; }
 
+  function setSession(id) {
+    epoch++;
+    state = { session: typeof id === "string" ? id : "", step: "", list: [], snap: null, open: {} };
+    document.getElementById("steps").textContent = "";
+    if (!state.session) { empty("Чат не открыт", "Вкладка показывает контекст открытого чата. Откройте чат слева."); status(""); return; }
+    empty("Загрузка…", "");
+    refresh();
+  }
+
+  function empty(title, text) {
+    document.getElementById("wrap").className = "wrap none";
+    var main = document.getElementById("main");
+    main.textContent = "";
+    main.appendChild(el("div", { class: "empty" }, [el("b", { text: title }), text]));
+  }
+
   function refresh() {
-    return get("/sessions").then(function (r) {
-      var sel = document.getElementById("session");
-      var sessions = r.sessions || [];
-      if (!state.session && sessions.length) state.session = sessions[0].sessionId;
-      sel.textContent = "";
-      sessions.forEach(function (s) {
-        var o = el("option", { value: s.sessionId, text: s.sessionId + " · " + s.steps + " шаг. · " + time(s.lastAt) });
-        if (s.sessionId === state.session) o.selected = true;
-        sel.appendChild(o);
-      });
-      if (!state.session) { status("снимков нет"); return; }
-      return get("/snapshots?session=" + encodeURIComponent(state.session)).then(function (l) {
-        var list = l.snapshots || [];
-        var newest = list.length ? list[list.length - 1].id : "";
-        var follow = !state.step || (state.list.length && state.step === state.list[state.list.length - 1].id);
-        state.list = list;
-        if (follow && newest) state.step = newest;
-        drawSteps();
-        status(list.length + " шаг(ов)");
-        if (state.step && (!state.snap || state.snap.id !== state.step)) return open(state.step);
-      });
-    }).catch(function (e) { status("ошибка: " + e.message); });
+    if (!state.session) return Promise.resolve();
+    var my = epoch;
+    return get("/snapshots?session=" + encodeURIComponent(state.session)).then(function (l) {
+      if (my !== epoch) return;
+      var list = l.snapshots || [];
+      if (!list.length) {
+        state.list = []; state.step = ""; state.snap = null;
+        document.getElementById("steps").textContent = "";
+        status("снимков нет");
+        empty("Для этого чата снимков пока нет", "Снимки появляются начиная со следующего сообщения: на каждом шаге модели плагин запоминает, что ушло в промпт. Хранятся только в памяти, с момента запуска Sinty, поэтому у старых сообщений и после перезапуска их нет.");
+        return;
+      }
+      var newest = list[list.length - 1].id;
+      var follow = !state.step || !list.some(function (s) { return s.id === state.step; }) || (state.list.length && state.step === state.list[state.list.length - 1].id);
+      state.list = list;
+      if (follow) state.step = newest;
+      document.getElementById("wrap").className = "wrap";
+      drawSteps();
+      var turns = {}; list.forEach(function (s) { turns[s.turnId] = 1; });
+      status(Object.keys(turns).length + " ход(ов) · " + list.length + " шаг(ов)");
+      if (!state.snap || state.snap.id !== state.step) return open(state.step);
+    }).catch(function (e) { if (my === epoch) status("ошибка: " + e.message); });
   }
 
   function drawSteps() {
@@ -143,7 +166,12 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
   }
 
   function open(id) {
-    return get("/snapshots/" + encodeURIComponent(id)).then(function (snap) { state.snap = snap; draw(snap); });
+    var my = epoch;
+    return get("/snapshots/" + encodeURIComponent(id)).then(function (snap) {
+      if (my !== epoch || state.step !== id) return;
+      state.snap = snap;
+      draw(snap);
+    }).catch(function (e) { if (my === epoch) status("ошибка: " + e.message); });
   }
 
   function table(head, rows) {
@@ -230,8 +258,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
   }
   function card(v, label) { return el("div", { class: "card" }, [el("b", { text: v }), el("span", { text: label })]); }
 
-  document.getElementById("session").addEventListener("change", function (e) { state.session = e.target.value; state.step = ""; state.list = []; state.snap = null; refresh(); });
-  setInterval(function () { if (document.getElementById("live").checked && !document.hidden) refresh(); }, 3000);
+  setInterval(function () { if (inited && document.getElementById("live").checked && !document.hidden) refresh(); }, 3000);
   parent.postMessage({ sinty: PROTO, op: "ready" }, "*");
 })();
 </script>

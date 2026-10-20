@@ -34,7 +34,15 @@ export interface UiTab {
   title: string;
   /** Plugin HTTP route relative to `/p/<plugin>`, e.g. "/tab". It must be public (the iframe sends no token) and serve only static HTML. */
   path: string;
+  /**
+   * Where the Web UI shows the tab. `sidebar` (default): a page of its own in the left navigation.
+   * `session`: a view toggle in the header of an open chat, next to "Чат" and "Журнал"; the bridge tells the page
+   * which session is open (`init.sessionId`, then `{ op: "session" }` when the user switches chats).
+   */
+  placement?: UiTabPlacement;
 }
+
+export type UiTabPlacement = "sidebar" | "session";
 
 export interface ManifestTool {
   name: string;

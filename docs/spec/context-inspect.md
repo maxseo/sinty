@@ -114,19 +114,30 @@ This is best effort. Treat snapshots as private data.
 ## Plugin UI tabs (`ui.tabs`)
 
 ```json
-"ui": { "tabs": [{ "id": "context", "title": "Контекст", "path": "/tab" }] }
+"ui": { "tabs": [{ "id": "context", "title": "Контекст", "path": "/tab", "placement": "session" }] }
 ```
 
-Each tab has three fields:
+Each tab has these fields:
 - `id`: `[a-z][a-z0-9-]{0,31}`, unique within the plugin;
 - `title`: 1 to 40 characters;
-- `path`: a route of the plugin relative to `/p/<plugin>`.
+- `path`: a route of the plugin relative to `/p/<plugin>`;
+- `placement` (optional): `"sidebar"` (default) or `"session"`. Any other value fails manifest validation.
 
 A plugin can declare at most 8 tabs. The path may not contain a query, `.` or `..` segments, or a full URL. `ui`
 needs `static`, `tabs`, or both. `static` keeps its old meaning.
 
-`GET /v1/plugins` lists `tabs: [{ id, title, src: "/p/<plugin><path>" }]` for running plugins. The Web UI adds each
-tab to the left navigation at `#/t/<plugin>/<tab>`.
+`GET /v1/plugins` lists `tabs: [{ id, title, src: "/p/<plugin><path>", placement }]` for running plugins;
+`placement` is always filled in (`"sidebar"` when the manifest omits it). Where the Web UI shows a tab depends on it:
+
+| `placement` | Where | Route | Session |
+|---|---|---|---|
+| `sidebar` | its own page in the left navigation | `#/t/<plugin>/<tab>` | none |
+| `session` | a view toggle in the header of an open chat, after **Чат** and **Журнал**; the iframe fills the area between the header and the composer, so the user can keep writing | the chat's own `#/s/<id>` | the open chat's id, via the bridge |
+
+A session tab is not in the left navigation and has no `#/t/…` route. When the user picks a plugin view, the UI
+remembers it (`localStorage["sinty.chatView"] = "tab:<plugin>/<id>"`) and opens the same view in the next chat, so you
+can walk through chats and look at each one's context. Picking **Чат** or **Журнал** clears it. **Журнал** itself is
+not remembered, as before.
 
 ### Isolation
 
@@ -146,7 +157,8 @@ A headless browser check confirmed this: from inside the tab, `localStorage` and
 | Direction | Message |
 |---|---|
 | tab → UI | `{ sinty: "tab/1", op: "ready" }` |
-| UI → tab | `{ sinty: "tab/1", op: "init", plugin, tab, theme: "light" \| "dark" }` |
+| UI → tab | `{ sinty: "tab/1", op: "init", plugin, tab, theme: "light" \| "dark", sessionId? }`; `sessionId` is set for a `session` tab |
+| UI → tab | `{ sinty: "tab/1", op: "session", sessionId? }`: the open chat changed (no `sessionId`: no chat open). Sent only after `init` |
 | tab → UI | `{ sinty: "tab/1", id: <number>, op: "get", path: "/snapshots?session=…" }` |
 | UI → tab | `{ sinty: "tab/1", id, ok: true, data }` or `{ sinty: "tab/1", id, ok: false, error: { code, message } }` |
 
@@ -161,6 +173,12 @@ must be JSON and at most 16 MB. At most 8 requests can be in flight at once.
 The tab can reach only its own plugin's routes, never `/v1`. A plugin's data routes stay non-public and need the
 token.
 
+The session id the bridge hands to a `session` tab is not a secret and grants nothing. The tab still reaches only its
+own plugin's routes, and what those return is up to the plugin. `context-inspector` passes it as
+`/snapshots?session=<id>`. Today the Web UI remounts the chat view on every chat switch, so the frame reloads and
+gets a fresh `init`. `op: "session"` is there so a host that keeps the frame alive can switch it without a reload, and
+tabs must handle both.
+
 ### What a tab can still do
 
 The tab's script is the plugin's code. It can navigate its own frame: the sandbox has no `allow-top-navigation`,
@@ -171,7 +189,7 @@ from the bridge only what its own routes return, so it holds no more data than i
 ## Compatibility
 
 - These are additions only. `ctx.onContextSnapshot` is a new method, and `permissions.context` and `ui.tabs` are new
-  optional fields.
+  optional fields. `ui.tabs[].placement` is optional, and a tab without it stays in the sidebar.
 - `ui.static` became optional, but only when `tabs` is given.
 - `plugins.inspect` is optional.
 - Existing plugins, manifests and configs are unchanged.

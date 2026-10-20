@@ -47,7 +47,7 @@ Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-mani
 | `permissions.models` | model routes the plugin may call through `ctx.models` (`default`, `cheap`, `embed`, a `models.routes` key, or `*`) |
 | `permissions.context` | `["inspect"]`: receive a context snapshot of every model step through `ctx.onContextSnapshot`; also needs the plugin in config `plugins.inspect` (see `docs/spec/context-inspect.md`) |
 | `ui.static` | folder of static files served at `/ui/<name>/`, **only** when `editable` is `false` |
-| `ui.tabs` | up to 8 Web UI tabs `{ id, title, path }`; `path` is a public GET route of the plugin shown in a sandboxed iframe; data only through the UI's `tab/1` postMessage bridge to the plugin's own routes (see `docs/spec/context-inspect.md`). `ui` needs `static`, `tabs` or both |
+| `ui.tabs` | up to 8 Web UI tabs `{ id, title, path, placement? }`; `placement` is `sidebar` (default: a page in the left navigation) or `session` (a view toggle in an open chat's header next to Чат/Журнал, told the chat's `sessionId`); `path` is a public GET route of the plugin shown in a sandboxed iframe; data only through the UI's `tab/1` postMessage bridge to the plugin's own routes (see `docs/spec/context-inspect.md`). `ui` needs `static`, `tabs` or both |
 | `tools[].sideEffects` | `none`, `read`, `write`, `external`; drives default policy and resume behaviour |
 | `tools[].idempotent` | safe to repeat with the same arguments |
 | `tools[].recoverable` | plugin implements `recover(idempotencyKey)` |

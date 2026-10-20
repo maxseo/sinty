@@ -32,9 +32,10 @@ test("context-inspector plugin: tab listed by /v1/plugins, page public with a no
     sinty.agent.send(s.id, "hello inspector");
     await sinty.agent.idle();
 
-    const { plugins } = (await (await app.request("/v1/plugins", { headers: auth })).json()) as { plugins: { name: string; tabs: { id: string; title: string; src: string }[]; inspector: boolean }[] };
+    const { plugins } = (await (await app.request("/v1/plugins", { headers: auth })).json()) as { plugins: { name: string; tabs: { id: string; title: string; src: string; placement: string }[]; inspector: boolean }[] };
     const ci = plugins.find((p) => p.name === "context-inspector")!;
-    assert.deepEqual(ci.tabs, [{ id: "context", title: "Контекст", src: "/p/context-inspector/tab" }]);
+    // placement "session": the Web UI shows it in the chat header, not in the sidebar.
+    assert.deepEqual(ci.tabs, [{ id: "context", title: "Контекст", src: "/p/context-inspector/tab", placement: "session" }]);
     assert.equal(ci.inspector, true);
     assert.deepEqual(plugins.find((p) => p.name === "recording-provider")!.tabs, []);
 

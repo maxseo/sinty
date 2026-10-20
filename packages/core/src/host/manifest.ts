@@ -14,6 +14,7 @@ const uiTabSchema = z
       .max(200)
       .regex(/^\/[A-Za-z0-9_\-./]*$/, "path must be a route of the plugin, starting with /")
       .refine((p) => !p.split("/").some((seg) => seg === ".." || seg === "."), "path must not contain . or .. segments"),
+    placement: z.enum(["sidebar", "session"]).optional(),
   })
   .strict();
 

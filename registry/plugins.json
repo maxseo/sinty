@@ -28,7 +28,7 @@
     {
       "name": "context-inspector",
       "version": "0.1.0",
-      "description": "Web UI tab that shows what went into the prompt on every model step: system prompt, skills, memory, recall, hooks, plugin contexts, tokens",
+      "description": "Chat view (Контекст, next to Чат/Журнал) that shows what went into the prompt on every model step of the open chat: system prompt, skills, memory, recall, hooks, plugin contexts, tokens",
       "kinds": [
         "ui"
       ]

@@ -82,4 +82,7 @@ test("tab page: no network in its CSP, data only through the tab/1 bridge, rende
   assert.match(TAB_HTML, /parent\.postMessage\(\{ sinty: PROTO, id: id, op: "get", path: path \}, "\*"\)/);
   assert.match(TAB_HTML, /if \(e\.source !== parent\) return;/);
   assert.doesNotMatch(TAB_HTML, /innerHTML|fetch\(|XMLHttpRequest|eval\(/);
+  // Session tab: no session picker of its own; the chat comes from the bridge.
+  assert.doesNotMatch(TAB_HTML, /id="session"/);
+  assert.match(TAB_HTML, /m\.op === "session"/);
 });

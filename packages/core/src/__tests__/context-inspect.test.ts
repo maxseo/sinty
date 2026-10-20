@@ -168,6 +168,9 @@ test("manifest: ui.tabs and permissions.context are validated", () => {
   const base = { name: "tabby", version: "1.0.0", description: "d", kinds: ["ui"], runtime: "node", entry: "i.js", permissions: {} };
   const ok = parseManifest({ ...base, permissions: { context: ["inspect"] }, ui: { tabs: [{ id: "main", title: "Main", path: "/tab" }, { id: "two", title: "Two", path: "/pages/two.html" }] } });
   assert.equal(ok.ui?.tabs?.length, 2);
+  assert.equal(ok.ui?.tabs?.[0]?.placement, undefined, "placement is optional (sidebar)");
+  const placed = parseManifest({ ...base, ui: { tabs: [{ id: "a", title: "A", path: "/a", placement: "session" }, { id: "b", title: "B", path: "/b", placement: "sidebar" }] } });
+  assert.deepEqual(placed.ui?.tabs?.map((t) => t.placement), ["session", "sidebar"]);
   assert.equal(parseManifest({ ...base, ui: { static: "public" } }).ui?.static, "public");
   const bad: unknown[] = [
     { ui: {} },
@@ -181,6 +184,9 @@ test("manifest: ui.tabs and permissions.context are validated", () => {
     { ui: { tabs: [{ id: "a", title: "", path: "/tab" }] } },
     { ui: { tabs: [{ id: "a", title: "x", path: "/tab", extra: 1 }] } },
     { ui: { tabs: [{ id: "a", title: "x", path: "/a" }, { id: "a", title: "y", path: "/b" }] } },
+    { ui: { tabs: [{ id: "a", title: "x", path: "/a", placement: "header" }] } },
+    { ui: { tabs: [{ id: "a", title: "x", path: "/a", placement: "" }] } },
+    { ui: { tabs: [{ id: "a", title: "x", path: "/a", placement: 1 }] } },
     { permissions: { context: ["write"] } },
   ];
   for (const b of bad) assert.throws(() => parseManifest({ ...base, ...(b as object) }), Error, JSON.stringify(b));

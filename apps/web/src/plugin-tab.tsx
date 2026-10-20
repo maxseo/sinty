@@ -8,7 +8,12 @@ export interface PluginTabInfo {
   title: string;
   /** `/p/<plugin><path>`: a public route of the plugin that serves the static page. */
   src: string;
+  /** `sidebar`: own page in the left nav. `session`: a view toggle in the open chat's header. */
+  placement: "sidebar" | "session";
 }
+
+/** Key of a session tab among the chat views ("chat", "journal", "tab:<plugin>/<id>"). */
+export const tabViewKey = (t: Pick<PluginTabInfo, "plugin" | "id">): string => `tab:${t.plugin}/${t.id}`;
 
 const PROTO = "tab/1";
 const MAX_BYTES = 16 * 1024 * 1024;
@@ -19,6 +24,7 @@ const MAX_IN_FLIGHT = 8;
  * localStorage, call the API, or touch this page. They ask for data with postMessage
  * `{ sinty: "tab/1", id, op: "get", path }`; the bridge only forwards GET requests to the same plugin's own routes
  * (`/p/<plugin><path>`), adds the token, and returns JSON. Nothing else of the API is reachable from a tab.
+ * A session tab is also told which chat is open: `init.sessionId`, then `{ op: "session", sessionId }` on every switch.
  */
 export function safeTabPath(path: unknown): string | undefined {
   if (typeof path !== "string" || path.length > 2000 || !path.startsWith("/") || path.startsWith("//")) return undefined;
@@ -34,9 +40,11 @@ export function safeTabPath(path: unknown): string | undefined {
   return path;
 }
 
-export function PluginTab({ tab }: { tab: PluginTabInfo }) {
+export function PluginTab({ tab, sessionId }: { tab: PluginTabInfo; sessionId?: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [error, setError] = useState("");
+  const session = useRef(sessionId);
+  const ready = useRef(false);
 
   useEffect(() => {
     let inFlight = 0;
@@ -47,7 +55,8 @@ export function PluginTab({ tab }: { tab: PluginTabInfo }) {
       const m = e.data as { sinty?: string; id?: unknown; op?: string; path?: unknown } | null;
       if (!m || m.sinty !== PROTO) return;
       if (m.op === "ready") {
-        reply({ op: "init", plugin: tab.plugin, tab: tab.id, theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light" });
+        ready.current = true;
+        reply({ op: "init", plugin: tab.plugin, tab: tab.id, theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", ...(session.current ? { sessionId: session.current } : {}) });
         return;
       }
       if (m.op !== "get" || typeof m.id !== "number") return;
@@ -78,6 +87,13 @@ export function PluginTab({ tab }: { tab: PluginTabInfo }) {
     addEventListener("message", onMessage);
     return () => removeEventListener("message", onMessage);
   }, [tab.plugin, tab.id]);
+
+  // The chat switched: tell the page instead of reloading it.
+  useEffect(() => {
+    if (session.current === sessionId) return;
+    session.current = sessionId;
+    if (ready.current) frame.current?.contentWindow?.postMessage({ sinty: PROTO, op: "session", ...(sessionId ? { sessionId } : {}) }, "*");
+  }, [sessionId]);
 
   useEffect(() => setError(safeTabPath(tab.src.replace(/^\/p\/[^/]+/, "")) ? "" : "bad tab path"), [tab.src]);
 
