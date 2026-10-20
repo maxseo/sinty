@@ -5,6 +5,7 @@ import {
   type AgentApi,
   type ChatMessage,
   type ContextContributor,
+  type ContextSnapshot,
   type EventType,
   type HttpRoute,
   type LiveEvent,
@@ -28,6 +29,7 @@ const send = (msg: FromChild): void => {
 const tools = new Map<string, ToolDefinition>();
 const providers = new Map<string, ProviderDefinition>();
 const contexts = new Map<string, { fn: ContextContributor; order: number }>();
+const snapshotHandlers: ((s: ContextSnapshot) => void | Promise<void>)[] = [];
 const memoryProviders = new Map<string, MemoryProviderDefinition>();
 const memoryProcessors = new Map<string, MemoryProcessorDefinition>();
 const PROCESSOR_HOOKS = ["onTurnStart", "afterRecall", "beforeContext", "afterTurn", "onCompaction", "onWrite"] as const;
@@ -227,6 +229,9 @@ async function init(msg: InitMessage): Promise<void> {
       list.push(handler as (e: SintyEvent) => void);
       listeners.set(type, list);
     },
+    onContextSnapshot(handler) {
+      snapshotHandlers.push(handler);
+    },
   };
 
   if (msg.manifest.runtime === "mcp-stdio") {
@@ -270,6 +275,7 @@ async function init(msg: InitMessage): Promise<void> {
     contexts: [...contexts.entries()].map(([name, c]) => ({ name, order: c.order })),
     subscriptions: [...listeners.keys()] as (EventType | "*")[],
     routes: routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, public: r.public === true })),
+    ...(snapshotHandlers.length ? { inspects: true } : {}),
   });
 }
 
@@ -411,6 +417,9 @@ process.on("message", (raw: ToChild) => {
     }
     case "memory.call":
       void callMemory(raw.id, raw.kind, raw.name, raw.method, raw.args);
+      break;
+    case "context.snapshot":
+      for (const h of snapshotHandlers) Promise.resolve(h(raw.snapshot)).catch((e: unknown) => send({ t: "log", level: "warn", msg: "context snapshot handler failed", data: e instanceof Error ? e.message : String(e) }));
       break;
     case "agent.event":
       agentStreams.get(raw.id)?.push(raw.event);

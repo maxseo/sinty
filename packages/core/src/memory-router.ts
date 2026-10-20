@@ -19,6 +19,7 @@ import type { SintyConfig } from "./config.js";
 import type { PluginHost, PluginProcess } from "./host/host.js";
 import type { AppendInput } from "./journal.js";
 import { estimateTokens, MemoryError, MemoryStore, type MemoryFact } from "./memory.js";
+import type { MemoryTrace } from "./inspect.js";
 import { BUILTIN, BuiltinMemory } from "./memory-builtin.js";
 
 export type SummaryFacts = { summary: string; facts: { text: string; tier: MemoryTier; about: MemoryAbout }[] };
@@ -242,7 +243,7 @@ export class MemoryRouter {
    * plan exists) the recalled blocks; processors' beforeContext may edit them. With no plugins and no auto recall
    * this is exactly the pre-router output.
    */
-  async contextMessages(ctx: MemoryCtx, turnIn?: TurnInfo, overridesIn?: RecallOverrides): Promise<ChatMessage[]> {
+  async contextMessages(ctx: MemoryCtx, turnIn?: TurnInfo, overridesIn?: RecallOverrides, trace?: MemoryTrace): Promise<ChatMessage[]> {
     let turn = turnIn;
     let overrides = overridesIn;
     if (turn && !overrides) {
@@ -251,30 +252,45 @@ export class MemoryRouter {
       overrides = exp.overrides;
     }
     const b = this.builtin;
-    let blocks: ContextBlock[] = [{ id: "memory.profile", content: b.block({ agentId: ctx.agentId, chatId: ctx.sessionId }), source: BUILTIN }];
+    const who = { agentId: ctx.agentId, chatId: ctx.sessionId };
+    let blocks: ContextBlock[] = [{ id: "memory.profile", content: b.block(who), source: BUILTIN }];
+    if (trace) trace.facts = [...b.store.profile(who), ...b.store.recentLog(10, who)].map((f) => ({ id: f.id, text: f.text, tier: f.tier, scope: f.scope, source: f.source, createdAt: f.createdAt }));
     const summary = b.summary(ctx.sessionId);
     if (summary) blocks.push({ id: "memory.summary", content: `<conversation_summary>\n${summary.text}\n</conversation_summary>`, source: BUILTIN });
+    if (summary && trace) trace.summary = { text: summary.text, coversUntil: summary.coversUntil, tokens: summary.tokens };
     if (turn) {
-      blocks.push(...(await this.recallForTurn(turn, overrides)));
+      blocks.push(...(await this.recallForTurn(turn, overrides, trace)));
       for (const p of this.processors("beforeContext")) {
+        const t0 = Date.now();
         const next = await this.callProcessor<ContextBlock[]>(p, "beforeContext", [turn, blocks], ctx.sessionId, this.settings.hooks.timeoutMs);
-        if (Array.isArray(next) && next.every((x) => x && typeof x.content === "string" && typeof x.id === "string")) {
+        const valid = Array.isArray(next) && next.every((x) => x && typeof x.content === "string" && typeof x.id === "string");
+        const before = blocks;
+        if (valid) {
           blocks = next.map((x) => {
             const own = blocks.find((o) => o.id === x.id && o.source === x.source && o.content === x.content);
             // A processor may reorder or drop blocks freely; new or changed text is the processor's and untrusted.
             return own ?? { id: x.id, content: this.sanitize(x.content, 8000), source: p.plugin.name, untrusted: true };
           });
         }
+        if (trace) {
+          const sig = (xs: ContextBlock[]): string => JSON.stringify(xs.map((x) => [x.id, x.source, x.content]));
+          trace.hooks.push({ plugin: p.plugin.name, processor: p.name, hook: "beforeContext", ms: Date.now() - t0, ok: next !== undefined, changed: valid && sig(before) !== sig(blocks), before: before.map((x) => x.id), after: blocks.map((x) => x.id) });
+        }
       }
     }
+    if (trace) trace.blocks = blocks.map((x) => ({ id: x.id, source: x.source, ...(x.untrusted ? { untrusted: true } : {}) }));
     return blocks.map((x) => (x.untrusted ? { role: "system", content: x.content, untrusted: true } : { role: "system", content: x.content }));
   }
 
   /** Automatic recall for a turn: computed on the first step, then reused from memory or from the journal. */
-  async recallForTurn(turn: TurnInfo, overrides?: RecallOverrides): Promise<ContextBlock[]> {
+  async recallForTurn(turn: TurnInfo, overrides?: RecallOverrides, trace?: MemoryTrace): Promise<ContextBlock[]> {
     const cached = this.recallCache.get(turn.turnId);
+    const journaled = cached && !trace ? undefined : this.d.turnEvents?.(turn.turnId).findLast((e): e is SintyEvent<"memory.recalled"> => e.type === "memory.recalled" && !(e.data as { shadow?: boolean }).shadow);
+    if (trace && journaled) {
+      const d = journaled.data as { queries?: string[]; records?: { id: string; provider: string; text: string; untrusted?: boolean }[]; tokens?: number };
+      trace.recall = { queries: d.queries ?? [], records: (d.records ?? []).map((r) => ({ id: r.id, provider: r.provider, text: r.text, ...(r.untrusted ? { untrusted: true } : {}) })), tokens: d.tokens ?? 0, cached: true };
+    }
     if (cached) return cached;
-    const journaled = this.d.turnEvents?.(turn.turnId).findLast((e): e is SintyEvent<"memory.recalled"> => e.type === "memory.recalled" && !(e.data as { shadow?: boolean }).shadow);
     if (journaled) {
       const blocks = this.renderRecalled(journaled.data.records as MemoryRecord[], overrides?.budgetTokens ?? this.settings.recall.budgetTokens);
       this.remember(turn.turnId, blocks);
@@ -284,8 +300,8 @@ export class MemoryRouter {
     for (const c of choices) {
       this.d.record({ sessionId: turn.sessionId, turnId: turn.turnId, type: "memory.experiment", actor: MEMORY_ACTOR, data: { experiment: c.experiment, arm: c.arm, ...(c.shadow.length ? { shadow: c.shadow.map((s) => s.arm) } : {}) } });
     }
-    const plan = await this.plan(turn, overrides);
-    const blocks = plan ? (await this.runPlan(turn, plan, overrides)).blocks : [];
+    const plan = await this.plan(turn, overrides, trace);
+    const blocks = plan ? (await this.runPlan(turn, plan, overrides, false, true, trace)).blocks : [];
     this.remember(turn.turnId, blocks);
     // Shadow arms: same turn, their own overrides; journaled for comparison, never shown to the model.
     for (const c of choices) {
@@ -312,17 +328,24 @@ export class MemoryRouter {
   }
 
   /** Runs a plan and journals it; `shadow` runs never reach the prompt (experiments). */
-  async runPlan(turn: TurnInfo, plan: RecallPlan, overrides?: RecallOverrides, shadow = false, journal = true): Promise<{ blocks: ContextBlock[]; records: MemoryRecord[]; tokens: number; ms: number }> {
+  async runPlan(turn: TurnInfo, plan: RecallPlan, overrides?: RecallOverrides, shadow = false, journal = true, trace?: MemoryTrace): Promise<{ blocks: ContextBlock[]; records: MemoryRecord[]; tokens: number; ms: number }> {
     const t0 = Date.now();
     let records = await this.recallRecords(turn, plan, overrides);
     for (const p of this.processors("afterRecall")) {
+      const t1 = Date.now();
+      const before = records;
       const next = await this.callProcessor<MemoryRecord[]>(p, "afterRecall", [turn, records], turn.sessionId, this.settings.hooks.timeoutMs);
       if (Array.isArray(next)) records = next.filter((r) => r && typeof r.text === "string").map((r) => this.normalizeRecord(r, typeof r.provider === "string" ? r.provider : p.plugin.name));
+      if (trace) {
+        const sig = (xs: MemoryRecord[]): string => JSON.stringify(xs.map((r) => [r.provider, r.id, r.text]));
+        trace.hooks.push({ plugin: p.plugin.name, processor: p.name, hook: "afterRecall", ms: Date.now() - t1, ok: next !== undefined, changed: sig(before) !== sig(records), before: before.map((r) => r.id), after: records.map((r) => r.id) });
+      }
     }
     const budget = overrides?.budgetTokens ?? this.settings.recall.budgetTokens;
     const blocks = this.renderRecalled(records, budget);
     const tokens = estimateTokens(blocks.map((x) => ({ role: "system" as const, content: x.content })));
     const ms = Date.now() - t0;
+    if (trace) trace.recall = { queries: plan.queries, records: records.map((r) => ({ id: r.id, provider: r.provider, text: r.text, ...(r.untrusted ? { untrusted: true } : {}) })), tokens, cached: false };
     if (!journal) return { blocks, records, tokens, ms };
     this.d.record({
       sessionId: turn.sessionId,
@@ -343,10 +366,15 @@ export class MemoryRouter {
   }
 
   /** What onTurnStart processors (or memory.recall.auto) want recalled for this turn. */
-  async plan(turn: TurnInfo, overrides?: RecallOverrides): Promise<RecallPlan | undefined> {
+  async plan(turn: TurnInfo, overrides?: RecallOverrides, trace?: MemoryTrace): Promise<RecallPlan | undefined> {
     let plan: RecallPlan | undefined;
     for (const p of this.processors("onTurnStart")) {
+      const t0 = Date.now();
       const r = await this.callProcessor<RecallPlan>(p, "onTurnStart", [turn], turn.sessionId, this.settings.hooks.timeoutMs);
+      if (trace) {
+        const queries = r && Array.isArray(r.queries) ? r.queries.filter((q): q is string => typeof q === "string") : [];
+        trace.hooks.push({ plugin: p.plugin.name, processor: p.name, hook: "onTurnStart", ms: Date.now() - t0, ok: r !== undefined, changed: queries.length > 0, queries });
+      }
       if (r && Array.isArray(r.queries)) {
         const queries = r.queries.filter((q): q is string => typeof q === "string" && q.trim().length > 0);
         if (!queries.length) continue;

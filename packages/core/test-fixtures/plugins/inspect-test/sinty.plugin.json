@@ -1,0 +1,9 @@
+{
+  "name": "inspect-test",
+  "version": "0.0.1",
+  "description": "Test plugin that records context snapshots",
+  "kinds": ["context", "memory"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "write": ["$DATA"] }, "context": ["inspect"] }
+}

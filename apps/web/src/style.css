@@ -993,3 +993,7 @@ button.icon:hover:not(:disabled) {
     border-bottom: 1px solid var(--line);
   }
 }
+
+/* Plugin tabs (manifest ui.tabs): a sandboxed iframe filling the main area. */
+.plugin-tab { height: 100%; min-height: 0; display: flex; }
+.plugin-tab iframe { flex: 1; width: 100%; height: 100%; border: 0; background: var(--bg, #fff); }

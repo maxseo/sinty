@@ -1,0 +1,178 @@
+# Context snapshots and plugin UI tabs
+
+Status: implemented (first version). Code:
+- `packages/core/src/inspect.ts`;
+- `packages/sdk/src/inspect.ts`;
+- `Agent.callModel` / `Agent.buildContext`;
+- `MemoryRouter.contextMessages(…, trace)`;
+- `PluginHost.inspectors()`;
+- `apps/web/src/plugin-tab.tsx`;
+- `plugins/context-inspector`.
+
+This page defines two core features. Both are small, opt-in and usable by any plugin:
+
+1. **`context.inspect`** — the core hands a *context snapshot* to inspector plugins on every model step. A snapshot is
+   the exact message list sent to the provider, with each message labelled by where it came from.
+2. **`ui.tabs`** — a plugin declares pages that the Web UI shows as tabs, in a sandboxed iframe with a postMessage
+   bridge.
+
+The `context-inspector` plugin is built on both. The core has no inspector UI of its own.
+
+## Enabling (off by default)
+
+A snapshot holds the whole prompt: the system prompt, the memory block with private facts, recalled records and the
+dialogue. So three conditions must all hold before the core sends one:
+
+1. The manifest asks for it: `"permissions": { "context": ["inspect"] }`. If an agent patch adds this, it counts as
+   a permission change, which a human must approve.
+2. The human lists the plugin in `config.yaml`:
+   ```yaml
+   plugins:
+     enabled: [..., context-inspector]
+     inspect: [context-inspector]   # default: empty
+   ```
+   `config.yaml` is core-owned, so plugins and the agent cannot write it.
+3. The plugin registers `ctx.onContextSnapshot(handler)`.
+
+When the second condition fails, the host logs a warning saying which part is missing. When the first fails, the host
+logs a different warning, and the plugin gets nothing. `GET /v1/plugins` reports `inspector: true|false` for each
+plugin.
+
+## When snapshots are built
+
+`Agent.callModel` asks `PluginHost.inspectors()` at the start of every model step.
+
+- **The list is empty** (the default): the agent creates no trace and builds nothing; `inspectStats.built` stays
+  unchanged. The extra cost per step is one loop over the running plugins.
+- **The list is not empty**:
+  1. The agent passes a `ContextTrace` through `buildContext`, and the memory router fills it.
+  2. After the step id is assigned, and before the provider is called, the agent builds a snapshot and sends it to
+     each inspector over IPC.
+  3. Delivery is fire-and-forget. A failing snapshot is logged and never fails the turn.
+  4. Model fallbacks within one step reuse the same snapshot, because the messages do not change.
+
+## Snapshot (`ContextSnapshot`, version 1)
+
+| Field | Meaning |
+|---|---|
+| `id`, `stepId` | the step id (same as `model.request.stepId` in the journal) |
+| `sessionId`, `turnId`, `step` | `step` is the 1-based model step inside the turn |
+| `at`, `agentId`, `route` | time, memory agent id (roster persona or `agent.name`), first route tried |
+| `messages` | **exactly** the `ChatMessage[]` given to the provider, after redaction; inline images are replaced by their size |
+| `parts[]` | one per message: `index`, `kind`, `source`, `id?`, `role`, `tokens`, `untrusted?` |
+| `tools[]` | tool schemas offered on this step: wire name and token estimate |
+| `tokens` | `messages`, `tools`, `total`, and `byKind` (sum of `parts[].tokens` per kind) |
+| `memory.facts[]` | facts rendered in the `memory.profile` block: id, text, tier, scope, source, createdAt |
+| `memory.summary?` | conversation summary text, `coversUntil` seq, tokens |
+| `memory.recall?` | automatic recall: queries, records (id, provider, text, untrusted), tokens, `cached` (true on later steps of a turn) |
+| `memory.hooks[]` | processor hooks that ran: `onTurnStart` (queries), `afterRecall` (record ids before/after), `beforeContext` (block ids before/after); `ms`, `ok`, `changed` |
+| `contexts[]` | plugin context contributors (`ctx.context`): `ms`, `ok`, `error?`, tokens before/after, added and removed messages (content cut at 4000 chars) |
+| `redactions` | number of strings in which a secret was masked |
+
+Kinds of parts:
+- `system`: the system prompt from the core;
+- `skills`: the skills catalog;
+- `memory`: `memory.profile`;
+- `summary`: `memory.summary`;
+- `recall`: `memory.recalled`, `memory.recalled.external`;
+- `processor`: a block that a `beforeContext` processor added or rewrote (`source` = that plugin);
+- `plugin`: a message that a context contributor added (`id` = `<plugin>/<context>`);
+- `dialogue`: messages from the journal.
+
+Tokens use the same estimate as compaction: JSON length / 4.
+
+How messages are labelled:
+- The core labels the messages it built (system, skills, memory blocks, dialogue).
+- A message that a contributor added is labelled with the last contributor that added it.
+- Messages are compared as whole JSON values, so a contributor that edits a message shows up as one removal plus one
+  addition.
+
+On later steps of a turn, the `onTurnStart` and `afterRecall` hooks do not run again: their result is cached for the
+turn. Those steps show `recall.cached: true`, and `hooks` holds only `beforeContext`.
+
+## Redaction
+
+Every string in the snapshot passes through two filters:
+1. `SecretStore.redact`: known secret values of 6 or more characters.
+2. Patterns:
+   - private key blocks;
+   - `sk-`/`rk-`/`pk-` keys;
+   - `snt_` API tokens;
+   - GitHub tokens: `ghp_`… and `github_pat_`;
+   - Slack tokens: `xox?-`;
+   - AWS key ids: `AKIA`…;
+   - Google keys: `AIza`…;
+   - JWTs;
+   - `Bearer` values.
+
+Matches become `[redacted]`. The journal already masks known secret values when it stores events, so those are
+usually masked before the prompt is built. The patterns catch secrets the human pasted into a chat. The provider still
+receives those, because the inspector does not change the prompt.
+
+This is best effort. Treat snapshots as private data.
+
+## Plugin UI tabs (`ui.tabs`)
+
+```json
+"ui": { "tabs": [{ "id": "context", "title": "Контекст", "path": "/tab" }] }
+```
+
+Each tab has three fields:
+- `id`: `[a-z][a-z0-9-]{0,31}`, unique within the plugin;
+- `title`: 1 to 40 characters;
+- `path`: a route of the plugin relative to `/p/<plugin>`.
+
+A plugin can declare at most 8 tabs. The path may not contain a query, `.` or `..` segments, or a full URL. `ui`
+needs `static`, `tabs`, or both. `static` keeps its old meaning.
+
+`GET /v1/plugins` lists `tabs: [{ id, title, src: "/p/<plugin><path>" }]` for running plugins. The Web UI adds each
+tab to the left navigation at `#/t/<plugin>/<tab>`.
+
+### Isolation
+
+The UI loads `src` in `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" allow="">`:
+- `allow-same-origin` is not set, so the page runs in an opaque origin (`origin === "null"`). It cannot read
+  the UI's localStorage (where the API token is), its cookies or its DOM.
+- The iframe cannot attach the token, so the tab route must be `public: true` and serve only static HTML, no data.
+  The context inspector serves it with this CSP: `default-src 'none'; script-src 'unsafe-inline';
+  style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'`. The page has
+  no network access at all.
+
+A headless browser check confirmed this: from inside the tab, `localStorage` and `parent.document` throw
+`SecurityError`, and `fetch("/v1/sessions")` is blocked.
+
+### Bridge protocol `tab/1`
+
+| Direction | Message |
+|---|---|
+| tab → UI | `{ sinty: "tab/1", op: "ready" }` |
+| UI → tab | `{ sinty: "tab/1", op: "init", plugin, tab, theme: "light" \| "dark" }` |
+| tab → UI | `{ sinty: "tab/1", id: <number>, op: "get", path: "/snapshots?session=…" }` |
+| UI → tab | `{ sinty: "tab/1", id, ok: true, data }` or `{ sinty: "tab/1", id, ok: false, error: { code, message } }` |
+
+The UI accepts messages only from that iframe's window (`event.source`) and only:
+- `GET` requests;
+- paths matching `^/[A-Za-z0-9_\-./%]*(\?[A-Za-z0-9_\-.%=&+~]*)?$`;
+- paths with no `.`/`..` segments (checked before and after decoding), no `//` and no backslash.
+
+It forwards the request to `/p/<that plugin><path>` with the bearer token and `credentials: "omit"`. The response
+must be JSON and at most 16 MB. At most 8 requests can be in flight at once.
+
+The tab can reach only its own plugin's routes, never `/v1`. A plugin's data routes stay non-public and need the
+token.
+
+### What a tab can still do
+
+The tab's script is the plugin's code. It can navigate its own frame: the sandbox has no `allow-top-navigation`,
+`allow-popups` or `allow-forms`, but a frame can still navigate itself. It could therefore leak data it was given into
+a URL. This is why `context-inspector` is `editable: false`: the agent cannot patch it. A third-party tab plugin gets
+from the bridge only what its own routes return, so it holds no more data than its permissions already allowed.
+
+## Compatibility
+
+- These are additions only. `ctx.onContextSnapshot` is a new method, and `permissions.context` and `ui.tabs` are new
+  optional fields.
+- `ui.static` became optional, but only when `tabs` is given.
+- `plugins.inspect` is optional.
+- Existing plugins, manifests and configs are unchanged.
+- IPC: new `context.snapshot` message (core → plugin) and an optional `inspects` flag in `ready`.

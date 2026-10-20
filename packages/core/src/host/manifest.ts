@@ -4,6 +4,19 @@ import { z, type PluginManifest } from "@sinty/sdk";
 import { checkFsGrant } from "../policy.js";
 import { isInside, type SintyPaths } from "../paths.js";
 
+/** A Web UI tab: a public GET route of the plugin, shown in a sandboxed iframe. */
+const uiTabSchema = z
+  .object({
+    id: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+    title: z.string().min(1).max(40),
+    path: z
+      .string()
+      .max(200)
+      .regex(/^\/[A-Za-z0-9_\-./]*$/, "path must be a route of the plugin, starting with /")
+      .refine((p) => !p.split("/").some((seg) => seg === ".." || seg === "."), "path must not contain . or .. segments"),
+  })
+  .strict();
+
 const manifestSchema = z
   .object({
     $schema: z.string().optional(),
@@ -24,6 +37,7 @@ const manifestSchema = z
         shell: z.boolean().optional(),
         agent: z.array(z.enum(["sessions.read", "sessions.write"])).optional(),
         models: z.array(z.string().min(1)).optional(),
+        context: z.array(z.enum(["inspect"])).optional(),
       })
       .strict(),
     tools: z
@@ -44,7 +58,15 @@ const manifestSchema = z
     config: z.record(z.string(), z.unknown()).optional(),
     tests: z.string().optional(),
     editable: z.boolean().optional(),
-    ui: z.object({ static: z.string().min(1) }).strict().optional(),
+    ui: z
+      .object({
+        static: z.string().min(1).optional(),
+        tabs: z.array(uiTabSchema).min(1).max(8).optional(),
+      })
+      .strict()
+      .refine((u) => u.static !== undefined || u.tabs !== undefined, { message: 'ui needs "static", "tabs" or both' })
+      .refine((u) => new Set((u.tabs ?? []).map((t) => t.id)).size === (u.tabs ?? []).length, { message: "ui.tabs ids must be unique" })
+      .optional(),
   })
   .strict();
 

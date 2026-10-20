@@ -7,7 +7,8 @@ import type { Bus, StreamOnlyEvent } from "./bus.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, type SintyConfig, type SintyPolicy } from "./config.js";
 import { CORE_TOOL_NAMES, CORE_TOOLS, coreToolSchema } from "./coretools.js";
 import { newId } from "./ids.js";
-import type { PluginHost, RegisteredTool } from "./host/host.js";
+import type { PluginHost, PluginProcess, RegisteredTool } from "./host/host.js";
+import { buildSnapshot, newTrace, redactPatterns, traceBase, traceContributor, type ContextTrace } from "./inspect.js";
 import { ProviderError } from "./host/host.js";
 import type { ToolInfo, WireError } from "./host/protocol.js";
 import type { AppendInput, Journal, SessionRow } from "./journal.js";
@@ -452,10 +453,13 @@ export class Agent {
     const ownFallback = speaker?.fallback ? speaker.fallback.split(/\s+/).filter(Boolean) : [];
     const routes = [speaker?.model || this.d.config.models.default, ...ownFallback, ...this.d.config.models.fallback].filter((r): r is string => Boolean(r));
     if (!routes.length) throw new TurnError("no_model", "models.default is empty in config.yaml");
-    const messages = await this.buildContext(sessionId, turnId, signal);
+    const inspectors = this.d.host.inspectors();
+    const trace = inspectors.length ? newTrace() : undefined;
+    const messages = await this.buildContext(sessionId, turnId, signal, trace);
     const allow = this.allowedTools(sessionId);
     const tools = this.toolSchemas().filter((t) => (!allow || allow.includes(t.name)) && this.pluginVisible(sessionId, t.name));
     const stepId = newId("stp");
+    if (trace) this.sendSnapshot(inspectors, trace, { sessionId, turnId, stepId, messages, tools, route: routes[0] });
     const messagesHash = createHash("sha256").update(JSON.stringify(messages)).digest("hex").slice(0, 16);
     let lastError: WireError | undefined;
 
@@ -727,7 +731,20 @@ export class Agent {
 
   // ---- context ----
 
-  private async buildContext(sessionId: string, turnId: string, signal: AbortSignal): Promise<ChatMessage[]> {
+  /** Hands the inspectors what this step sends to the model. Never fails the turn. */
+  private sendSnapshot(inspectors: PluginProcess[], trace: ContextTrace, s: { sessionId: string; turnId: string; stepId: string; messages: ChatMessage[]; tools: ToolSchema[]; route: string | undefined }): void {
+    try {
+      const step = this.d.journal.turnEvents(s.turnId).filter((e) => e.type === "model.response").length + 1;
+      const redact = (text: string): string => redactPatterns(this.d.secrets.redact(text));
+      const { route, ...rest } = s;
+      const snapshot = buildSnapshot(trace, { ...rest, step, agentId: this.memoryAgentId(s.sessionId), ...(route ? { route } : {}) }, redact);
+      for (const p of inspectors) p.sendSnapshot(snapshot);
+    } catch (e) {
+      this.d.log?.("warn", "context snapshot failed", e instanceof Error ? e.message : e);
+    }
+  }
+
+  private async buildContext(sessionId: string, turnId: string, signal: AbortSignal, trace?: ContextTrace): Promise<ChatMessage[]> {
     const turn = this.turnInfo(sessionId, turnId);
     const events = this.d.journal.events(sessionId, {
       types: ["message.user", "model.response", "tool.call.completed", "tool.call.failed", "tool.call.denied", "supervisor.notice"],
@@ -737,19 +754,25 @@ export class Agent {
     dialogue = trimOldToolResults(dialogue);
     const speaker = this.speaker(sessionId);
     const skills = listSkills(this.d.paths.skills).filter((s) => !speaker || speaker.skills.includes(s.name));
-    let messages: ChatMessage[] = [{ role: "system", content: this.systemPrompt(sessionId) }, { role: "system", content: skillCatalog(skills) }, ...(await this.memoryPreface(sessionId, turn)), ...dialogue];
+    const memory = await this.memoryPreface(sessionId, turn, trace);
+    let messages: ChatMessage[] = [{ role: "system", content: this.systemPrompt(sessionId) }, { role: "system", content: skillCatalog(skills) }, ...memory, ...dialogue];
+    if (trace) traceBase(trace, messages, memory.length);
     for (const c of this.d.host.contexts()) {
+      const before = messages;
+      const t0 = Date.now();
       try {
         messages = await c.plugin.runContext(c.name, { sessionId, events: events.slice(-200), messages, budgetTokens: 0 });
+        if (trace) traceContributor(trace, c.plugin.name, c.name, before, messages, Date.now() - t0);
       } catch (e) {
         this.d.log?.("warn", `context ${c.plugin.name}/${c.name} failed; using previous messages`, e instanceof Error ? e.message : e);
+        if (trace) traceContributor(trace, c.plugin.name, c.name, before, before, Date.now() - t0, e instanceof Error ? e.message : String(e));
       }
     }
     return messages;
   }
 
-  private memoryPreface(sessionId: string, turn: TurnInfo): Promise<ChatMessage[]> {
-    return this.d.memory.contextMessages({ sessionId, agentId: turn.agentId }, turn);
+  private memoryPreface(sessionId: string, turn: TurnInfo, trace?: ContextTrace): Promise<ChatMessage[]> {
+    return this.d.memory.contextMessages({ sessionId, agentId: turn.agentId }, turn, undefined, trace?.memory);
   }
 
   /** What memory hooks know about the turn. */
