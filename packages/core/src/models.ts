@@ -21,6 +21,24 @@ export interface GatewayDeps {
   host: PluginHost;
   record?: ((input: AppendInput<"models.called" | "usage.recorded">) => void) | undefined;
   log?: ((level: string, msg: string, data?: unknown) => void) | undefined;
+  /** Where plugin token usage per UTC day is kept. The core passes the journal so a restart does not reset budgets. */
+  usage?: PluginUsageStore | undefined;
+}
+
+export interface PluginUsageStore {
+  get(plugin: string, day: string): number;
+  add(plugin: string, day: string, tokens: number): void;
+}
+
+/** In-process fallback when no store is given (unit tests, embedders). */
+class MemoryUsage implements PluginUsageStore {
+  private readonly spent = new Map<string, number>();
+  get(plugin: string, day: string): number {
+    return this.spent.get(`${plugin}|${day}`) ?? 0;
+  }
+  add(plugin: string, day: string, tokens: number): void {
+    this.spent.set(`${plugin}|${day}`, this.get(plugin, day) + tokens);
+  }
 }
 
 export interface CompleteCall {
@@ -44,9 +62,11 @@ const DEFAULT_PLUGIN_TOKENS_PER_DAY = 200_000;
  * Resolves route names, injects secrets, enforces per-plugin budgets and journals plugin usage.
  */
 export class ModelGateway {
-  private readonly spent = new Map<string, { day: string; tokens: number }>();
+  private readonly usage: PluginUsageStore;
 
-  constructor(private readonly d: GatewayDeps) {}
+  constructor(private readonly d: GatewayDeps) {
+    this.usage = d.usage ?? new MemoryUsage();
+  }
 
   /** "default" | "cheap" | "embed" | a models.routes key | "provider/model" → candidate routes in order. */
   resolve(route = "default"): string[] {
@@ -100,8 +120,7 @@ export class ModelGateway {
     }
     const limit = this.d.config.models.pluginTokensPerDay ?? DEFAULT_PLUGIN_TOKENS_PER_DAY;
     const day = new Date().toISOString().slice(0, 10);
-    const used = this.spent.get(plugin);
-    const tokens = used && used.day === day ? used.tokens : 0;
+    const tokens = this.usage.get(plugin, day);
     if (limit > 0 && tokens >= limit) throw new ModelError("models_budget", `plugin ${plugin} used ${tokens} model tokens today (limit ${limit})`, "Raise models.pluginTokensPerDay or wait until tomorrow (UTC).");
     const sessionId = typeof req.sessionId === "string" ? req.sessionId : undefined;
     const t0 = Date.now();
@@ -122,7 +141,7 @@ export class ModelGateway {
         inputTokens = r.usage?.inputTokens ?? Math.ceil(input.join(" ").length / 4);
         result = r;
       }
-      this.spent.set(plugin, { day, tokens: tokens + inputTokens + outputTokens });
+      this.usage.add(plugin, day, inputTokens + outputTokens);
       this.journal(sessionId, { plugin, op, route, provider: result.provider, model: result.model, inputTokens, outputTokens, ms: Date.now() - t0, ok: true });
       if (sessionId) this.d.record?.({ sessionId, type: "usage.recorded", actor: { kind: "plugin", id: plugin }, data: { provider: result.provider, model: result.model, inputTokens, outputTokens } });
       return result;

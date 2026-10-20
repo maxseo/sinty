@@ -15,9 +15,8 @@ Things that are designed or promised in the docs but not built yet, and are not 
 ### Memory follow-ups
 Cross-session memory is built (core `MemoryRouter` + builtin SQLite store, see [spec/memory.md](spec/memory.md) and
 `docs/journal/`). Still open:
-- **Vector backfill:** facts written before `models.routes.embed` was configured have no vectors; a `sinty memory reindex` command would embed them.
 - **Vault embeddings:** `memory-obsidian` is lexical (BM25); semantic search through `ctx.models.embed` would find paraphrases.
-- **Durable plugin budgets:** `models.pluginTokensPerDay` is counted in memory and resets on restart.
+- **Better stemming:** recall uses a crude prefix stem for OR fallback; a per-language stemmer (Snowball) or embeddings would match more forms with less noise.
 - **Memory UI:** browse, edit and forget facts and see `memory.*` events in the Web UI.
 - **Eval datasets:** `sinty memory eval` needs labeled query sets per install to be useful for tuning.
 
