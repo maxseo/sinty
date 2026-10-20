@@ -200,6 +200,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
     });
     main.appendChild(bar);
     main.appendChild(legend);
+    if (s.persona) main.appendChild(el("div", { class: s.persona.source === "global" && !s.persona.agentName ? "warn" : "muted", text: personaText(s.persona) }));
     main.appendChild(el("div", { class: "muted", text: "Сессия " + s.sessionId + " · ход " + s.turnId + " · шаг " + s.step + " (" + s.stepId + ") · агент " + s.agentId + " · " + new Date(s.at).toLocaleString() }));
 
     main.appendChild(el("h2", { text: "Что ушло в модель (" + s.parts.length + " сообщений, по порядку)" }));
@@ -255,6 +256,11 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
 
     main.appendChild(el("h2", { text: "Инструменты (" + s.tools.length + ")" }));
     main.appendChild(el("div", { class: "muted", text: s.tools.map(function (t) { return t.name + " " + fmt(t.tokens); }).join(" · ") }));
+  }
+  function personaText(p) {
+    if (p.source === "agent") return "Персона: AGENTS.md агента «" + (p.agentName || "?") + "»";
+    if (p.agentName) return "Персона: глобальный ~/.sinty/AGENTS.md (у агента «" + p.agentName + "» поле AGENTS.md пустое)";
+    return "Персона: глобальный ~/.sinty/AGENTS.md — у чата и его проекта нет агентов";
   }
   function card(v, label) { return el("div", { class: "card" }, [el("b", { text: v }), el("span", { text: label })]); }
 

@@ -154,3 +154,21 @@ test("session tab page: shows only the open chat, empty state, follows the newes
   p.post({ sinty: "tab/1", op: "session" });
   assert.match(p.els.main!.textContent, /Чат не открыт/);
 });
+
+test("session tab page: says where the persona came from and warns when the chat has no agents", async () => {
+  for (const [persona, want] of [
+    [{ source: "agent", agentName: "Alpha" }, /Персона: AGENTS\.md агента «Alpha»/],
+    [{ source: "global" }, /глобальный ~\/\.sinty\/AGENTS\.md — у чата и его проекта нет агентов/],
+    [{ source: "global", agentName: "Beta" }, /у агента «Beta» поле AGENTS\.md пустое/],
+  ] as const) {
+    const p = boot();
+    p.post({ sinty: "tab/1", op: "init", sessionId: "ses_p" });
+    p.answer(/ses_p/, { snapshots: [sum("p1", "ses_p", "trn_1", 1, 3)] });
+    await p.flush();
+    p.answer(/^\/snapshots\/p1$/, { ...full("p1", "ses_p"), persona });
+    await p.flush();
+    assert.match(p.els.main!.textContent, want);
+    const warned = p.els.main!.find((e) => e.className === "warn").some((e) => /Персона/.test(e.textContent));
+    assert.equal(warned, persona.source === "global" && !("agentName" in persona));
+  }
+});

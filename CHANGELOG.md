@@ -73,6 +73,17 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- Chat agent selection: the core now picks the speaking agent from the chat's own `metadata.agentIds` first (what
+  the Web UI saves when a chat is created with chosen participants), then from the project's agents (asked agent →
+  project lead → first member), and only then falls back to the global `~/.sinty/AGENTS.md`. Before, a chat in a
+  project with no agents (a project created with the sidebar "+") ignored the chat's agents: it got the global
+  AGENTS.md, the name `Sinty`, and `Sinty`'s agent-scoped memory. Chats without a project but with `agentIds` are
+  supported too; deleted agents are skipped.
+- Web UI: a chat whose project has no agents and that has none of its own shows a warning that the global
+  AGENTS.md is used. The chat header lists the same members as the core (an empty `agentIds` falls back to the
+  project) and preselects the project lead.
+- Context snapshots carry `persona` (`agent` with its name, or `global`); the **Контекст** tab shows it and warns when
+  the global AGENTS.md is used because the chat has no agents.
 - When the compaction summary fails the prompt is trimmed to the last 12 user turns instead of sending the whole
   history (journaled as `memory.degraded` / `memory.compacted {ok: false}`).
 - The two Windows-only shell sandbox tests no longer fail on Linux CI; they are skipped off Windows (TODO).

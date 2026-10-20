@@ -459,7 +459,7 @@ export class Agent {
     const allow = this.allowedTools(sessionId);
     const tools = this.toolSchemas().filter((t) => (!allow || allow.includes(t.name)) && this.pluginVisible(sessionId, t.name));
     const stepId = newId("stp");
-    if (trace) this.sendSnapshot(inspectors, trace, { sessionId, turnId, stepId, messages, tools, route: routes[0] });
+    if (trace) this.sendSnapshot(inspectors, trace, { sessionId, turnId, stepId, messages, tools, route: routes[0], speaker });
     const messagesHash = createHash("sha256").update(JSON.stringify(messages)).digest("hex").slice(0, 16);
     let lastError: WireError | undefined;
 
@@ -732,12 +732,13 @@ export class Agent {
   // ---- context ----
 
   /** Hands the inspectors what this step sends to the model. Never fails the turn. */
-  private sendSnapshot(inspectors: PluginProcess[], trace: ContextTrace, s: { sessionId: string; turnId: string; stepId: string; messages: ChatMessage[]; tools: ToolSchema[]; route: string | undefined }): void {
+  private sendSnapshot(inspectors: PluginProcess[], trace: ContextTrace, s: { sessionId: string; turnId: string; stepId: string; messages: ChatMessage[]; tools: ToolSchema[]; route: string | undefined; speaker: AgentRecord | undefined }): void {
     try {
       const step = this.d.journal.turnEvents(s.turnId).filter((e) => e.type === "model.response").length + 1;
       const redact = (text: string): string => redactPatterns(this.d.secrets.redact(text));
-      const { route, ...rest } = s;
-      const snapshot = buildSnapshot(trace, { ...rest, step, agentId: this.memoryAgentId(s.sessionId), ...(route ? { route } : {}) }, redact);
+      const { route, speaker, ...rest } = s;
+      const persona = speaker?.persona.trim() ? { source: "agent" as const, agentName: speaker.name } : { source: "global" as const, ...(speaker ? { agentName: speaker.name } : {}) };
+      const snapshot = buildSnapshot(trace, { ...rest, step, agentId: speaker?.id ?? this.d.config.agent.name, persona, ...(route ? { route } : {}) }, redact);
       for (const p of inspectors) p.sendSnapshot(snapshot);
     } catch (e) {
       this.d.log?.("warn", "context snapshot failed", e instanceof Error ? e.message : e);
@@ -852,15 +853,25 @@ export class Agent {
     }
   }
 
+  /**
+   * The roster agent that speaks in this session. Members are the chat's own `metadata.agentIds` (what the Web UI
+   * picks for a new chat), else the project's agents. The agent named by the last human message wins when it is a
+   * member; otherwise the project lead (when a member), otherwise the first member. No members: undefined, and the
+   * global AGENTS.md with `config.agent.name` applies.
+   */
   private speaker(sessionId: string): AgentRecord | undefined {
     const session = this.d.journal.getSession(sessionId);
-    if (!session?.projectId) return undefined;
-    const project = listProjects(this.d.paths).find((p) => p.id === session.projectId);
-    if (!project) return undefined;
+    if (!session) return undefined;
+    const roster = loadRoster(this.d.paths);
+    const project = session.projectId ? roster.projects.find((p) => p.id === session.projectId) : undefined;
+    const known = (id: string): boolean => roster.agents.some((a) => a.id === id);
+    const own = Array.isArray(session.metadata?.agentIds) ? (session.metadata.agentIds as unknown[]).filter((id): id is string => typeof id === "string") : [];
+    const members = (own.length ? own : project?.agentIds ?? []).filter(known);
+    if (!members.length) return undefined;
     const asked = [...this.d.journal.events(sessionId, { types: ["message.user"] })].reverse().find((e) => typeof (e.data as { agentId?: string }).agentId === "string");
     const agentId = (asked?.data as { agentId?: string } | undefined)?.agentId;
-    const id = agentId && project.agentIds.includes(agentId) ? agentId : project.leadId;
-    return loadRoster(this.d.paths).agents.find((a) => a.id === id);
+    const id = agentId && members.includes(agentId) ? agentId : project?.leadId && members.includes(project.leadId) ? project.leadId : members[0];
+    return roster.agents.find((a) => a.id === id);
   }
 
   private pluginVisible(sessionId: string, wireName: string): boolean {
