@@ -13,6 +13,10 @@ export default definePlugin({
     const store = new SnapshotStore(keep, maxBytes);
 
     ctx.onContextSnapshot((snap) => store.add(snap));
+    // Real token counts (cache hits and misses) arrive after the step's model call, keyed by its stepId.
+    ctx.on("usage.recorded", (e) => {
+      if (e.stepId) store.addUsage(e.stepId, e.data);
+    });
 
     // The page itself is public and static: the iframe cannot send the API token. It holds no data.
     ctx.http({
@@ -36,7 +40,8 @@ export default definePlugin({
       path: "/snapshots/:id",
       handler: (_req, { params }) => {
         const snap = store.get(params.id ?? "");
-        return snap ? json(snap) : json({ error: { code: "not_found", message: "no such snapshot (only the newest are kept, in memory)" } }, 404);
+        const usage = snap ? store.usageOf(snap.stepId) : undefined;
+        return snap ? json({ ...snap, ...(usage ? { usage } : {}) }) : json({ error: { code: "not_found", message: "no such snapshot (only the newest are kept, in memory)" } }, 404);
       },
     });
     ctx.http({
@@ -44,7 +49,7 @@ export default definePlugin({
       path: "/summary/:id",
       handler: (_req, { params }) => {
         const snap = store.get(params.id ?? "");
-        return snap ? json(summarize(snap)) : json({ error: { code: "not_found", message: "no such snapshot" } }, 404);
+        return snap ? json(summarize(snap, store.usageOf(snap.stepId))) : json({ error: { code: "not_found", message: "no such snapshot" } }, 404);
       },
     });
   },

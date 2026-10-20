@@ -8,6 +8,25 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Prompt caching (`docs/spec/protocol.md`, "Prompt caching"): every model request now only appends to the previous
+  one, between steps, turns and restarts, so DeepSeek/OpenAI/Anthropic can bill the repeated prefix as cache hits.
+  The core marks the end of stable zones with `ChatMessage.cacheHint` (`static`, `session`, `turn`) and passes a
+  per-chat `ProviderRequest.cacheKey`; provider plugins apply them.
+- Events `context.turn` (the frozen per-turn context: time with zone, recall, memory updates) and `memory.snapshot`
+  (the session's frozen memory block, refreshed at compaction or when another agent speaks).
+- `usage.recorded` gains `cacheMissTokens` and `cacheWriteTokens` next to `cachedTokens`.
+- `provider-anthropic`: `cache_control` breakpoints on the hinted blocks (at most 4), options `promptCache: false`
+  and `cacheTtl: "1h"`; cache reads/writes are added to `inputTokens`.
+- `provider-openai-compat`: `options.promptCacheKey` (sent by default only to `api.openai.com`); DeepSeek
+  `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` are recorded.
+- `provider-openai-responses`: `prompt_cache_key` from the chat (off with `options.promptCacheKey: false`).
+- Context snapshots: part kind `turn` with its `blocks`, `parts[].cacheHint`, `cache` (`hints`, `cacheable`,
+  `reused` vs the previous step) and `contexts[].reordered`. The **Контекст** tab shows the cache boundary, where the
+  cached prefix broke, and the provider's real input / from-cache / not-from-cache / cache-write tokens per step
+  next to the estimates («кэш N%» in the step list).
+- Tests: `packages/core/src/__tests__/prompt-cache.test.ts` (byte-identical prefixes across steps, turns and a
+  restart; stepped compaction; append-only context plugins; plugin order; openai-compat and Anthropic wire bodies and
+  usage) and unit tests in the three provider plugins.
 - `sinty memory reindex [--dry-run] [--batch 64] [--json]`: embeds facts that have no vector yet through
   `models.routes.embed`; batched, idempotent, with progress (`MemoryRouter.reindexVectors`).
 - Context snapshots: plugins with `permissions.context: ["inspect"]` that the human lists in `plugins.inspect` get
@@ -51,6 +70,23 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- The system prompt no longer contains the current time. The time goes, to the minute and with the time zone
+  (`agent.timezone`, else the system zone), into the turn context written once per turn.
+- Recall (`memory.recalled`) and new memory are no longer system messages after the memory block that change every
+  turn: they travel in the turn context, placed before the turn's first human message and kept in the history.
+- `beforeContext` memory hooks run once per turn on the turn context blocks, and their result is frozen; before they
+  ran on every model step over all memory blocks.
+- The memory block is a per-session snapshot; facts saved later reach the model once, in `<memory_updates>`.
+- Compaction is stepped: the summary and what follows it are kept while they fit, instead of re-folding on every turn
+  once the window was passed. Old tool results are shortened in steps of 8 turns.
+- Tool schemas are sorted by wire name, and plugins keep their `plugins.enabled` order after a parallel start or a
+  reload, so the tool list is the same on every call.
+- Context plugins may only append: a contributor that edits, inserts or removes earlier messages keeps only what it
+  appended after the last message (warned once per plugin).
+- `provider-anthropic` sends `system` as text blocks and no longer merges later system messages into it (they go in
+  place as user `<system>` text); `provider-openai-responses` builds `instructions` only from the leading system
+  messages (later ones stay as `developer` items).
+- Golden prompts regenerated for the new layout (`golden/compaction.json`, `golden/memory-tools.json`).
 - Builtin full-text recall falls back from AND to OR (bm25-ranked) and then to word-prefix OR, so partial and
   inflected matches are found; full matches still rank first.
 - `memory.write` through the tool now journals `memory.written` (one event per write), like every other write.

@@ -1,0 +1,9 @@
+{
+  "name": "context-rewrite",
+  "version": "0.0.1",
+  "description": "Test context plugin that breaks the append-only rule: it inserts a message at the top and edits the system prompt",
+  "kinds": ["context"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {}
+}

@@ -66,18 +66,25 @@ export default definePlugin({
   },
 });
 
+/**
+ * Only the leading system messages (system prompt, skills, session memory) become `instructions`; a system message
+ * later in the list stays in place as a `developer` item, so a context plugin's tail note does not rewrite the cached
+ * instructions. `prompt_cache_key` is the core's per-session `cacheKey` unless `options.promptCacheKey` is false.
+ */
 export function buildBody(req: ProviderRequest): Record<string, unknown> {
-  const instructions = req.messages
-    .filter((m) => m.role === "system")
-    .map((m) => m.content)
-    .join("\n\n");
+  const { promptCacheKey, ...options } = req.endpoint.options ?? {};
+  const lead = req.messages.findIndex((m) => m.role !== "system");
+  const head = lead < 0 ? req.messages : req.messages.slice(0, lead);
+  const rest = lead < 0 ? [] : req.messages.slice(lead);
+  const instructions = head.map((m) => m.content).join("\n\n");
   const body: Record<string, unknown> = {
     model: req.model,
     stream: true,
     store: false,
-    input: req.messages.filter((m) => m.role !== "system").flatMap(toInputItems),
+    input: rest.flatMap(toInputItems),
     ...(instructions ? { instructions } : {}),
-    ...req.endpoint.options,
+    ...(promptCacheKey !== false && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
+    ...options,
   };
   if (req.maxOutputTokens) body.max_output_tokens = req.maxOutputTokens;
   if (req.tools.length) {
@@ -95,14 +102,19 @@ function toInputItems(m: ChatMessage): Record<string, unknown>[] {
     for (const c of m.toolCalls ?? []) items.push({ type: "function_call", call_id: c.id, name: c.name, arguments: JSON.stringify(c.args ?? {}) });
     return items;
   }
-  return [{ role: m.role, content: m.content }];
+  return [{ role: m.role === "system" ? "developer" : m.role, content: m.content }];
 }
 
-function usageOf(u: ResponsesUsage | undefined): Usage {
+export function usageOf(u: ResponsesUsage | undefined): Usage {
+  const input = u?.input_tokens ?? 0;
+  const hit = u?.input_tokens_details?.cached_tokens;
+  const write = u?.input_tokens_details?.cache_write_tokens;
   return {
-    inputTokens: u?.input_tokens ?? 0,
+    inputTokens: input,
     outputTokens: u?.output_tokens ?? 0,
-    ...(u?.input_tokens_details?.cached_tokens ? { cachedTokens: u.input_tokens_details.cached_tokens } : {}),
+    ...(hit ? { cachedTokens: hit } : {}),
+    ...(hit !== undefined ? { cacheMissTokens: Math.max(0, input - hit) } : {}),
+    ...(write ? { cacheWriteTokens: write } : {}),
   };
 }
 
@@ -127,7 +139,7 @@ async function httpError(res: Response): Promise<ToolError> {
 interface ResponsesUsage {
   input_tokens?: number;
   output_tokens?: number;
-  input_tokens_details?: { cached_tokens?: number };
+  input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 }
 
 interface ResponsesEvent {

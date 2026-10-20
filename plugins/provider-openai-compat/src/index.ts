@@ -33,13 +33,7 @@ export default definePlugin({
           if (msg.data === "[DONE]") break;
           const chunk = JSON.parse(msg.data) as ChatChunk;
           if (chunk.error) throw new ToolError("provider_error", chunk.error.message ?? "stream error");
-          if (chunk.usage) {
-            usage = {
-              inputTokens: chunk.usage.prompt_tokens ?? 0,
-              outputTokens: chunk.usage.completion_tokens ?? 0,
-              ...(chunk.usage.prompt_tokens_details?.cached_tokens ? { cachedTokens: chunk.usage.prompt_tokens_details.cached_tokens } : {}),
-            };
-          }
+          if (chunk.usage) usage = usageOf(chunk.usage);
           for (const choice of chunk.choices ?? []) {
             const d = choice.delta ?? {};
             const reasoning = d.reasoning_content ?? d.reasoning;
@@ -93,13 +87,22 @@ export default definePlugin({
   },
 });
 
-function buildBody(req: ProviderRequest): Record<string, unknown> {
+/**
+ * `options.promptCacheKey` (Sinty's own option, never sent as is): `true` sends `prompt_cache_key` (the core's
+ * per-session `cacheKey`), `false` never does. Unset: only for api.openai.com, because some compatible servers reject
+ * unknown fields. DeepSeek caches prefixes on its own and needs no key.
+ */
+export function buildBody(req: ProviderRequest): Record<string, unknown> {
+  const { promptCacheKey, ...options } = req.endpoint.options ?? {};
+  const baseUrl = req.endpoint.baseUrl ?? "https://api.openai.com/v1";
+  const sendKey = promptCacheKey === true || (promptCacheKey === undefined && /^https:\/\/api\.openai\.com(\/|$)/.test(baseUrl));
   const body: Record<string, unknown> = {
     model: req.model,
     stream: true,
     stream_options: { include_usage: true },
     messages: req.messages.map(toWireMessage),
-    ...req.endpoint.options,
+    ...(sendKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
+    ...options,
   };
   if (req.maxOutputTokens) body.max_tokens = req.maxOutputTokens;
   if (req.tools.length) {
@@ -127,6 +130,22 @@ function toWireMessage(m: ChatMessage): Record<string, unknown> {
   return { role: m.role, content: m.content };
 }
 
+/**
+ * Usage from the final chunk. Prompt cache: DeepSeek reports `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
+ * (and sometimes also `prompt_tokens_details.cached_tokens`); OpenAI reports `prompt_tokens_details.cached_tokens`.
+ */
+export function usageOf(u: NonNullable<ChatChunk["usage"]>): Extract<ProviderChunk, { type: "done" }>["usage"] {
+  const input = u.prompt_tokens ?? 0;
+  const hit = u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens;
+  const miss = u.prompt_cache_miss_tokens ?? (hit !== undefined ? Math.max(0, input - hit) : undefined);
+  return {
+    inputTokens: input,
+    outputTokens: u.completion_tokens ?? 0,
+    ...(hit ? { cachedTokens: hit } : {}),
+    ...(miss !== undefined ? { cacheMissTokens: miss } : {}),
+  };
+}
+
 function parseArgs(raw: string): unknown {
   if (!raw.trim()) return {};
   try {
@@ -145,9 +164,9 @@ async function httpError(res: Response): Promise<ToolError> {
   });
 }
 
-interface ChatChunk {
+export interface ChatChunk {
   error?: { message?: string };
-  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
   choices?: {
     finish_reason?: string | null;
     delta?: {

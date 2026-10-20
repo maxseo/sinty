@@ -1,4 +1,7 @@
-import type { ContextSnapshot } from "@sinty/sdk";
+import type { ContextSnapshot, Usage } from "@sinty/sdk";
+
+/** What the provider reported for a step (`usage.recorded`), next to the core's estimates. */
+export type StepUsage = Pick<Usage, "provider" | "model" | "inputTokens" | "outputTokens" | "cachedTokens" | "cacheMissTokens" | "cacheWriteTokens">;
 
 /** One row of the step list: enough to draw history without sending every prompt. */
 export interface SnapshotSummary {
@@ -15,6 +18,10 @@ export interface SnapshotSummary {
   hooks: number;
   contexts: number;
   redactions: number;
+  /** Real token counts from `usage.recorded`, once the step's model call finished. */
+  usage?: StepUsage;
+  /** Core estimates: tokens up to the last cache hint, and the prefix shared with the previous step. */
+  cache?: { cacheable: number; reused?: number };
 }
 
 export interface SessionSummary {
@@ -32,6 +39,7 @@ export interface SessionSummary {
 export class SnapshotStore {
   private readonly items: { snap: ContextSnapshot; bytes: number }[] = [];
   private bytes = 0;
+  private readonly usage = new Map<string, StepUsage>();
 
   constructor(
     private readonly keep: number,
@@ -49,6 +57,25 @@ export class SnapshotStore {
     this.items.push({ snap, bytes });
     this.bytes += bytes;
     while (this.items.length > this.keep || this.bytes > this.maxBytes) this.bytes -= this.items.shift()!.bytes;
+  }
+
+  /** Usage of a step (the event may come before or after its snapshot); keeps at most twice `keep` entries. */
+  addUsage(stepId: string, u: Usage): void {
+    this.usage.delete(stepId);
+    this.usage.set(stepId, {
+      provider: u.provider,
+      model: u.model,
+      inputTokens: u.inputTokens,
+      outputTokens: u.outputTokens,
+      ...(u.cachedTokens !== undefined ? { cachedTokens: u.cachedTokens } : {}),
+      ...(u.cacheMissTokens !== undefined ? { cacheMissTokens: u.cacheMissTokens } : {}),
+      ...(u.cacheWriteTokens !== undefined ? { cacheWriteTokens: u.cacheWriteTokens } : {}),
+    });
+    while (this.usage.size > this.keep * 2) this.usage.delete(this.usage.keys().next().value!);
+  }
+
+  usageOf(stepId: string): StepUsage | undefined {
+    return this.usage.get(stepId);
   }
 
   get size(): number {
@@ -76,11 +103,11 @@ export class SnapshotStore {
 
   /** Steps of one session (or all), oldest first. */
   list(sessionId?: string): SnapshotSummary[] {
-    return this.items.filter((x) => !sessionId || x.snap.sessionId === sessionId).map(({ snap }) => summarize(snap));
+    return this.items.filter((x) => !sessionId || x.snap.sessionId === sessionId).map(({ snap }) => summarize(snap, this.usage.get(snap.stepId)));
   }
 }
 
-export function summarize(s: ContextSnapshot): SnapshotSummary {
+export function summarize(s: ContextSnapshot, usage?: StepUsage): SnapshotSummary {
   return {
     id: s.id,
     sessionId: s.sessionId,
@@ -95,5 +122,7 @@ export function summarize(s: ContextSnapshot): SnapshotSummary {
     hooks: s.memory.hooks.length,
     contexts: s.contexts.length,
     redactions: s.redactions,
+    ...(usage ? { usage } : {}),
+    ...(s.cache ? { cache: { cacheable: s.cache.cacheable.tokens, ...(s.cache.reused ? { reused: s.cache.reused.tokens } : {}) } } : {}),
   };
 }

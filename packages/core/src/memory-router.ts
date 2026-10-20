@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   CompactionResult,
   ContextBlock,
+  EventType,
   MemoryAbout,
   MemoryRecord,
   MemoryScope,
@@ -30,7 +31,7 @@ export interface MemoryCtx {
   agentId: string;
 }
 
-type MemoryEventType = "memory.written" | "memory.compacted" | "memory.degraded" | "memory.recalled" | "memory.experiment";
+type MemoryEventType = "memory.written" | "memory.compacted" | "memory.degraded" | "memory.recalled" | "memory.experiment" | "memory.snapshot";
 
 /** Embeddings for the builtin store; set when models.routes.embed is configured (step 5). */
 export interface Embedder {
@@ -48,6 +49,8 @@ export interface MemoryRouterDeps {
   redact?: ((text: string) => string) | undefined;
   /** Journal events of one turn, to reuse a recall after a restart. */
   turnEvents?: ((turnId: string) => SintyEvent[]) | undefined;
+  /** Journal events of one session by type: the memory snapshot and the facts turn contexts already announced. */
+  sessionEvents?: ((sessionId: string, types: EventType[]) => SintyEvent[]) | undefined;
   embedder?: (() => Embedder | undefined) | undefined;
 }
 
@@ -154,7 +157,8 @@ interface PluginRef {
 export function foldTranscript(head: SintyEvent[]): string {
   return head
     .map((e) => {
-      const s = JSON.stringify(e.data);
+      // A turn context repeats recall and memory the summary model does not need; its time is enough.
+      const s = e.type === "context.turn" ? JSON.stringify({ at: (e.data as { at?: string }).at }) : JSON.stringify(e.data);
       return `${e.type} ${s.length > 1500 ? `${s.slice(0, 1500)}\n…[truncated ${s.length - 1500} chars]` : s}`;
     })
     .join("\n")
@@ -240,47 +244,98 @@ export class MemoryRouter {
   // ---- prompt ----
 
   /**
-   * System messages that carry memory: profile/journal block, conversation summary, then (when a turn is known and a
-   * plan exists) the recalled blocks; processors' beforeContext may edit them. With no plugins and no auto recall
-   * this is exactly the pre-router output.
+   * Session-level memory messages, the stable part of the prompt after the system prompt: the memory profile block as
+   * frozen in the session's `memory.snapshot` event (written on the first step, again after each compaction or when
+   * another agent starts speaking), then the conversation summary. Both change only at compaction, so the provider
+   * can cache them. Without a journal (unit tests) the live block is used.
    */
-  async contextMessages(ctx: MemoryCtx, turnIn?: TurnInfo, overridesIn?: RecallOverrides, trace?: MemoryTrace): Promise<ChatMessage[]> {
-    let turn = turnIn;
-    let overrides = overridesIn;
-    if (turn && !overrides) {
-      const exp = this.experiment(turn);
-      turn = exp.turn;
-      overrides = exp.overrides;
-    }
+  sessionMessages(ctx: MemoryCtx, trace?: MemoryTrace): ChatMessage[] {
     const b = this.builtin;
     const who = { agentId: ctx.agentId, chatId: ctx.sessionId };
-    let blocks: ContextBlock[] = [{ id: "memory.profile", content: b.block(who), source: BUILTIN }];
-    if (trace) trace.facts = [...b.store.profile(who), ...b.store.recentLog(10, who)].map((f) => ({ id: f.id, text: f.text, tier: f.tier, scope: f.scope, source: f.source, createdAt: f.createdAt }));
+    const snap = this.snapshot(ctx);
+    if (trace) {
+      const ids = new Set(snap.factIds);
+      trace.facts = [...b.store.profile(who), ...b.store.recentLog(10, who)].filter((f) => ids.has(f.id)).map((f) => ({ id: f.id, text: f.text, tier: f.tier, scope: f.scope, source: f.source, createdAt: f.createdAt }));
+    }
+    const blocks: ContextBlock[] = [{ id: "memory.profile", content: snap.text, source: BUILTIN }];
     const summary = b.summary(ctx.sessionId);
     if (summary) blocks.push({ id: "memory.summary", content: `<conversation_summary>\n${summary.text}\n</conversation_summary>`, source: BUILTIN });
     if (summary && trace) trace.summary = { text: summary.text, coversUntil: summary.coversUntil, tokens: summary.tokens };
-    if (turn) {
-      blocks.push(...(await this.recallForTurn(turn, overrides, trace)));
-      for (const p of this.processors("beforeContext")) {
-        const t0 = Date.now();
-        const next = await this.callProcessor<ContextBlock[]>(p, "beforeContext", [turn, blocks], ctx.sessionId, this.settings.hooks.timeoutMs);
-        const valid = Array.isArray(next) && next.every((x) => x && typeof x.content === "string" && typeof x.id === "string");
-        const before = blocks;
-        if (valid) {
-          blocks = next.map((x) => {
-            const own = blocks.find((o) => o.id === x.id && o.source === x.source && o.content === x.content);
-            // A processor may reorder or drop blocks freely; new or changed text is the processor's and untrusted.
-            return own ?? { id: x.id, content: this.sanitize(x.content, 8000), source: p.plugin.name, untrusted: true };
-          });
-        }
-        if (trace) {
-          const sig = (xs: ContextBlock[]): string => JSON.stringify(xs.map((x) => [x.id, x.source, x.content]));
-          trace.hooks.push({ plugin: p.plugin.name, processor: p.name, hook: "beforeContext", ms: Date.now() - t0, ok: next !== undefined, changed: valid && sig(before) !== sig(blocks), before: before.map((x) => x.id), after: blocks.map((x) => x.id) });
-        }
+    if (trace) trace.blocks = blocks.map((x) => ({ id: x.id, source: x.source }));
+    return blocks.map((x) => ({ role: "system", content: x.content }));
+  }
+
+  /** The session's memory profile block: the journaled snapshot, or a new one (journaled) when it is missing or stale. */
+  private snapshot(ctx: MemoryCtx): { text: string; factIds: string[] } {
+    const b = this.builtin;
+    const who = { agentId: ctx.agentId, chatId: ctx.sessionId };
+    const live = (): { text: string; factIds: string[] } => ({ text: b.block(who), factIds: [...b.store.profile(who), ...b.store.recentLog(10, who)].map((f) => f.id) });
+    if (!this.d.sessionEvents) return live();
+    const events = this.d.sessionEvents(ctx.sessionId, ["memory.snapshot", "memory.compacted"]);
+    const last = events.findLast((e): e is SintyEvent<"memory.snapshot"> => e.type === "memory.snapshot");
+    const compacted = events.findLast((e) => e.type === "memory.compacted");
+    const sameAgent = (last?.data as { agentId?: string } | undefined)?.agentId === ctx.agentId;
+    if (last && sameAgent && (!compacted || compacted.seq < last.seq)) return { text: last.data.text, factIds: last.data.factIds };
+    const fresh = live();
+    const reason = !last ? "start" : !sameAgent ? "agent" : "compaction";
+    this.d.record({ sessionId: ctx.sessionId, type: "memory.snapshot", actor: MEMORY_ACTOR, data: { text: fresh.text, factIds: fresh.factIds, reason, agentId: ctx.agentId } });
+    return fresh;
+  }
+
+  /**
+   * What memory adds to a turn context, computed once on the turn's first step: the automatic recall, then
+   * `memory.updates` (facts this persona can see that are not in the session snapshot and that no earlier turn context
+   * announced), then processors' beforeContext over these blocks. The agent freezes the result in `context.turn`.
+   */
+  async turnBlocks(ctx: MemoryCtx, turnIn: TurnInfo, trace?: MemoryTrace): Promise<{ blocks: ContextBlock[]; factIds: string[] }> {
+    const exp = this.experiment(turnIn);
+    const turn = exp.turn;
+    let blocks: ContextBlock[] = [...(await this.recallForTurn(turn, exp.overrides, trace))];
+    const updates = this.memoryUpdates(ctx);
+    if (updates.block) blocks.push(updates.block);
+    for (const p of this.processors("beforeContext")) {
+      const t0 = Date.now();
+      const next = await this.callProcessor<ContextBlock[]>(p, "beforeContext", [turn, blocks], ctx.sessionId, this.settings.hooks.timeoutMs);
+      const valid = Array.isArray(next) && next.every((x) => x && typeof x.content === "string" && typeof x.id === "string");
+      const before = blocks;
+      if (valid) {
+        blocks = next.map((x) => {
+          const own = blocks.find((o) => o.id === x.id && o.source === x.source && o.content === x.content);
+          // A processor may reorder or drop blocks freely; new or changed text is the processor's and untrusted.
+          return own ?? { id: x.id, content: this.sanitize(x.content, 8000), source: p.plugin.name, untrusted: true };
+        });
+      }
+      if (trace) {
+        const sig = (xs: ContextBlock[]): string => JSON.stringify(xs.map((x) => [x.id, x.source, x.content]));
+        trace.hooks.push({ plugin: p.plugin.name, processor: p.name, hook: "beforeContext", ms: Date.now() - t0, ok: next !== undefined, changed: valid && sig(before) !== sig(blocks), before: before.map((x) => x.id), after: blocks.map((x) => x.id) });
       }
     }
-    if (trace) trace.blocks = blocks.map((x) => ({ id: x.id, source: x.source, ...(x.untrusted ? { untrusted: true } : {}) }));
-    return blocks.map((x) => (x.untrusted ? { role: "system", content: x.content, untrusted: true } : { role: "system", content: x.content }));
+    return { blocks, factIds: updates.factIds };
+  }
+
+  /** Fills the trace's recall from the journal on later steps of a turn (no recall runs). */
+  async traceTurn(turn: TurnInfo, trace: MemoryTrace): Promise<void> {
+    const exp = this.experiment(turn);
+    await this.recallForTurn(exp.turn, exp.overrides, trace);
+  }
+
+  private memoryUpdates(ctx: MemoryCtx): { block?: ContextBlock; factIds: string[] } {
+    if (!this.d.sessionEvents) return { factIds: [] };
+    const events = this.d.sessionEvents(ctx.sessionId, ["memory.snapshot", "context.turn"]);
+    const at = events.findLastIndex((e) => e.type === "memory.snapshot");
+    if (at < 0) return { factIds: [] };
+    const known = new Set((events[at]!.data as { factIds: string[] }).factIds);
+    for (const e of events.slice(at + 1)) for (const id of (e.data as { factIds?: string[] }).factIds ?? []) known.add(id);
+    const who = { agentId: ctx.agentId, chatId: ctx.sessionId };
+    const facts = [...this.builtin.store.profile(who), ...this.builtin.store.recentLog(10, who)].filter((f) => !known.has(f.id));
+    if (!facts.length) return { factIds: [] };
+    const content = [
+      "<memory_updates>",
+      "Memory saved since this conversation's memory block was written. Use it with that block.",
+      ...facts.map((f) => (f.tier === "profile" ? `- [profile] ${f.text}` : `- ${f.createdAt.slice(0, 10)} ${f.text}`)),
+      "</memory_updates>",
+    ].join("\n");
+    return { block: { id: "memory.updates", content, source: BUILTIN }, factIds: facts.map((f) => f.id) };
   }
 
   /** Automatic recall for a turn: computed on the first step, then reused from memory or from the journal. */
@@ -548,8 +603,13 @@ export class MemoryRouter {
     if (!last) return dialogue;
     const b = this.builtin;
     const prev = b.summary(sessionId);
+    // Stepped: keep the existing summary and everything after it while that still fits. Re-folding to the last 12
+    // turns on every new message would move the start of the dialogue (and break the prompt cache) on every turn.
+    if (prev) {
+      const since = input.toMessages(events.filter((e) => e.seq > prev.coversUntil));
+      if (estimateTokens([{ role: "system", content: prev.text }, ...since]) < limit) return since;
+    }
     const tailMessages = input.toMessages(tail);
-    if (prev && prev.coversUntil >= last.seq && estimateTokens([{ role: "system", content: prev.text }, ...tailMessages]) < limit) return tailMessages;
 
     let folded: SummaryFacts | undefined;
     let by = BUILTIN;

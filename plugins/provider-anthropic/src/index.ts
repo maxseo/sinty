@@ -1,11 +1,14 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderRequest } from "@sinty/sdk";
+import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderRequest, type ProviderUsage } from "@sinty/sdk";
 
 const VERSION = "2023-06-01";
 
-type Block =
+type CacheControl = { type: "ephemeral"; ttl?: "1h" };
+
+type Block = (
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
+) & { cache_control?: CacheControl };
 
 interface WireMessage {
   role: "user" | "assistant";
@@ -33,8 +36,7 @@ export default definePlugin({
         if (!res.ok || !res.body) throw await httpError(res);
 
         const tools = new Map<number, { id: string; name: string; json: string }>();
-        let inputTokens = 0;
-        let cachedTokens = 0;
+        let start: StartUsage = {};
         let outputTokens = 0;
         let stopReason = "end_turn";
 
@@ -42,8 +44,7 @@ export default definePlugin({
           const ev = JSON.parse(msg.data) as StreamEvent;
           switch (ev.type) {
             case "message_start":
-              inputTokens = ev.message?.usage?.input_tokens ?? 0;
-              cachedTokens = ev.message?.usage?.cache_read_input_tokens ?? 0;
+              start = ev.message?.usage ?? {};
               break;
             case "content_block_start":
               if (ev.content_block?.type === "tool_use") tools.set(ev.index ?? 0, { id: ev.content_block.id ?? "", name: ev.content_block.name ?? "", json: "" });
@@ -72,31 +73,57 @@ export default definePlugin({
               throw new ToolError(ev.error?.type ?? "provider_error", ev.error?.message ?? "stream error", { retryable: ev.error?.type === "overloaded_error" });
           }
         }
-        yield { type: "done", stopReason, usage: { inputTokens, outputTokens, ...(cachedTokens ? { cachedTokens } : {}) } };
+        yield { type: "done", stopReason, usage: usageOf(start, outputTokens) };
       },
     });
   },
 });
 
-function buildBody(req: ProviderRequest): Record<string, unknown> {
-  const system = req.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+/**
+ * Prompt caching (on by default): the core's cache hints become `cache_control` breakpoints (at most 4). A hint
+ * marks the last message of a stable segment, so the breakpoint closes that segment.
+ * - Leading system messages are `system` text blocks; the one hinted `static` (end of persona, rules and skills; also
+ *   covers the tools, which come first in Anthropic's prefix) and `session` (end of memory snapshot and summary) get one.
+ * - The message hinted `turn` (the last dialogue message) gets one on its last block, so the next step reads the whole
+ *   conversation so far from the cache.
+ * - System messages after the first non-system message (context plugins' tail notes) are sent in place as user text
+ *   inside `<system>`, instead of being merged into `system`, which would rewrite the cached prefix on every step.
+ * Options (Sinty's own, never sent as is): `promptCache: false` turns breakpoints off, `cacheTtl: "1h"` asks for the
+ * one-hour cache (billed higher on writes) instead of the default five minutes.
+ */
+export function buildBody(req: ProviderRequest): Record<string, unknown> {
+  const { promptCache, cacheTtl, ...options } = req.endpoint.options ?? {};
+  const cc: CacheControl | undefined = promptCache === false ? undefined : cacheTtl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+  const lead = req.messages.findIndex((m) => m.role !== "system");
+  const head = lead < 0 ? req.messages : req.messages.slice(0, lead);
+  const rest = lead < 0 ? [] : req.messages.slice(lead);
+  // Anthropic allows 4 breakpoints: when more messages are hinted, the turn tail keeps its one and the head the last 3.
+  let hinted = req.messages.filter((m) => m.cacheHint);
+  if (hinted.length > 4) hinted = [...hinted.filter((m) => m.cacheHint !== "turn").slice(-3), ...hinted.filter((m) => m.cacheHint === "turn").slice(-1)];
+  const marked = new Set(hinted);
+  const mark = (m: ChatMessage): CacheControl | undefined => (cc && marked.has(m) ? cc : undefined);
+  const system: Block[] = head.filter((m) => m.content).map((m) => {
+    const c = mark(m);
+    return { type: "text", text: m.content, ...(c ? { cache_control: c } : {}) };
+  });
   const body: Record<string, unknown> = {
     model: req.model,
     max_tokens: req.maxOutputTokens ?? 8192,
     stream: true,
-    messages: toWireMessages(req.messages.filter((m) => m.role !== "system")),
-    ...req.endpoint.options,
+    messages: toWireMessages(rest, mark),
+    ...options,
   };
-  if (system) body.system = system;
+  if (system.length) body.system = system;
   if (req.tools.length) body.tools = req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
   return body;
 }
 
 /** Anthropic needs alternating roles and tool results as user content blocks. */
-function toWireMessages(messages: ChatMessage[]): WireMessage[] {
+function toWireMessages(messages: ChatMessage[], mark: (m: ChatMessage) => CacheControl | undefined = () => undefined): WireMessage[] {
   const out: WireMessage[] = [];
-  const push = (role: WireMessage["role"], blocks: Block[]): void => {
+  const push = (role: WireMessage["role"], blocks: Block[], cache?: CacheControl): void => {
     if (!blocks.length) return;
+    if (cache) blocks[blocks.length - 1] = { ...blocks[blocks.length - 1]!, cache_control: cache };
     const last = out.at(-1);
     if (last?.role === role) last.content.push(...blocks);
     else out.push({ role, content: blocks });
@@ -104,17 +131,36 @@ function toWireMessages(messages: ChatMessage[]): WireMessage[] {
   for (const m of messages) {
     if (m.role === "tool") {
       const isError = m.content.startsWith("ERROR ") || m.content.startsWith("DENIED:");
-      push("user", [{ type: "tool_result", tool_use_id: m.toolCallId ?? "", content: m.content, ...(isError ? { is_error: true } : {}) }]);
+      push("user", [{ type: "tool_result", tool_use_id: m.toolCallId ?? "", content: m.content, ...(isError ? { is_error: true } : {}) }], mark(m));
     } else if (m.role === "assistant") {
       const blocks: Block[] = [];
       if (m.content) blocks.push({ type: "text", text: m.content });
       for (const c of m.toolCalls ?? []) blocks.push({ type: "tool_use", id: c.id, name: c.name, input: c.args ?? {} });
-      push("assistant", blocks);
+      push("assistant", blocks, blocks.length ? mark(m) : undefined);
+    } else if (m.role === "system") {
+      push("user", [{ type: "text", text: `<system>\n${m.content}\n</system>` }], mark(m));
     } else {
-      push("user", [{ type: "text", text: m.content }]);
+      push("user", [{ type: "text", text: m.content }], mark(m));
     }
   }
   return out;
+}
+
+/**
+ * With caching, Anthropic's `input_tokens` counts only the tokens after the last breakpoint; the whole prompt is
+ * input + cache read + cache write. Sinty's `inputTokens` is always the whole prompt.
+ */
+export function usageOf(u: StartUsage, outputTokens: number): ProviderUsage {
+  const read = u.cache_read_input_tokens ?? 0;
+  const write = u.cache_creation_input_tokens ?? 0;
+  const plain = u.input_tokens ?? 0;
+  return {
+    inputTokens: plain + read + write,
+    outputTokens,
+    ...(read ? { cachedTokens: read } : {}),
+    ...(u.cache_read_input_tokens !== undefined || u.cache_creation_input_tokens !== undefined ? { cacheMissTokens: plain + write } : {}),
+    ...(write ? { cacheWriteTokens: write } : {}),
+  };
 }
 
 function parseArgs(raw: string): unknown {
@@ -137,9 +183,15 @@ async function httpError(res: Response): Promise<ToolError> {
 interface StreamEvent {
   type: string;
   index?: number;
-  message?: { usage?: { input_tokens?: number; cache_read_input_tokens?: number } };
+  message?: { usage?: StartUsage };
   content_block?: { type: string; id?: string; name?: string };
   delta?: { type?: string; text?: string; thinking?: string; partial_json?: string; stop_reason?: string };
   usage?: { output_tokens?: number };
   error?: { type?: string; message?: string };
+}
+
+interface StartUsage {
+  input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }

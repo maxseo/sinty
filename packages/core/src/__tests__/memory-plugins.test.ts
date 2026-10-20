@@ -83,7 +83,7 @@ test("memory-obsidian: vault notes are recalled as untrusted records; the vault 
     const s = sinty.agent.createSession();
     sinty.agent.send(s.id, "how do we do a kubernetes rollback?");
     await sinty.agent.idle();
-    const block = requests(home)[0]!.messages.find((m) => m.content.startsWith('<recalled_memory untrusted="true">'));
+    const block = requests(home)[0]!.messages.find((m) => m.content.startsWith("<turn_context>") && m.content.includes('<recalled_memory untrusted="true">'));
     assert.ok(block, "vault block in the prompt");
     assert.match(block.content, /\[memory-obsidian\] projects\/deploy\.md: deploy › Rollback: Run helm rollback/);
     assert.doesNotMatch(block.content, /Pancakes|workspace/);

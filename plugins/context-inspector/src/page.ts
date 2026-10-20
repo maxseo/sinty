@@ -55,6 +55,9 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
 .empty b { display:block; color:var(--fg); font-size:14px; margin-bottom:6px; }
 .delta { font-size:11px; margin-left:4px; }
 .add { color:#1a7f37; } .rem { color:#cf222e; }
+tr.cut td { border-bottom:2px dashed var(--accent); color:var(--accent); font-size:11px; padding:2px 8px; }
+tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:11px; padding:2px 8px; }
+.card.fact { border-color:var(--accent); }
 </style>
 </head>
 <body>
@@ -72,8 +75,9 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
 (function () {
   "use strict";
   var PROTO = "tab/1";
-  var COLORS = { system: "#5b6abf", skills: "#7c8b9a", memory: "#2e9d6a", summary: "#c08a1d", recall: "#1f8fb3", processor: "#b04fbf", plugin: "#d0573a", dialogue: "#8a8f98" };
-  var NAMES = { system: "системный", skills: "навыки", memory: "память", summary: "сводка", recall: "recall", processor: "процессор", plugin: "плагин", dialogue: "диалог" };
+  var COLORS = { system: "#5b6abf", skills: "#7c8b9a", memory: "#2e9d6a", summary: "#c08a1d", recall: "#1f8fb3", processor: "#b04fbf", plugin: "#d0573a", dialogue: "#8a8f98", turn: "#1f8fb3" };
+  var NAMES = { system: "системный", skills: "навыки", memory: "память", summary: "сводка", recall: "recall", processor: "процессор", plugin: "плагин", dialogue: "диалог", turn: "контекст хода" };
+  var HINTS = { static: "инструменты, системный промпт, навыки", session: "память сессии и сводка (до компакции)", turn: "диалог до этого места" };
   var seq = 0, pending = {}, state = { session: "", step: "", list: [], snap: null, open: {} }, epoch = 0, inited = false;
 
   function get(path) {
@@ -103,6 +107,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
     return n;
   }
   function fmt(n) { return n >= 10000 ? (n / 1000).toFixed(1) + "k" : String(n); }
+  function pct(a, b) { return b ? Math.round(100 * a / b) + "%" : "—"; }
   function time(iso) { var d = new Date(iso); return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
   function badge(kind) { return el("span", { class: "kind", style: "background:" + (COLORS[kind] || "#888"), text: NAMES[kind] || kind }); }
   function status(t) { document.getElementById("status").textContent = t; }
@@ -158,7 +163,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
       var d = prev ? s.tokens.total - prev.tokens.total : 0;
       var b = el("button", { class: "step" + (s.id === state.step ? " on" : "") }, [
         el("div", {}, ["Шаг " + s.step + " · " + fmt(s.tokens.total) + " ток.", d ? el("span", { class: "delta " + (d > 0 ? "add" : "rem"), text: (d > 0 ? "+" : "") + fmt(d) }) : null]),
-        el("div", { class: "t", text: time(s.at) + (s.route ? " · " + s.route : "") + (s.redactions ? " · скрыто " + s.redactions : "") }),
+        el("div", { class: "t", text: time(s.at) + (s.route ? " · " + s.route : "") + (s.usage ? " · кэш " + pct(s.usage.cachedTokens || 0, s.usage.inputTokens) : "") + (s.redactions ? " · скрыто " + s.redactions : "") }),
       ]);
       b.addEventListener("click", function () { state.step = s.id; drawSteps(); open(s.id); });
       box.appendChild(b);
@@ -190,6 +195,17 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
       card(String(s.memory.recall ? s.memory.recall.records.length : 0), "recall"),
       s.redactions ? card(String(s.redactions), "строк со скрытыми секретами") : null,
     ]));
+    // Prompt cache: what the provider reported (usage.recorded) next to the core's estimates.
+    var u = s.usage, c = s.cache;
+    main.appendChild(el("div", { class: "cards" }, [
+      u ? card(fmt(u.inputTokens), "вход, факт (" + u.provider + ")", "fact") : card("…", "факт: ждём ответа модели"),
+      u ? card(fmt(u.cachedTokens || 0) + " · " + pct(u.cachedTokens || 0, u.inputTokens), "из кэша, факт", "fact") : null,
+      u && u.cacheMissTokens !== undefined ? card(fmt(u.cacheMissTokens), "мимо кэша, факт", "fact") : null,
+      u && u.cacheWriteTokens ? card(fmt(u.cacheWriteTokens), "записано в кэш, факт", "fact") : null,
+      u ? card(fmt(u.outputTokens), "выход, факт", "fact") : null,
+      c ? card(fmt(c.cacheable.tokens), "кэшируемый префикс (оценка)") : null,
+      c && c.reused ? card(fmt(c.reused.tokens), "совпало с прошлым шагом (оценка)" + (c.reused.toolsSame ? "" : ", инструменты изменились")) : null,
+    ]));
     var kinds = Object.keys(s.tokens.byKind);
     var bar = el("div", { class: "bar" });
     var legend = el("div", { class: "legend" });
@@ -211,7 +227,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
       var tr = el("tr", { class: "part" }, [
         el("td", { class: "n", text: String(p.index) }),
         el("td", {}, [badge(p.kind)]),
-        el("td", { text: p.source + (p.id ? " · " + p.id : "") + (p.untrusted ? " · untrusted" : "") }),
+        el("td", { text: p.source + (p.id ? " · " + p.id : "") + (p.blocks && p.blocks.length ? " [" + p.blocks.join(", ") + "]" : "") + (p.untrusted ? " · untrusted" : "") }),
         el("td", { text: m.role || "" }),
         el("td", { class: "muted", text: preview }),
         el("td", { class: "n", text: fmt(p.tokens) }),
@@ -219,7 +235,9 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
       var key = s.id + ":" + p.index;
       var detail = el("tr", { style: state.open[key] ? "" : "display:none" }, [el("td", { colspan: "6" }, [el("pre", { text: (m.content || "") + (m.toolCalls ? "\n\n" + JSON.stringify(m.toolCalls, null, 2) : "") + (m.toolCallId ? "\n\n[toolCallId " + m.toolCallId + "]" : "") })])]);
       tr.addEventListener("click", function () { state.open[key] = !state.open[key]; detail.style.display = state.open[key] ? "" : "none"; });
+      if (s.cache && s.cache.reused && s.cache.reused.divergedAt === p.index) rows.push(el("tr", { class: "div" }, [el("td", { colspan: "6", text: "▼ отсюда промпт отличается от прошлого шага: дальше кэш не читается" })]));
       rows.push(tr, detail);
+      if (p.cacheHint) rows.push(el("tr", { class: "cut" }, [el("td", { colspan: "6", text: "▲ граница кэша «" + p.cacheHint + "»: " + (HINTS[p.cacheHint] || "") })]));
     });
     main.appendChild(table(["#", "часть", "источник", "роль", "начало", "ток."], rows));
 
@@ -248,7 +266,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
     main.appendChild(el("h2", { text: "Контекст-плагины (" + s.contexts.length + ")" }));
     if (!s.contexts.length) main.appendChild(el("div", { class: "muted", text: "Нет плагинов с ctx.context()." }));
     s.contexts.forEach(function (c) {
-      main.appendChild(el("div", {}, [el("b", { text: c.plugin + "/" + c.name }), el("span", { class: c.ok ? "muted" : "warn", text: " · " + c.ms + " мс · " + fmt(c.tokensBefore) + " → " + fmt(c.tokensAfter) + " ток." + (c.ok ? "" : " · ошибка: " + (c.error || "")) })]));
+      main.appendChild(el("div", {}, [el("b", { text: c.plugin + "/" + c.name }), el("span", { class: c.ok && !c.reordered ? "muted" : "warn", text: " · " + c.ms + " мс · " + fmt(c.tokensBefore) + " → " + fmt(c.tokensAfter) + " ток." + (c.ok ? "" : " · ошибка: " + (c.error || "")) + (c.reordered ? " · менял сообщения до хвоста: ядро оставило их как были и взяло только то, что плагин дописал в конец" : "") })]));
       c.added.forEach(function (a) { main.appendChild(el("pre", { class: "add", text: "+ [" + a.index + "] " + a.role + ": " + a.content })); });
       c.removed.forEach(function (a) { main.appendChild(el("pre", { class: "rem", text: "- [" + a.index + "] " + a.role + ": " + a.content })); });
       if (c.ok && !c.added.length && !c.removed.length) main.appendChild(el("div", { class: "muted", text: "ничего не изменил" }));
@@ -262,7 +280,7 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
     if (p.agentName) return "Персона: глобальный ~/.sinty/AGENTS.md (у агента «" + p.agentName + "» поле AGENTS.md пустое)";
     return "Персона: глобальный ~/.sinty/AGENTS.md — у чата и его проекта нет агентов";
   }
-  function card(v, label) { return el("div", { class: "card" }, [el("b", { text: v }), el("span", { text: label })]); }
+  function card(v, label, extra) { return el("div", { class: "card" + (extra ? " " + extra : "") }, [el("b", { text: v }), el("span", { text: label })]); }
 
   setInterval(function () { if (inited && document.getElementById("live").checked && !document.hidden) refresh(); }, 3000);
   parent.postMessage({ sinty: PROTO, op: "ready" }, "*");

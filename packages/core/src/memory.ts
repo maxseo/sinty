@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { getLoadablePath } from "sqlite-vec";
 import type { ChatMessage } from "@sinty/sdk";
+import { isHumanMessage } from "./prompt.js";
 
 export type MemoryTier = "profile" | "log" | "note";
 export type MemoryScope = "user" | "agent" | "chat";
@@ -438,20 +439,22 @@ export function estimateTokens(messages: ChatMessage[]): number {
   return Math.ceil(JSON.stringify(messages).length / 4);
 }
 
-/** Keep the last `keepUsers` user turns verbatim. Older tool results shrink to 15 lines. */
-export function trimOldToolResults(messages: ChatMessage[], keepUsers = 12): ChatMessage[] {
-  let users = 0;
-  let cut = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!m || m.role !== "user" || m.content.startsWith("[supervisor]")) continue;
-    users++;
-    if (users === keepUsers) {
-      cut = i;
-      break;
-    }
-  }
-  if (users < keepUsers) return messages;
+/**
+ * Older tool results shrink to 15 lines; the last `keepUsers` human turns stay verbatim. The boundary moves in
+ * steps of `step` turns (counted from the start of the dialogue), not on every turn: a rolling cut rewrote one more
+ * old turn on every new message and broke the provider's prompt cache from there on. Now the prefix changes once
+ * every `step` turns. Supervisor notices and turn contexts are not human turns.
+ */
+export function trimOldToolResults(messages: ChatMessage[], keepUsers = 12, step = 8): ChatMessage[] {
+  const humans: number[] = [];
+  messages.forEach((m, i) => {
+    if (isHumanMessage(m)) humans.push(i);
+  });
+  const old = humans.length - keepUsers;
+  if (old <= 0) return messages;
+  const turns = Math.floor(old / Math.max(1, step)) * Math.max(1, step);
+  if (turns === 0) return messages;
+  const cut = humans[turns]!;
   return messages.map((m, i) => {
     if (i >= cut || m.role !== "tool") return m;
     const lines = m.content.split("\n").slice(0, 15).join("\n");
