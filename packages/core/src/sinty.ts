@@ -173,8 +173,17 @@ export class Sinty {
     return { failedPlugins: failed, resumedTurns };
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Stops turns, lets the memory afterTurn queue drain while plugins still run (default: memory.hooks.closeTimeoutMs),
+   * then stops plugins. Jobs that do not finish in time stay pending and resume on the next start.
+   */
+  async stop(opts: { drainTimeoutMs?: number } = {}): Promise<void> {
     await this.agent.stop();
+    try {
+      await this.memory.drainBeforeClose(opts.drainTimeoutMs);
+    } catch (e) {
+      this.log("warn", "memory afterTurn queue was not drained before shutdown", e instanceof Error ? e.message : e);
+    }
     this.supervisor?.stop();
     this.memory.beginClose();
     this.host.stop();

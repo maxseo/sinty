@@ -55,3 +55,6 @@ All notable changes to this project are documented here. The format follows
 - When the compaction summary fails the prompt is trimmed to the last 12 user turns instead of sending the whole
   history (journaled as `memory.degraded` / `memory.compacted {ok: false}`).
 - The two Windows-only shell sandbox tests no longer fail on Linux CI; they are skipped off Windows (TODO).
+- `sinty run` (and any `Sinty.stop()`) no longer loses afterTurn memory jobs: shutdown waits up to
+  `memory.hooks.closeTimeoutMs` (default 15 s) for the queue while plugins still run; unfinished jobs stay `pending`
+  with a warning and resume on the next start.

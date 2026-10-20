@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { SintyConfig } from "../config.js";
-import { boot, FIXTURES, tempHome } from "./helpers.js";
+import { Sinty } from "../sinty.js";
+import { boot, FIXTURES, tempHome, testConfig } from "./helpers.js";
 
 type Step = { text?: string; toolCalls?: { name: string; args: unknown }[] };
 
@@ -140,6 +141,66 @@ test("router: when the summary call fails the prompt is trimmed to the last 12 u
     assert.ok(events.some((e) => e.type === "memory.degraded"));
   } finally {
     await sinty.stop();
+    cleanup();
+  }
+});
+
+test("router: stop() drains the afterTurn queue before plugins stop (sinty run exits right after the turn)", async () => {
+  const { home, cleanup } = tempHome();
+  const script = { "remember it": [{ text: "noted" }] };
+  const sinty = await boot(home, [], { config: config(script, { afterTurnSlowMs: 300 }), plugins: [] });
+  let turnId = "";
+  try {
+    const s = sinty.agent.createSession();
+    turnId = sinty.agent.send(s.id, "remember it").turnId;
+    await sinty.agent.idle();
+    // no memory.idle(): exactly what `sinty run` does
+  } finally {
+    await sinty.stop();
+  }
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(join(home, "data", "memory", "memory.db"), { readOnly: true });
+    const jobs = db.prepare("SELECT turn_id, status FROM memory_jobs").all() as { turn_id: string; status: string }[];
+    const facts = db.prepare("SELECT text, source FROM memory_facts").all() as { text: string; source: string }[];
+    db.close();
+    assert.deepEqual(jobs.map((j) => [j.turn_id, j.status]), [[turnId, "done"]]);
+    assert.deepEqual(facts.map((f) => [f.text, f.source]), [["The agent replied: noted", "memory-test"]]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("router: stop() gives up waiting after the close timeout; the job stays pending and runs on the next start", async () => {
+  const { home, cleanup } = tempHome();
+  const script = { "remember it": [{ text: "noted" }] };
+  const warnings: string[] = [];
+  const sinty = new Sinty({
+    home,
+    config: testConfig([], config(script, { afterTurnSlowMs: 5000 }), []),
+    log: (level, msg) => {
+      if (level === "warn") warnings.push(msg);
+    },
+  });
+  await sinty.start();
+  try {
+    const s = sinty.agent.createSession();
+    sinty.agent.send(s.id, "remember it");
+    await sinty.agent.idle();
+    const t0 = Date.now();
+    await sinty.stop({ drainTimeoutMs: 200 });
+    assert.ok(Date.now() - t0 < 3000, "shutdown is not held by the slow job");
+    assert.ok(warnings.some((w) => /1 afterTurn job\(s\) still pending at shutdown after waiting 200 ms/.test(w)), warnings.join("\n"));
+    assert.ok(!warnings.some((w) => /memory is closed/.test(w)));
+    // next start picks the job up
+    const again = await boot(home, [], { config: config(script, {}), plugins: [] });
+    try {
+      await again.memory.idle();
+      assert.deepEqual(again.memory.jobs().map((j) => j.status), ["done"]);
+    } finally {
+      await again.stop();
+    }
+  } finally {
     cleanup();
   }
 });

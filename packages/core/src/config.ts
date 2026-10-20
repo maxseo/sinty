@@ -87,7 +87,14 @@ export const configSchema = z.object({
           timeoutMs: z.number().int().positive().optional(),
         })
         .optional(),
-      hooks: z.object({ timeoutMs: z.number().int().positive().optional(), afterTurnTimeoutMs: z.number().int().positive().optional() }).optional(),
+      hooks: z
+        .object({
+          timeoutMs: z.number().int().positive().optional(),
+          afterTurnTimeoutMs: z.number().int().positive().optional(),
+          /** How long shutdown waits for queued afterTurn jobs. Default: afterTurnTimeoutMs, at most 15000. */
+          closeTimeoutMs: z.number().int().nonnegative().optional(),
+        })
+        .optional(),
       /** A/B arms for memory recall, assigned by a hash of the session id. See docs/spec/memory.md. */
       experiments: z
         .array(

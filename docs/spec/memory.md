@@ -100,6 +100,11 @@ with primary key `(turn_id, plugin, processor)`; inserting the same turn twice i
 and journaled as `memory.written` (`by` = plugin name). A job whose plugin is not running stays `pending` until a
 later start.
 
+Shutdown (`Sinty.stop()`, used by `sinty run`, `sinty serve` and tests) first waits up to `memory.hooks.closeTimeoutMs`
+(default: `afterTurnTimeoutMs`, at most 15 s) for queued jobs while plugins still run, then stops plugins. Jobs that do
+not finish in time stay `pending`, are logged with a warning and resume on the next start; a result that arrives after
+shutdown began is discarded and the job runs again.
+
 ## Recall budget and trust
 
 - `memory.recall.limit` (default 8) records per turn, `memory.recall.budgetTokens` (default 1200) for the whole
@@ -214,6 +219,6 @@ memory:
   providers: []                      # restrict recall to these plugin providers (default: all enabled)
   writeTo: []                        # plugin providers that receive mirrored writes
   recall: { auto: false, limit: 8, budgetTokens: 1200, timeoutMs: 3000 }
-  hooks: { timeoutMs: 5000, afterTurnTimeoutMs: 60000 }
+  hooks: { timeoutMs: 5000, afterTurnTimeoutMs: 60000, closeTimeoutMs: 15000 }   # closeTimeoutMs: shutdown waits this long for the queue
   experiments: []
 ```

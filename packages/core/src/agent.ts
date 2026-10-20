@@ -311,8 +311,9 @@ export class Agent {
             const speaker = this.speaker(sessionId);
             this.record({ sessionId, turnId, stepId: view.lastResponse.stepId, type: "message.agent", actor: AGENT, data: strip({ text: view.lastResponse.data.text ?? "", agentId: speaker?.id, agentName: speaker?.name }) });
           }
-          this.endTurn(sessionId, turnId, "completed", { type: "turn.completed", data: { steps: view.totalSteps } });
+          // Queue afterTurn before the turn is reported done, so whoever waits for the turn (sinty run) sees the job.
           this.memoryAfterTurn(sessionId, turnId, view.lastResponse.data.text ?? "");
+          this.endTurn(sessionId, turnId, "completed", { type: "turn.completed", data: { steps: view.totalSteps } });
           return;
         }
         const over = this.overBudget(view);

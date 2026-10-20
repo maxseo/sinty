@@ -27,6 +27,7 @@ export default definePlugin({
         return w.text.includes("DROP") ? null : w;
       },
       async afterTurn({ turn, reply }) {
+        if (cfg.afterTurnSlowMs) await sleep(cfg.afterTurnSlowMs);
         log("after.jsonl", { turnId: turn.turnId });
         if (cfg.failAfterTurn) throw new Error("extractor broke");
         return { facts: [{ text: `The agent replied: ${reply}`, tier: "log" }] };
