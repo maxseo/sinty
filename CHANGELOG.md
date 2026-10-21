@@ -171,6 +171,10 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- `tool-web` (and any plugin with `permissions.shell`, `permissions.browser` or runtime `mcp-stdio`) no longer logs
+  Node's `[PERM0002] SecurityWarning: The flag --allow-child-process must be used with extreme caution` as a warning
+  on every start. Only that warning code is switched off, only in those processes (`--disable-warning=PERM0002`);
+  the host logs one info line naming the grant instead. Other warnings are unaffected.
 - A turn that read a few shops was stopped with "supervisor notices did not help (tool_error: 3, total 3)": site
   refusals (401, 404, a 1.5 MB page) counted as tool misuse toward `maxNoticesPerDetector`, every notice repeated the
   whole tool-web README, said "Private hosts are blocked" and offered an unrelated incident (another site's url as the

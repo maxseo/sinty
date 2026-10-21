@@ -73,6 +73,15 @@ export interface RegisteredTool extends ToolInfo {
   plugin: string;
 }
 
+/**
+ * Node prints "[PERM0002] SecurityWarning: The flag --allow-child-process must be used with extreme caution" to the
+ * stderr of every process started with that flag, and the host turned it into a warn line for tool-web (and any
+ * shell, browser or mcp-stdio plugin) on every start. The flag is the manifest's declared grant, already shown to the
+ * human, so only this one warning code is switched off, and only in processes that get --allow-child-process; every
+ * other warning, including other SecurityWarnings, still reaches the log. The host logs one info line instead.
+ */
+export const CHILD_PROCESS_WARNING_OFF = "--disable-warning=PERM0002";
+
 /** One plugin = one OS process under the Node.js permission model. */
 export class PluginProcess {
   private child: ChildProcess | undefined;
@@ -126,6 +135,8 @@ export class PluginProcess {
     if (m.permissions.browser && !(m.permissions.net ?? []).includes(PUBLIC_NET)) throw new Error(`plugin ${m.name}: permissions.browser needs "${PUBLIC_NET}" in permissions.net`);
     const child = fork(RUNNER, [], { execArgv: this.permissionArgs(), env: this.childEnv(), cwd: this.loaded.dir, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "advanced" });
     this.child = child;
+    // Said once here instead of Node's PERM0002 SecurityWarning on the plugin's stderr (see CHILD_PROCESS_WARNING_OFF).
+    if (this.childProcesses) this.events.log(this.name, "info", `may start child processes (${this.childProcessReason()}); the Node permission model does not confine them`);
     child.stdout?.on("data", (b: Buffer) => this.events.log(this.name, "info", b.toString().trimEnd()));
     child.stderr?.on("data", (b: Buffer) => this.events.log(this.name, "warn", b.toString().trimEnd()));
     child.on("message", (msg: FromChild) => this.onMessage(msg));
@@ -215,10 +226,19 @@ export class PluginProcess {
       `--allow-fs-read=${join(this.paths.plugins, "node_modules")}`,
       ...grants.read.map((p) => `--allow-fs-read=${p}`),
       ...grants.write.flatMap((p) => [`--allow-fs-read=${p}`, `--allow-fs-write=${p}`]),
-      ...(this.loaded.manifest.permissions.shell || this.loaded.manifest.runtime === "mcp-stdio" || this.loaded.manifest.permissions.browser ? ["--allow-child-process"] : []),
+      ...(this.childProcesses ? ["--allow-child-process", CHILD_PROCESS_WARNING_OFF] : []),
       ...(this.loaded.manifest.permissions.browser ? this.browserArgs() : []),
       "--disable-warning=ExperimentalWarning",
     ];
+  }
+
+  /**
+   * The manifest needs child processes: permissions.shell, permissions.browser (Chromium) or runtime mcp-stdio.
+   * Node then starts the process with --allow-child-process.
+   */
+  get childProcesses(): boolean {
+    const m = this.loaded.manifest;
+    return Boolean(m.permissions.shell || m.permissions.browser || m.runtime === "mcp-stdio");
   }
 
   /** `$DATA/tmp`: the browser profile and Playwright's temp files; the process gets TMP/TEMP/TMPDIR pointing here. */
@@ -241,6 +261,11 @@ export class PluginProcess {
       `--allow-fs-write=${tmp}`,
       ...(process.platform === "linux" ? LINUX_BROWSER_PROBES.map((p) => `--allow-fs-read=${p}`) : []),
     ];
+  }
+
+  private childProcessReason(): string {
+    const m = this.loaded.manifest;
+    return [m.permissions.shell && "permissions.shell", m.permissions.browser && "permissions.browser", m.runtime === "mcp-stdio" && "runtime mcp-stdio"].filter(Boolean).join(", ");
   }
 
   childEnv(): NodeJS.ProcessEnv {
