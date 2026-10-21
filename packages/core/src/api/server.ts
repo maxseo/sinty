@@ -10,7 +10,7 @@ import { AgentError } from "../agent.js";
 import { saveBlob } from "../blobs.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
-import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
+import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
 import { loadRegistry } from "../registry.js";
 import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
 import { listSkills } from "../skills.js";
@@ -173,7 +173,9 @@ export function createApp(sinty: Sinty): Hono {
         tabs: p.disabled || p.staticOnly ? [] : (p.loaded.manifest.ui?.tabs ?? []).map((t) => ({ id: t.id, title: t.title, src: `/p/${p.name}${t.path}`, placement: t.placement ?? "sidebar" })),
         inspector: p.inspector,
         permissions: p.loaded.manifest.permissions,
-        forAll: sharedPlugins(sinty.paths) === null || sharedPlugins(sinty.paths)!.includes(p.name),
+        // Default-on plugins replace former core tools: every agent has them unless its card excludes them.
+        defaultOn: DEFAULT_ON_PLUGINS.includes(p.name),
+        forAll: DEFAULT_ON_PLUGINS.includes(p.name) || sharedPlugins(sinty.paths) === null || sharedPlugins(sinty.paths)!.includes(p.name),
       })),
     }),
   );

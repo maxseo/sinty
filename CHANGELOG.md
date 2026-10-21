@@ -139,6 +139,20 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- Web broken for roster agents after `tool-web` left the core: agent cards saved before it existed list their plugins
+  explicitly without `tool-web`, so every `web.search` was denied with "this plugin is not on this agent". Default-on
+  plugins (`DEFAULT_ON_PLUGINS`) are now on every agent unless its card lists them in the new `excludedPlugins`;
+  the agent editor shows `tool-web` as «встроенный, у всех агентов» and unticking it writes `excludedPlugins`.
+  `GET /v1/plugins` marks such plugins `defaultOn: true` (and `forAll: true`, whatever the shared list says).
+- `agent.task` child turns were offered no tools at all (the allow list held `web.search`, the schemas `web_search`),
+  and ran as the global persona. They now get exactly their list and speak as the parent's agent (persona, memory
+  scope, plugins, exclusions); their memory snapshot stays in the child session.
+- The memory snapshot changed on every model step of a long chat (prompt diverged at message 2, DeepSeek cache 0%):
+  when the kept 12 user turns alone were over 65% of `memory.contextTokens`, the same head was folded again before
+  every step, the summary came back worded differently and its facts were stored again, which rebuilt
+  `memory.snapshot`. Now a head is folded once; folds happen only before the first model step of a turn (later steps
+  fold only when the whole window would overflow); and when 12 turns are too long, fewer are kept (down to 2) so the
+  next turn does not fold again. Golden `compaction.json` regenerated (3 folds instead of 4 in 16 turns).
 - Журнал tab: the «Вызов» badge of tool rows rendered as a wide card over the tool name (it picked up the global `.tool` style).
 - Chat agent selection: the core now picks the speaking agent from the chat's own `metadata.agentIds` first (what
   the Web UI saves when a chat is created with chosen participants), then from the project's agents (asked agent →

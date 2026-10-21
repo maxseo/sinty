@@ -142,6 +142,8 @@ export function memorySettings(config: SintyConfig): MemorySettings {
 }
 
 const KEEP_USER_TURNS = 12;
+/** Compaction never keeps fewer human turns than this, however long they are. */
+const MIN_KEEP_USER_TURNS = 2;
 const MAX_JOB_ATTEMPTS = 3;
 const MAX_RECORD_CHARS = 1000;
 const MEMORY_ACTOR = { kind: "system", id: "memory" } as const;
@@ -592,21 +594,47 @@ export class MemoryRouter {
    */
   async compact(input: CompactInput): Promise<ChatMessage[]> {
     const { sessionId, events, dialogue } = input;
-    const limit = Math.floor(this.d.config.memory.contextTokens * 0.65);
+    const window = this.d.config.memory.contextTokens;
+    const limit = Math.floor(window * 0.65);
     if (estimateTokens(dialogue) < limit) return dialogue;
     const userIdx = events.map((e, i) => (e.type === "message.user" ? i : -1)).filter((i) => i >= 0);
-    if (userIdx.length <= KEEP_USER_TURNS) return dialogue;
-    const start = userIdx[userIdx.length - KEEP_USER_TURNS] ?? 0;
+    if (userIdx.length <= MIN_KEEP_USER_TURNS) return dialogue;
+    const after = (seq: number): ChatMessage[] => input.toMessages(events.filter((e) => e.seq > seq));
+    // The last fold of this session (ok or trimmed): the dialogue the previous step was sent starts right after it.
+    const folds = this.d.sessionEvents?.(sessionId, ["memory.compacted"]) ?? [];
+    const lastFold = folds.at(-1) as SintyEvent<"memory.compacted"> | undefined;
+    // Folds happen before the first model step of a turn. A fold rewrites the summary and the memory snapshot, i.e.
+    // the start of the prompt, so folding on a later step (tool results pushed the history over the limit) would
+    // throw away the provider cache in the middle of the turn. Later steps keep the dialogue the previous step was
+    // sent (from the last fold on) and fold only when that is about to overflow the whole window.
+    const turnId = input.turn?.turnId;
+    if (turnId && (this.d.turnEvents?.(turnId) ?? []).some((e) => e.type === "model.request")) {
+      const kept = lastFold ? after(lastFold.data.coversUntil) : dialogue;
+      if (estimateTokens(kept) < window) return kept;
+    }
+    // Keep the last 12 human turns. When those alone are over the limit (long tool output), keep fewer, down to 2, until
+    // they take at most half of it: folding to just under the limit would fold again on the very next turn.
+    let keep = Math.min(KEEP_USER_TURNS, userIdx.length - 1);
+    let start = userIdx[userIdx.length - keep] ?? 0;
+    const overLimit = (from: number): boolean => estimateTokens(input.toMessages(events.slice(from))) >= limit;
+    const target = overLimit(start) ? Math.floor(limit / 2) : limit;
+    while (keep > MIN_KEEP_USER_TURNS && estimateTokens(input.toMessages(events.slice(start))) >= target) {
+      keep--;
+      start = userIdx[userIdx.length - keep] ?? 0;
+    }
     const head = events.slice(0, start);
     const tail = events.slice(start);
     const last = head.at(-1);
     if (!last) return dialogue;
+    // Nothing new to fold: the same head was folded already. Folding it again only produced a new summary text (and
+    // a new snapshot) on every step without making the prompt any shorter.
+    if (lastFold && last.seq <= lastFold.data.coversUntil) return after(lastFold.data.coversUntil);
     const b = this.builtin;
     const prev = b.summary(sessionId);
     // Stepped: keep the existing summary and everything after it while that still fits. Re-folding to the last 12
     // turns on every new message would move the start of the dialogue (and break the prompt cache) on every turn.
     if (prev) {
-      const since = input.toMessages(events.filter((e) => e.seq > prev.coversUntil));
+      const since = after(prev.coversUntil);
       if (estimateTokens([{ role: "system", content: prev.text }, ...since]) < limit) return since;
     }
     const tailMessages = input.toMessages(tail);

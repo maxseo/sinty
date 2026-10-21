@@ -5,7 +5,8 @@ import { definePlugin } from "@sinty/sdk";
 /**
  * options.script: { "<last user text>": [step, step, ...] }, step = { text?, toolCalls?: [{ name, args }] }.
  * The step index is the number of assistant messages after the last user message.
- * A request whose only message asks for JSON (the summary call) gets options.summary back.
+ * A request whose only message asks for JSON (the summary call) gets options.summary back (numbered per fold with
+ * options.varySummary).
  * options.embed: when true the provider also answers embeddings with a tiny bag-of-letters vector.
  */
 export default definePlugin({
@@ -14,6 +15,7 @@ export default definePlugin({
     mkdirSync(ctx.paths.data, { recursive: true });
     const file = join(ctx.paths.data, "requests.jsonl");
     const record = (row) => appendFileSync(file, JSON.stringify(row) + "\n");
+    let folds = 0;
     ctx.provider({
       protocol: "rec",
       /** Deterministic toy embeddings: letter buckets, normalized; width from options.dims (default 4). */
@@ -35,7 +37,11 @@ export default definePlugin({
         const opts = req.endpoint.options ?? {};
         const only = req.messages.length === 1 ? req.messages[0] : undefined;
         if (only && only.role === "user" && only.content.includes("Reply with JSON only")) {
-          yield { type: "text", text: JSON.stringify(opts.summary ?? { summary: "Earlier talk folded.", facts: [] }) };
+          // options.varySummary: each fold words its summary a little differently, like a real model does.
+          folds++;
+          const base = opts.summary ?? { summary: "Earlier talk folded.", facts: [] };
+          const out = opts.varySummary ? { ...base, summary: `${base.summary} (fold ${folds})`, facts: (base.facts ?? []).map((f) => ({ ...f, text: `${f.text} (fold ${folds})` })) } : base;
+          yield { type: "text", text: JSON.stringify(out) };
           yield { type: "done", stopReason: "end_turn", usage: { inputTokens: 7, outputTokens: 3 } };
           return;
         }

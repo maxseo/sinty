@@ -37,90 +37,6 @@
       },
       {
         "role": "user",
-        "content": "question 4: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
-      },
-      {
-        "role": "assistant",
-        "content": "ok: question 4: padding "
-      },
-      {
-        "role": "user",
-        "content": "<turn_context>\nContext the core adds at the start of this turn. It is not written by the user.\nCurrent time: <TURN_TIME>.\n</turn_context>"
-      },
-      {
-        "role": "user",
-        "content": "question 5: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
-      },
-      {
-        "role": "assistant",
-        "content": "ok: question 5: padding "
-      },
-      {
-        "role": "user",
-        "content": "<turn_context>\nContext the core adds at the start of this turn. It is not written by the user.\nCurrent time: <TURN_TIME>.\n</turn_context>"
-      },
-      {
-        "role": "user",
-        "content": "question 6: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
-      },
-      {
-        "role": "assistant",
-        "content": "ok: question 6: padding "
-      },
-      {
-        "role": "user",
-        "content": "<turn_context>\nContext the core adds at the start of this turn. It is not written by the user.\nCurrent time: <TURN_TIME>.\n</turn_context>"
-      },
-      {
-        "role": "user",
-        "content": "question 7: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
-      },
-      {
-        "role": "assistant",
-        "content": "ok: question 7: padding "
-      },
-      {
-        "role": "user",
-        "content": "<turn_context>\nContext the core adds at the start of this turn. It is not written by the user.\nCurrent time: <TURN_TIME>.\n</turn_context>"
-      },
-      {
-        "role": "user",
-        "content": "question 8: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
-      },
-      {
-        "role": "assistant",
-        "content": "ok: question 8: padding "
-      },
-      {
-        "role": "user",
-        "content": "<turn_context>\nContext the core adds at the start of this turn. It is not written by the user.\nCurrent time: <TURN_TIME>.\n</turn_context>"
-      },
-      {
-        "role": "user",
-        "content": "question 9: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
-      },
-      {
-        "role": "assistant",
-        "content": "ok: question 9: padding "
-      },
-      {
-        "role": "user",
-        "content": "<turn_context>\nContext the core adds at the start of this turn. It is not written by the user.\nCurrent time: <TURN_TIME>.\n</turn_context>"
-      },
-      {
-        "role": "user",
-        "content": "question 10: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
-      },
-      {
-        "role": "assistant",
-        "content": "ok: question 10: padding"
-      },
-      {
-        "role": "user",
-        "content": "<turn_context>\nContext the core adds at the start of this turn. It is not written by the user.\nCurrent time: <TURN_TIME>.\n</turn_context>"
-      },
-      {
-        "role": "user",
         "content": "question 11: padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding padding "
       },
       {
@@ -199,6 +115,6 @@
     ],
     "maxOutputTokens": 1000
   },
-  "summaryCalls": 4,
-  "requests": 20
+  "summaryCalls": 3,
+  "requests": 19
 }
