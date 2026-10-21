@@ -163,10 +163,20 @@ export type ProviderChunk =
   | { type: "tool_call"; id: string; name: string; args: unknown }
   | { type: "done"; stopReason: string; usage: ProviderUsage };
 
+export interface ModelInfo {
+  id: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
 export interface ProviderDefinition {
   protocol: string;
   stream(req: ProviderRequest): AsyncIterable<ProviderChunk>;
-  listModels?(endpoint: ProviderEndpoint): Promise<{ id: string; contextWindow?: number }[]>;
+  /**
+   * The provider's model list. `contextWindow` is the most input tokens the model takes, when the provider's API
+   * says so (Anthropic `max_input_tokens`, OpenRouter `context_length`, ...); the core uses it for compaction.
+   */
+  listModels?(endpoint: ProviderEndpoint): Promise<ModelInfo[]>;
   /** Embeddings for `ctx.models.embed` and the builtin vector search. */
   embed?(req: EmbedProviderRequest): Promise<{ vectors: number[][]; usage?: { inputTokens: number } }>;
 }

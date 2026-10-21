@@ -243,6 +243,12 @@ type Handler = (body: Record<string, unknown>, res: ServerResponse) => void;
 async function serve(handler: Handler): Promise<{ server: Server; port: number; bodies: string[] }> {
   const bodies: string[] = [];
   const server = createServer((req: IncomingMessage, res) => {
+    // The core asks GET /models once on start for context windows (context-window.ts); these servers list none.
+    if (req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"data":[]}');
+      return;
+    }
     let raw = "";
     req.on("data", (c: Buffer) => (raw += c.toString()));
     req.on("end", () => {

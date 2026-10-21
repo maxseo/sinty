@@ -58,6 +58,9 @@ pre { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-mo
 tr.cut td { border-bottom:2px dashed var(--accent); color:var(--accent); font-size:11px; padding:2px 8px; }
 tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:11px; padding:2px 8px; }
 .card.fact { border-color:var(--accent); }
+.card.win { display:flex; gap:10px; align-items:center; }
+.card.win svg { flex:none; }
+.card.win .pct { font-size:12px; font-weight:600; fill:var(--fg); }
 </style>
 </head>
 <body>
@@ -77,6 +80,7 @@ tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:1
   var PROTO = "tab/1";
   var COLORS = { system: "#5b6abf", skills: "#7c8b9a", memory: "#2e9d6a", summary: "#c08a1d", recall: "#1f8fb3", processor: "#b04fbf", plugin: "#d0573a", dialogue: "#8a8f98", turn: "#1f8fb3" };
   var NAMES = { system: "системный", skills: "навыки", memory: "память", summary: "сводка", recall: "recall", processor: "процессор", plugin: "плагин", dialogue: "диалог", turn: "контекст хода" };
+  var SOURCES = { config: "memory.contextTokens", route: "models.contextWindows", provider: "по списку моделей провайдера", table: "по таблице Sinty", fallback: "по умолчанию: модель неизвестна" };
   var HINTS = { static: "инструменты, системный промпт, навыки", session: "память сессии и сводка (до компакции)", turn: "диалог до этого места" };
   var seq = 0, pending = {}, state = { session: "", step: "", list: [], snap: null, open: {} }, epoch = 0, inited = false;
 
@@ -106,7 +110,7 @@ tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:1
     (kids || []).forEach(function (c) { if (c) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return n;
   }
-  function fmt(n) { return n >= 10000 ? (n / 1000).toFixed(1) + "k" : String(n); }
+  function fmt(n) { return n >= 1000000 ? Number((n / 1000000).toFixed(2)) + "M" : n >= 10000 ? (n / 1000).toFixed(1) + "k" : String(n); }
   function pct(a, b) { return b ? Math.round(100 * a / b) + "%" : "—"; }
   function time(iso) { var d = new Date(iso); return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
   function badge(kind) { return el("span", { class: "kind", style: "background:" + (COLORS[kind] || "#888"), text: NAMES[kind] || kind }); }
@@ -187,6 +191,7 @@ tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:1
     var main = document.getElementById("main");
     main.textContent = "";
     main.appendChild(el("div", { class: "cards" }, [
+      windowCard(s),
       card(fmt(s.tokens.total), "токенов всего (оценка)"),
       card(fmt(s.tokens.messages), "сообщения"),
       card(fmt(s.tokens.tools), "схемы " + s.tools.length + " инструм."),
@@ -279,6 +284,37 @@ tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:1
     if (p.source === "agent") return "Персона: AGENTS.md агента «" + (p.agentName || "?") + "»";
     if (p.agentName) return "Персона: глобальный ~/.sinty/AGENTS.md (у агента «" + p.agentName + "» поле AGENTS.md пустое)";
     return "Персона: глобальный ~/.sinty/AGENTS.md — у чата и его проекта нет агентов";
+  }
+  /**
+   * The model's context window and how full this step's prompt is: the provider's real prompt size once the step
+   * finished, before that the chars/4 estimate × the chat's ratio. The tick marks where the dialogue is folded.
+   */
+  function windowCard(s) {
+    var w = s.window;
+    if (!w || !w.tokens) return null;
+    var u = s.usage;
+    var fact = !!(u && u.inputTokens);
+    var used = fact ? u.inputTokens : Math.round(s.tokens.total * (w.ratio || 1));
+    var frac = Math.min(1, used / w.tokens), mark = Math.min(1, w.compactAt / w.tokens);
+    var NS = "http://www.w3.org/2000/svg", R = 24, C = 2 * Math.PI * R;
+    function svg(tag, attrs) { var n = document.createElementNS(NS, tag); for (var k in attrs) n.setAttribute(k, String(attrs[k])); return n; }
+    var g = svg("svg", { width: 60, height: 60, viewBox: "0 0 60 60", role: "img" });
+    g.appendChild(svg("title", {})).textContent = "заполнено " + pct(used, w.tokens) + ", сводка с " + pct(w.compactAt, w.tokens);
+    g.appendChild(svg("circle", { cx: 30, cy: 30, r: R, fill: "none", stroke: "var(--line)", "stroke-width": 7 }));
+    if (frac > 0) g.appendChild(svg("circle", { cx: 30, cy: 30, r: R, fill: "none", stroke: frac >= mark ? "var(--warn)" : "var(--accent)", "stroke-width": 7, "stroke-dasharray": (Math.max(0.005, frac) * C).toFixed(2) + " " + C.toFixed(2), transform: "rotate(-90 30 30)", "stroke-linecap": frac < 1 ? "round" : "butt" }));
+    var a = 2 * Math.PI * mark - Math.PI / 2;
+    g.appendChild(svg("line", { x1: (30 + (R - 6) * Math.cos(a)).toFixed(2), y1: (30 + (R - 6) * Math.sin(a)).toFixed(2), x2: (30 + (R + 6) * Math.cos(a)).toFixed(2), y2: (30 + (R + 6) * Math.sin(a)).toFixed(2), stroke: "var(--warn)", "stroke-width": 2, class: "mark" }));
+    var t = svg("text", { x: 30, y: 34, "text-anchor": "middle", class: "pct" });
+    t.textContent = used / w.tokens < 0.01 && used > 0 ? "<1%" : pct(used, w.tokens);
+    g.appendChild(t);
+    return el("div", { class: "card win", title: "Окно модели " + w.tokens + " ток. (" + (SOURCES[w.source] || w.source) + "). Сводка диалога — при " + w.compactAt + " ток. диалога (65%)." }, [
+      g,
+      el("div", {}, [
+        el("b", { text: fmt(w.tokens) }),
+        el("span", { text: "окно модели · " + (SOURCES[w.source] || w.source) }),
+        el("div", { class: "muted", style: "font-size:11px", text: (fact ? "факт " : "оценка ") + fmt(used) + (!fact && w.ratio ? " (×" + w.ratio + ")" : "") + " · сводка с " + fmt(w.compactAt) }),
+      ]),
+    ]);
   }
   function card(v, label, extra) { return el("div", { class: "card" + (extra ? " " + extra : "") }, [el("b", { text: v }), el("span", { text: label })]); }
 

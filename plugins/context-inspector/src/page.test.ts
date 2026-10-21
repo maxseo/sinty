@@ -58,6 +58,7 @@ function boot() {
     documentElement: { dataset: {} as Record<string, string> },
     getElementById: (id: string) => els[id],
     createElement: (tag: string) => new FakeEl(tag),
+    createElementNS: (_ns: string, tag: string) => new FakeEl(tag),
     createTextNode: (text: string) => ({ text }),
   };
   const script = TAB_HTML.slice(TAB_HTML.indexOf("<script>") + 8, TAB_HTML.indexOf("</script>"));
@@ -204,4 +205,42 @@ test("session tab page: shows real cache usage next to the estimates, the cache 
   assert.match(text, /context\.turn \[memory\.recalled\]/);
   const rows = p.els.main!.find((e) => e.className === "div" || e.className === "cut").map((e) => e.className);
   assert.deepEqual(rows, ["cut", "div", "cut"], "boundary after skills, divergence before the last message, boundary after it");
+});
+
+test("session tab page: the model's context window with a fill ring and the fold mark", async () => {
+  const p = boot();
+  p.post({ sinty: "tab/1", op: "init", sessionId: "ses_w" });
+  p.answer(/ses_w/, { snapshots: [sum("w1", "ses_w", "trn_1", 1, 1000)] });
+  await p.flush();
+  // Before the model answered: the estimate × the chat's ratio.
+  const base = { ...full("w1", "ses_w"), tokens: { total: 100000, messages: 90000, tools: 10000, byKind: { dialogue: 90000 } }, window: { tokens: 1000000, source: "table", compactAt: 650000, ratio: 1.3 } };
+  p.answer(/^\/snapshots\/w1$/, base);
+  await p.flush();
+  let text = p.els.main!.textContent;
+  assert.match(text, /1Mокно модели · по таблице Sinty/);
+  assert.match(text, /оценка 130\.0k \(×1\.3\) · сводка с 650\.0k/);
+  const pct = p.els.main!.find((e) => e.tag === "text")[0]!;
+  assert.equal(pct.textContent, "13%");
+  const arcs = p.els.main!.find((e) => e.tag === "circle");
+  assert.equal(arcs.length, 2, "track and fill");
+  assert.equal(arcs[1]!.attrs.stroke, "var(--accent)", "under the fold mark");
+  const mark = p.els.main!.find((e) => e.tag === "line")[0]!;
+  // 65% of the circle: the tick sits left of the bottom (angle 234° − 90° = 144° from the x axis).
+  assert.ok(Number(mark.attrs.x1) < 30 && Number(mark.attrs.y1) > 30);
+
+  // Once the step finished: the provider's real prompt size, past the fold mark.
+  p.els.steps!.find((e) => e.tag === "button")[0]!.click();
+  p.answer(/^\/snapshots\/w1$/, { ...base, window: { tokens: 128000, source: "fallback", compactAt: 83200 }, usage: { provider: "x", model: "m", inputTokens: 96000, outputTokens: 1 } });
+  await p.flush();
+  text = p.els.main!.textContent;
+  assert.match(text, /128\.0kокно модели · по умолчанию: модель неизвестна/);
+  assert.match(text, /факт 96\.0k · сводка с 83\.2k/);
+  assert.equal(p.els.main!.find((e) => e.tag === "text")[0]!.textContent, "75%");
+  assert.equal(p.els.main!.find((e) => e.tag === "circle")[1]!.attrs.stroke, "var(--warn)");
+
+  // Older cores send no window: no ring.
+  p.els.steps!.find((e) => e.tag === "button")[0]!.click();
+  p.answer(/^\/snapshots\/w1$/, full("w1", "ses_w"));
+  await p.flush();
+  assert.equal(p.els.main!.find((e) => e.tag === "svg").length, 0);
 });

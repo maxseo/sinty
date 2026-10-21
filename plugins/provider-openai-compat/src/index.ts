@@ -1,4 +1,4 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderChunk, type ProviderRequest } from "@sinty/sdk";
+import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderChunk, type ProviderRequest, openAIModelList } from "@sinty/sdk";
 
 interface ToolCallAcc {
   id: string;
@@ -57,10 +57,9 @@ export default definePlugin({
       },
       async listModels(endpoint) {
         const baseUrl = (endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
-        const res = await ctx.net.fetch(`${baseUrl}/models`, { headers: endpoint.apiKey ? { authorization: `Bearer ${endpoint.apiKey}` } : {} });
+        const res = await ctx.net.fetch(`${baseUrl}/models`, { headers: { ...(endpoint.apiKey ? { authorization: `Bearer ${endpoint.apiKey}` } : {}), ...endpoint.headers } });
         if (!res.ok) throw await httpError(res);
-        const body = (await res.json()) as { data?: { id: string }[] };
-        return (body.data ?? []).map((m) => ({ id: m.id }));
+        return openAIModelList(await res.json());
       },
       /** POST {baseUrl}/embeddings (OpenAI-compatible). Vectors are returned in input order. */
       async embed(req) {

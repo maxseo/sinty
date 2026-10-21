@@ -189,6 +189,12 @@ test("server-mcp: initialize, tools/list and sinty_ask", async () => {
 test("provider-openai-responses: streams text and tool calls from the Responses API", async () => {
   const bodies: Record<string, unknown>[] = [];
   const server: Server = createServer((req, res) => {
+    // The core asks GET /models once on start for context windows (context-window.ts); these servers list none.
+    if (req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"data":[]}');
+      return;
+    }
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {

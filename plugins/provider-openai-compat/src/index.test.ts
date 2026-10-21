@@ -48,3 +48,20 @@ test("openai-compat: usage reads DeepSeek hit/miss fields and OpenAI cached_toke
   });
   assert.deepEqual(usageOf({ prompt_tokens: 10, completion_tokens: 1 }), { inputTokens: 10, outputTokens: 1 });
 });
+
+test("openai-compat: GET /models windows from OpenRouter, Groq, vLLM; ids only from OpenAI and DeepSeek", async () => {
+  const { openAIModelList } = await import("@sinty/sdk");
+  assert.deepEqual(
+    openAIModelList({
+      data: [
+        { id: "deepseek-flash", object: "model", owned_by: "deepseek" },
+        { id: "or/model", context_length: 131072, top_provider: { context_length: 65536, max_completion_tokens: 8192 } },
+        { id: "groq/model", context_window: 131072, max_completion_tokens: 32768 },
+        { id: "vllm/model", max_model_len: 32768 },
+        { id: "bad", context_length: -1 },
+      ],
+    }),
+    [{ id: "deepseek-flash" }, { id: "or/model", contextWindow: 131072, maxOutputTokens: 8192 }, { id: "groq/model", contextWindow: 131072, maxOutputTokens: 32768 }, { id: "vllm/model", contextWindow: 32768 }, { id: "bad" }],
+  );
+  assert.deepEqual(openAIModelList({ error: "x" }), []);
+});

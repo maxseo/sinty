@@ -17,6 +17,7 @@ import { MemoryError, parseSummaryPayload, trimOldToolResults } from "./memory.j
 import { hint, renderTurnContext, resolveTimezone, withoutHint } from "./prompt.js";
 import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
+import { COMPACT_AT, ContextWindows, ratioFromEvents, tokenRatio, type ContextWindow } from "./context-window.js";
 import { runShell } from "./shell.js";
 import { renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
@@ -117,6 +118,8 @@ export interface AgentDeps {
   supervisor?: SupervisorClient;
   memory: MemoryRouter;
   models?: ModelGateway;
+  /** Context window per model route. Absent (unit tests): one without provider lists. */
+  windows?: ContextWindows;
   log?: (level: string, msg: string, data?: unknown) => void;
 }
 
@@ -129,8 +132,26 @@ export class Agent {
   private readonly warnedContexts = new Set<string>();
   /** Last good text of each system section per session, for a section that fails or times out. */
   private readonly lastSections = new Map<string, string>();
+  /** Provider tokens per estimated token, per session (see tokenRatio); filled from the journal on first use. */
+  private readonly ratios = new Map<string, number | null>();
+  private readonly windows: ContextWindows;
 
-  constructor(private readonly d: AgentDeps) {}
+  constructor(private readonly d: AgentDeps) {
+    this.windows = d.windows ?? new ContextWindows({ dataDir: d.paths.data, config: d.config });
+  }
+
+  /** The context window of the model this chat talks to (its agent's model, else models.default). */
+  contextWindow(sessionId: string): ContextWindow {
+    return this.windows.resolve(this.speaker(sessionId)?.model || this.d.config.models.default);
+  }
+
+  private tokenRatio(sessionId: string): number | undefined {
+    if (!this.ratios.has(sessionId)) {
+      this.ratios.set(sessionId, ratioFromEvents(this.d.journal.events(sessionId, { types: ["model.request", "usage.recorded"] })) ?? null);
+      if (this.ratios.size > 500) this.ratios.delete(this.ratios.keys().next().value!);
+    }
+    return this.ratios.get(sessionId) ?? undefined;
+  }
 
   // ---- public API ----
 
@@ -479,6 +500,7 @@ export class Agent {
     if (trace) this.sendSnapshot(inspectors, trace, { sessionId, turnId, stepId, messages, tools, route: routes[0], speaker });
     else this.lastPrompt.clear();
     const messagesHash = createHash("sha256").update(JSON.stringify(messages)).digest("hex").slice(0, 16);
+    const estTokens = Math.ceil((JSON.stringify(messages).length + JSON.stringify(tools).length) / 4);
     let lastError: WireError | undefined;
 
     for (const [i, route] of routes.entries()) {
@@ -490,7 +512,7 @@ export class Agent {
       if (!prov || !plugin || !model) {
         lastError = { code: "provider_missing", message: `route ${route}: ${!prov ? "provider not in config" : !model ? "no model id" : `no plugin for protocol ${prov.protocol}`}` };
       } else {
-        this.record({ sessionId, turnId, stepId, type: "model.request", actor: SYSTEM, data: { route: i === 0 ? "default" : `fallback.${i - 1}`, provider: providerId, model, messagesHash } });
+        this.record({ sessionId, turnId, stepId, type: "model.request", actor: SYSTEM, data: { route: i === 0 ? "default" : `fallback.${i - 1}`, provider: providerId, model, messagesHash, estTokens } });
         try {
           let text = "";
           const toolCalls: ToolCallRef[] = [];
@@ -525,6 +547,8 @@ export class Agent {
           }
           this.record({ sessionId, turnId, stepId, type: "model.response", actor: AGENT, data: strip({ text: text || undefined, toolCalls, stopReason, usage }) });
           this.record({ sessionId, turnId, stepId, type: "usage.recorded", actor: SYSTEM, data: usage });
+          const ratio = tokenRatio(estTokens, usage.inputTokens);
+          if (ratio) this.ratios.set(sessionId, ratio);
           for (const c of toolCalls) this.record({ sessionId, turnId, stepId, type: "tool.call.requested", actor: AGENT, data: c });
           return;
         } catch (e) {
@@ -716,7 +740,10 @@ export class Agent {
       const { route, speaker, ...rest } = s;
       const persona = speaker?.persona.trim() ? { source: "agent" as const, agentName: speaker.name } : { source: "global" as const, ...(speaker ? { agentName: speaker.name } : {}) };
       const previous = this.lastPrompt.get(s.sessionId);
-      const snapshot = buildSnapshot(trace, { ...rest, step, agentId: speaker?.id ?? this.d.config.agent.name, persona, ...(route ? { route } : {}), ...(previous ? { previous } : {}) }, redact);
+      const w = this.windows.resolve(route);
+      const ratio = this.tokenRatio(s.sessionId);
+      const window = { tokens: w.tokens, source: w.source, compactAt: Math.floor(w.tokens * COMPACT_AT), ...(ratio ? { ratio } : {}) };
+      const snapshot = buildSnapshot(trace, { ...rest, step, agentId: speaker?.id ?? this.d.config.agent.name, persona, ...(route ? { route } : {}), ...(previous ? { previous } : {}), window }, redact);
       this.lastPrompt.delete(s.sessionId);
       this.lastPrompt.set(s.sessionId, { keys: s.messages.map((m) => JSON.stringify(withoutHint(m))), tools: JSON.stringify(s.tools), cached: s.messages.findLastIndex((m) => m.cacheHint) + 1 });
       if (this.lastPrompt.size > 200) this.lastPrompt.delete(this.lastPrompt.keys().next().value!);
@@ -854,6 +881,8 @@ export class Agent {
       signal,
       toMessages: (evs) => eventsToMessages(evs, this.d.paths.data),
       summarize: (previous, head, inner) => this.summarize(sessionId, previous, head, inner),
+      window: this.contextWindow(sessionId).tokens,
+      tokenRatio: this.tokenRatio(sessionId),
     });
   }
 

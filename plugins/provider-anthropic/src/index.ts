@@ -1,4 +1,4 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderRequest, type ProviderUsage } from "@sinty/sdk";
+import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderRequest, type ProviderUsage, type ModelInfo } from "@sinty/sdk";
 
 const VERSION = "2023-06-01";
 
@@ -75,9 +75,32 @@ export default definePlugin({
         }
         yield { type: "done", stopReason, usage: usageOf(start, outputTokens) };
       },
+      /** GET /v1/models: Anthropic reports `max_input_tokens` (the context window) and `max_tokens` per model. */
+      async listModels(endpoint) {
+        const baseUrl = (endpoint.baseUrl ?? "https://api.anthropic.com").replace(/\/+$/, "");
+        const res = await ctx.net.fetch(`${baseUrl}/v1/models?limit=1000`, {
+          headers: { "anthropic-version": VERSION, ...(endpoint.apiKey ? { "x-api-key": endpoint.apiKey } : {}), ...endpoint.headers },
+        });
+        if (!res.ok) throw await httpError(res);
+        return anthropicModels(await res.json());
+      },
     });
   },
 });
+
+/** The Models API page → ids with `max_input_tokens` / `max_tokens` when present (null on some models). */
+export function anthropicModels(body: unknown): ModelInfo[] {
+  const data = (body as { data?: unknown })?.data;
+  if (!Array.isArray(data)) return [];
+  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
+  return (data as { id?: unknown; max_input_tokens?: unknown; max_tokens?: unknown }[])
+    .filter((m) => m && typeof m.id === "string")
+    .map((m) => {
+      const contextWindow = num(m.max_input_tokens);
+      const maxOutputTokens = num(m.max_tokens);
+      return { id: m.id as string, ...(contextWindow ? { contextWindow } : {}), ...(maxOutputTokens ? { maxOutputTokens } : {}) };
+    });
+}
 
 /**
  * Prompt caching (on by default): the core's cache hints become `cache_control` breakpoints (at most 4). A hint

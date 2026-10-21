@@ -49,7 +49,8 @@ export interface EventDataMap {
   "message.agent": { text: string; attachments?: BlobRef[] };
   "message.channel": { channel: string; direction: "in" | "out"; externalId?: string; text: string };
 
-  "model.request": { route: string; provider: string; model: string; messagesHash: string };
+  /** `estTokens`: the core's chars/4 estimate of this prompt (messages + tool schemas), compared with usage.inputTokens. */
+  "model.request": { route: string; provider: string; model: string; messagesHash: string; estTokens?: number };
   "model.delta": { text?: string; reasoning?: string };
   "model.response": { text?: string; toolCalls: ToolCallRef[]; stopReason: string; usage: Usage };
   "model.fallback": { from: string; to: string; reason: string };

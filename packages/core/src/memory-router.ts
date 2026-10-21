@@ -1,3 +1,4 @@
+import { COMPACT_AT, FALLBACK_CONTEXT_WINDOW } from "./context-window.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type {
@@ -62,6 +63,10 @@ export interface CompactInput extends MemoryCtx {
   toMessages(events: SintyEvent[]): ChatMessage[];
   /** The builtin summary call (speaker service model → service.model → speaker model → default). */
   summarize(previous: string | undefined, head: SintyEvent[], signal: AbortSignal): Promise<SummaryFacts | undefined>;
+  /** The chat model's context window in tokens (ContextWindows.resolve). Absent: memory.contextTokens or 128000. */
+  window?: number | undefined;
+  /** Provider tokens per chars/4 estimate token for this session (ratioFromEvents). Absent: 1. */
+  tokenRatio?: number | undefined;
 }
 
 export interface MemorySettings {
@@ -594,8 +599,11 @@ export class MemoryRouter {
    */
   async compact(input: CompactInput): Promise<ChatMessage[]> {
     const { sessionId, events, dialogue } = input;
-    const window = this.d.config.memory.contextTokens;
-    const limit = Math.floor(window * 0.65);
+    // Limits in chars/4 units: the real window divided by how much the provider's count exceeds the estimate.
+    const fixed = this.d.config.memory.contextTokens;
+    const ratio = input.tokenRatio && input.tokenRatio > 0 ? input.tokenRatio : 1;
+    const window = Math.floor((input.window ?? (typeof fixed === "number" ? fixed : FALLBACK_CONTEXT_WINDOW)) / ratio);
+    const limit = Math.floor(window * COMPACT_AT);
     if (estimateTokens(dialogue) < limit) return dialogue;
     const userIdx = events.map((e, i) => (e.type === "message.user" ? i : -1)).filter((i) => i >= 0);
     if (userIdx.length <= MIN_KEEP_USER_TURNS) return dialogue;

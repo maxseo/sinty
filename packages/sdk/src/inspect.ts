@@ -78,6 +78,19 @@ export interface ContextPluginTrace {
   reordered?: boolean;
 }
 
+/**
+ * The context window of the step's model and where it came from: `config` = memory.contextTokens, `route` =
+ * models.contextWindows, `provider` = the provider's model list, `table` = the core's table of published windows,
+ * `fallback` = 128000. The dialogue is folded into a summary at `compactAt` tokens. `ratio` = provider tokens per
+ * chars/4 estimate token in this chat (from the last step's usage), when known: tokens × ratio ≈ the real count.
+ */
+export interface ContextWindowInfo {
+  tokens: number;
+  source: "config" | "route" | "provider" | "table" | "fallback";
+  compactAt: number;
+  ratio?: number;
+}
+
 export interface ContextSnapshot {
   version: 1;
   /** `<stepId>`: unique per model step. */
@@ -111,6 +124,8 @@ export interface ContextSnapshot {
   };
   contexts: ContextPluginTrace[];
   cache?: ContextCacheInfo;
+  /** The model's context window, see ContextWindowInfo. Absent from snapshots of older cores. */
+  window?: ContextWindowInfo;
   /** How many strings had secrets replaced by "[redacted]". */
   redactions: number;
 }

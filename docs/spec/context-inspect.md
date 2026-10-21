@@ -69,6 +69,7 @@ plugin.
 | `memory.hooks[]` | processor hooks that ran: `onTurnStart` (queries), `afterRecall` (record ids before/after), `beforeContext` (block ids before/after); `ms`, `ok`, `changed` |
 | `contexts[]` | plugin context contributors (`ctx.context`): `ms`, `ok`, `error?`, tokens before/after, added and removed messages (content cut at 4000 chars), `reordered?` (the contributor changed earlier messages; the core kept the input and only its appended messages) |
 | `cache?` | prompt-cache view: `hints[]` (`index`, `hint`), `cacheable` (messages and estimated tokens up to the last hint, tools included) and `reused` (leading messages identical to the previous step of the session in this process, their tokens, `toolsSame`, `divergedAt?` when an earlier message changed). See "Prompt caching" in `protocol.md` |
+| `window?` | the step model's context window: `tokens`, `source` (`config` = `memory.contextTokens`, `route` = `models.contextWindows`, `provider` = the provider's model list, `table` = `KNOWN_CONTEXT_WINDOWS`, `fallback` = 128000), `compactAt` (65%: the dialogue is folded from there) and `ratio?` (provider tokens per chars/4 estimate token in this chat, from the previous step). The tab draws it as a ring: fill = the step's real `usage.inputTokens` once known, else `tokens.total × ratio`; the tick marks `compactAt` |
 | `redactions` | number of strings in which a secret was masked |
 
 Kinds of parts:

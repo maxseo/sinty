@@ -7,6 +7,8 @@ import { definePlugin } from "@sinty/sdk";
  * The step index is the number of assistant messages after the last user message.
  * A request whose only message asks for JSON (the summary call) gets options.summary back (numbered per fold with
  * options.varySummary).
+ * options.inputScale: usage.inputTokens = the core's chars/4 estimate × this (default: always 10).
+ * options.models: the listModels() answer (context windows); without it listModels() fails.
  * options.embed: when true the provider also answers embeddings with a tiny bag-of-letters vector.
  */
 export default definePlugin({
@@ -60,7 +62,15 @@ export default definePlugin({
         const step = steps[n] ?? { text: "done" };
         if (step.text) yield { type: "text", text: step.text };
         for (const [i, c] of (step.toolCalls ?? []).entries()) yield { type: "tool_call", id: `call_${lastUser}_${n}_${i}`, name: c.name, args: c.args };
-        yield { type: "done", stopReason: step.toolCalls ? "tool_use" : "end_turn", usage: { inputTokens: 10, outputTokens: 5 } };
+        // options.inputScale: report the prompt as that many times the core's chars/4 estimate (a real tokenizer).
+        const inputTokens = opts.inputScale ? Math.ceil(((JSON.stringify(req.messages).length + JSON.stringify(req.tools).length) / 4) * Number(opts.inputScale)) : 10;
+        yield { type: "done", stopReason: step.toolCalls ? "tool_use" : "end_turn", usage: { inputTokens, outputTokens: 5 } };
+      },
+      /** options.models: what GET /models would list, e.g. [{ id, contextWindow }]. Absent: the list fails. */
+      async listModels(endpoint) {
+        appendFileSync(join(ctx.paths.data, "lists.jsonl"), JSON.stringify({ at: Date.now() }) + "\n");
+        if (!Array.isArray(endpoint.options?.models)) throw new Error("no model list");
+        return endpoint.options.models;
       },
     });
   },

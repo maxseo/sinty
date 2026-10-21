@@ -94,6 +94,7 @@ export type ToChild =
   | { t: "agent.event"; id: number; event: LiveEvent }
   | { t: "agent.end"; id: number; error?: WireError }
   | { t: "provider.embed"; id: number; protocol: string; req: { endpoint: ProviderRequest["endpoint"]; model: string; input: string[] } }
+  | { t: "provider.list"; id: number; protocol: string; endpoint: ProviderRequest["endpoint"] }
   | { t: "models.result"; id: number; ok: true; value: unknown }
   | { t: "models.result"; id: number; ok: false; error: WireError }
   | { t: "memory.call"; id: number; kind: "provider" | "processor"; name: string; method: string; args: unknown[] }
@@ -114,12 +115,16 @@ export type FromChild =
       routes: RouteInfo[];
       /** Provider protocols that implement embed(). */
       embedders?: string[];
+      /** Provider protocols that implement listModels(). */
+      listers?: string[];
       memory?: { providers: string[]; processors: { name: string; order: number; hooks: string[] }[] };
       /** The plugin registered ctx.onContextSnapshot. */
       inspects?: boolean;
     }
   | { t: "provider.embedded"; id: number; ok: true; value: { vectors: number[][]; usage?: { inputTokens: number } } }
   | { t: "provider.embedded"; id: number; ok: false; error: WireError }
+  | { t: "provider.listed"; id: number; ok: true; value: { id: string; contextWindow?: number; maxOutputTokens?: number }[] }
+  | { t: "provider.listed"; id: number; ok: false; error: WireError }
   | { t: "models.call"; id: number; op: "complete" | "embed"; req: Record<string, unknown> }
   | { t: "net.public"; id: number; op: "fetch"; url: string; init: NetPublicInit }
   | { t: "net.public"; id: number; op: "proxy" }
