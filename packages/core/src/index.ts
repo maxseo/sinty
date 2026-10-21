@@ -14,6 +14,7 @@ export { PROTOCOL_VERSION } from "@sinty/sdk";
 export { loadRegistry, type RegistryEntry } from "./registry.js";
 export { resolvePaths, type SintyPaths } from "./paths.js";
 export { SecretStore } from "./secrets.js";
+export { bwrapArgs, decideSandbox, type SandboxDecision, type ShellSandboxConfig } from "./shell-sandbox.js";
 export { checkIntegrity, hashInstall, readIntegrity } from "./integrity.js";
 export { evalMemory, formatEval, type EvalArmReport, type EvalLabel, type EvalOptions } from "./memory-eval.js";
 export { MemoryRouter, assignArms, memorySettings } from "./memory-router.js";
