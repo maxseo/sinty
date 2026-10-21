@@ -72,8 +72,10 @@ plugin.
 | `redactions` | number of strings in which a secret was masked |
 
 Kinds of parts:
-- `system`: the system prompt from the core;
-- `skills`: the skills catalog;
+- `system`: the system prompt from the core (`source: core`), or a plugin system section (`ctx.systemSection`,
+  `source` = the plugin, `id` = `<plugin>/<section>`);
+- `skills`: the skills catalog, a system section of the `skills` plugin (`source: skills`, `id: skills/catalog`;
+  snapshots from before plan step 7 say `source: core`, `id: skills`);
 - `memory`: `memory.profile` (the session's frozen snapshot);
 - `summary`: `memory.summary`;
 - `turn`: a turn context (`<turn_context>`: time, recall, memory updates, blocks from `beforeContext` processors);
@@ -85,7 +87,7 @@ Kinds of parts:
 Tokens use the same estimate as compaction: JSON length / 4.
 
 How messages are labelled:
-- The core labels the messages it built (system, skills, memory blocks, dialogue).
+- The core labels the messages it built (system, system sections such as the skills catalog, memory blocks, dialogue).
 - A message that a contributor added is labelled with the last contributor that added it.
 - Messages are compared as whole JSON values, so a contributor that edits a message shows up as one removal plus one
   addition.

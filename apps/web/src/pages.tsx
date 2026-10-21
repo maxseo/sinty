@@ -436,7 +436,7 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
   const agents = useLoad<{ agents: AgentRecord[] }>("/v1/roster/agents", []);
   const projects = useLoad<{ projects: ProjectRecord[] }>("/v1/roster/projects", []);
   const plugins = useLoad<{ plugins: PluginRow[] }>("/v1/plugins", []);
-  const skills = useLoad<{ skills: { name: string; description: string }[] }>("/v1/roster/skills", []);
+  const skills = useLoad<{ skills: { name: string; description: string }[]; disabled?: boolean }>("/v1/roster/skills", []);
   const installModel = useInstallModel();
   const [draft, setDraft] = useState<AgentRecord | undefined>();
   const [tab, setTab] = useState<"general" | "plugins" | "skills" | "mcp">("general");
@@ -564,7 +564,14 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
                     <span><b>{s.name}</b><div class="small muted">{s.description}</div></span>
                   </label>
                 ))}
-                {(skills.data?.skills.length ?? 0) === 0 && <p class="muted small">В папке skills пока нет навыков.</p>}
+                {skills.data?.disabled ? (
+                  <p class="muted small">Плагин skills выключен в настройках: каталога навыков и инструментов skill.* нет ни у одного агента.</p>
+                ) : (
+                  <>
+                    {(draft.excludedPlugins ?? []).includes("skills") && <p class="muted small">Плагин skills убран у этого агента на вкладке «Плагины»: отмеченные навыки он не увидит.</p>}
+                    {(skills.data?.skills.length ?? 0) === 0 && <p class="muted small">В папке skills пока нет навыков.</p>}
+                  </>
+                )}
               </div>
             )}
             <div class="tool-actions">

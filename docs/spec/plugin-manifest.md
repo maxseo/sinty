@@ -66,9 +66,14 @@ Input schemas are declared in code (zod) and exported by the plugin at load time
   `plugins.config.<plugin>.<key>`; the manifest's own `config` defaults are ignored, and an unset or relative value
   drops the grant. Used by `memory-obsidian` for its vault.
 - Tool names of core tools (`memory.write`, `ask_human`, …) are reserved: a plugin that registers one fails to start.
-- `web.*` names belong to the bundled `tool-web` (`RESERVED_TOOL_PREFIXES` in `coretools.ts`); another plugin that
-  registers one fails to start, so nothing can sit in front of `web.read` after it left the core.
-- Default-on plugins (`DEFAULT_ON_PLUGINS` in `config.ts`, today only `tool-web`) run even when `plugins.enabled`
+- `web.*` names belong to the bundled `tool-web` and `skill.*` names to the bundled `skills`
+  (`RESERVED_TOOL_PREFIXES` in `coretools.ts`); another plugin that registers one fails to start, so nothing can sit
+  in front of `web.read` or `skill.read` after they left the core.
+- `ctx.systemSection(name, render, { order?, kind? })` adds a stable block to the system zone of the prompt, right
+  after the system prompt (see [protocol](protocol.md), "Prompt caching"). `render({ sessionId, agent? })` returns
+  text or null; the skills plugin renders its catalog this way. `kind: "skills"` only changes the context inspector's
+  label.
+- Default-on plugins (`DEFAULT_ON_PLUGINS` in `config.ts`: `tool-web`, `skills`) run even when `plugins.enabled`
   does not list them, unless `config.yaml` has them in `plugins.disabled`. Unticking one in Settings writes
   `plugins.disabled`.
 - Agent cards (`roster.json`): a default-on plugin is on every agent, whatever the card's `plugins` list says (cards

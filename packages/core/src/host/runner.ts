@@ -5,6 +5,7 @@ import {
   type AgentApi,
   type ChatMessage,
   type ContextContributor,
+  type SystemSectionContributor,
   type ContextSnapshot,
   type EventType,
   type HttpRoute,
@@ -31,6 +32,7 @@ const send = (msg: FromChild): void => {
 const tools = new Map<string, ToolDefinition>();
 const providers = new Map<string, ProviderDefinition>();
 const contexts = new Map<string, { fn: ContextContributor; order: number }>();
+const sections = new Map<string, { fn: SystemSectionContributor; order: number; kind: "system" | "skills" }>();
 const snapshotHandlers: ((s: ContextSnapshot) => void | Promise<void>)[] = [];
 const memoryProviders = new Map<string, MemoryProviderDefinition>();
 const memoryProcessors = new Map<string, MemoryProcessorDefinition>();
@@ -255,6 +257,9 @@ async function init(msg: InitMessage): Promise<void> {
     context(name, fn, opts) {
       contexts.set(name, { fn, order: opts?.order ?? 100 });
     },
+    systemSection(name, fn, opts) {
+      sections.set(name, { fn, order: opts?.order ?? 100, kind: opts?.kind === "skills" ? "skills" : "system" });
+    },
     channel() {
       log("warn")("channels are not supported by this core version yet");
     },
@@ -313,6 +318,7 @@ async function init(msg: InitMessage): Promise<void> {
       })),
     },
     contexts: [...contexts.entries()].map(([name, c]) => ({ name, order: c.order })),
+    sections: [...sections.entries()].map(([name, c]) => ({ name, order: c.order, kind: c.kind })),
     subscriptions: [...listeners.keys()] as (EventType | "*")[],
     routes: routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, public: r.public === true })),
     ...(snapshotHandlers.length ? { inspects: true } : {}),
@@ -410,6 +416,18 @@ process.on("message", (raw: ToChild) => {
       c.fn(raw.input)
         .then((messages: ChatMessage[]) => send({ t: "context.result", id: raw.id, messages }))
         .catch((e: unknown) => send({ t: "context.error", id: raw.id, error: toWire(e) }));
+      break;
+    }
+    case "section.run": {
+      const c = sections.get(raw.name);
+      if (!c) {
+        send({ t: "section.result", id: raw.id, text: null });
+        break;
+      }
+      Promise.resolve()
+        .then(() => c.fn(raw.input))
+        .then((text) => send({ t: "section.result", id: raw.id, text: typeof text === "string" ? text : null }))
+        .catch((e: unknown) => send({ t: "section.error", id: raw.id, error: toWire(e) }));
       break;
     }
     case "cancel":

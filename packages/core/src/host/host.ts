@@ -3,14 +3,14 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent } from "@sinty/sdk";
+import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent, SystemSectionInput } from "@sinty/sdk";
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
 import { CORE_TOOL_NAMES, reservedToolOwner } from "../coretools.js";
 import { checkPublicUrl, NetGuardError, parseAllowPrivate, publicFetch, startGuardProxy, type GuardOptions, type GuardProxy } from "../netguard.js";
 import { findPlugin, pluginDataDir, resolveFsGrants, type LoadedManifest } from "./manifest.js";
-import type { AgentOp, CallCtx, FromChild, NetPublicInit, ProviderWireRequest, RouteInfo, ToChild, ToolInfo, WireError } from "./protocol.js";
+import type { AgentOp, CallCtx, FromChild, NetPublicInit, ProviderWireRequest, RouteInfo, SectionInfo, ToChild, ToolInfo, WireError } from "./protocol.js";
 
 const RUNNER = join(dirname(fileURLToPath(import.meta.url)), "runner.js");
 const READY_TIMEOUT_MS = 15_000;
@@ -86,6 +86,7 @@ export class PluginProcess {
   tools: ToolInfo[] = [];
   providers: string[] = [];
   contexts: { name: string; order: number }[] = [];
+  sections: SectionInfo[] = [];
   subscriptions: (EventType | "*")[] = [];
   routes: RouteInfo[] = [];
   embedders: string[] = [];
@@ -153,6 +154,7 @@ export class PluginProcess {
           this.tools = msg.tools;
           this.providers = msg.providers;
           this.contexts = msg.contexts;
+          this.sections = msg.sections ?? [];
           this.subscriptions = msg.subscriptions;
           this.routes = msg.routes;
           this.embedders = msg.embedders ?? [];
@@ -617,6 +619,29 @@ export class PluginProcess {
     });
   }
 
+  /** Renders one ctx.systemSection block. Short timeout: it sits in front of every model step. */
+  async runSection(name: string, input: SystemSectionInput, timeoutMs = 5_000): Promise<string | null> {
+    await this.whenRunning();
+    const id = ++this.nextId;
+    return new Promise((resolveText, reject) => {
+      const timer = setTimeout(() => finish(new Error(`section ${name} timed out`)), timeoutMs);
+      const finish = (r: string | null | Error): void => {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        if (r instanceof Error) reject(r);
+        else resolveText(r);
+      };
+      this.pending.set(id, {
+        onMessage: (msg) => {
+          if (msg.t === "section.result") finish(msg.text);
+          else if (msg.t === "section.error") finish(new Error(msg.error.message));
+        },
+        onCrash: (e) => finish(new Error(e.message)),
+      });
+      if (!this.send({ t: "section.run", id, name, input })) finish(new Error(`plugin ${this.name} is not running`));
+    });
+  }
+
   private send(msg: ToChild): boolean {
     if (!this.child?.connected) return false;
     this.child.send(msg);
@@ -852,6 +877,17 @@ export class PluginHost {
     const out: { plugin: PluginProcess; name: string; order: number }[] = [];
     for (const p of this.plugins.values()) if (!p.disabled) for (const c of p.contexts) out.push({ plugin: p, ...c });
     return out.sort((a, b) => a.order - b.order);
+  }
+
+  /** ctx.systemSection blocks of running plugins: by order, then plugins.enabled order, then name. */
+  sections(): { plugin: PluginProcess; name: string; order: number; kind: "system" | "skills" }[] {
+    const out: { plugin: PluginProcess; name: string; order: number; kind: "system" | "skills"; at: number }[] = [];
+    let at = 0;
+    for (const p of this.plugins.values()) {
+      at++;
+      if (!p.disabled) for (const c of p.sections) out.push({ plugin: p, ...c, at });
+    }
+    return out.sort((a, b) => a.order - b.order || a.at - b.at || a.name.localeCompare(b.name)).map(({ at: _at, ...rest }) => rest);
   }
 
   /** Running plugins that may receive context snapshots. Empty in the default install, so no snapshot is ever built. */

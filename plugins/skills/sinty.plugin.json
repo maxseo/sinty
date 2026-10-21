@@ -1,0 +1,31 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "skills",
+  "version": "0.1.0",
+  "description": "Skills: the skills catalog in the prompt and skill.read, skill.files, skill.read_file, skill.write_file, skill.edit, skill.write",
+  "kinds": ["tool", "context"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$SKILLS"], "write": ["$SKILLS"] }
+  },
+  "tools": [
+    { "name": "skill.read", "sideEffects": "read", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "skill.files", "sideEffects": "read", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "skill.read_file", "sideEffects": "read", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "skill.write_file", "sideEffects": "write", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "skill.edit", "sideEffects": "write", "idempotent": false, "docs": "README.md", "defaultPolicy": "allow" },
+    { "name": "skill.write", "sideEffects": "write", "idempotent": true, "docs": "README.md", "defaultPolicy": "allow" }
+  ],
+  "config": {
+    "catalogLimit": 60
+  },
+  "settings": {
+    "title": "Навыки",
+    "description": "Каталог навыков в промпте и инструменты skill.*. Навыки лежат в папке skills (skills/<имя>/SKILL.md); какие из них видит агент, выбирается в его карточке. Изменения применятся после перезапуска плагина.",
+    "fields": [
+      { "key": "catalogLimit", "label": "Навыков в каталоге", "type": "number", "min": 1, "max": 500, "integer": true, "help": "Сколько навыков перечислять в промпте. Остальные агент всё равно может открыть через skill.read по имени. Смена значения меняет каталог, кеш промпта один раз начнётся заново." }
+    ]
+  },
+  "editable": true
+}

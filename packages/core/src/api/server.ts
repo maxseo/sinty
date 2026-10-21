@@ -13,7 +13,6 @@ import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
 import { loadRegistry } from "../registry.js";
 import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
-import { listSkills } from "../skills.js";
 import { listSections, saveSection } from "../settings-sections.js";
 import { matchRoute, serveStatic } from "./static.js";
 
@@ -231,7 +230,14 @@ export function createApp(sinty: Sinty): Hono {
     return c.json({ ok: true });
   });
 
-  app.get("/v1/roster/skills", (c) => c.json({ skills: listSkills(sinty.paths.skills).map((s) => ({ name: s.name, description: s.description })) }));
+  // Kept for API clients from before plan step 7: the skills list now comes from the skills plugin (GET /p/skills/list).
+  // With the plugin off there are no skills to pick, so the list is empty and says why.
+  app.get("/v1/roster/skills", async (c) => {
+    const proc = sinty.host.plugins.get("skills");
+    const index = proc && !proc.disabled && !proc.staticOnly ? proc.routes.findIndex((r) => r.method === "GET" && r.path === "/list") : -1;
+    if (!proc || index < 0) return c.json({ skills: [], disabled: true });
+    return proc.handleHttp(index, {}, new Request("http://sinty.local/list", { signal: c.req.raw.signal }), "/list");
+  });
 
   app.get("/v1/roster/agents", (c) => c.json({ agents: listAgents(sinty.paths) }));
 

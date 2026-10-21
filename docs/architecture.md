@@ -25,7 +25,7 @@
 | **Model gateway** | `ModelGateway`: non-turn model calls (summaries, `ctx.models` for plugins, embeddings) with route names, secrets, budgets and journaling |
 | **Public-net guard** | `netguard.ts`: `ctx.net.public` for plugins with `permissions.net ["$PUBLIC"]`. Resolves every host, refuses private, loopback, link-local, CGNAT and IPv6 local/mapped addresses, connects to the address it checked, checks every redirect; a loopback proxy applies the same rule to a plugin's browser (see [spec](spec/net-public.md)) |
 
-Nothing else is in the core. In particular, these are plugins: model providers, file and shell tools, the web tools (`tool-web`: search, read, screenshot, browser), extra memory stores and memory processors (`memory-obsidian`, `fact-extractor`), skills loader, channels, the Web UI, kanban, scheduler jobs, MCP/A2A/OpenAI servers. The builtin memory store lives in the core because sqlite-vec cannot load under the plugin permission model and because the memory tools are core tools.
+Nothing else is in the core. In particular, these are plugins: model providers, file and shell tools, the web tools (`tool-web`: search, read, screenshot, browser), skills (`skills`: the catalog in the prompt and the `skill.*` tools), extra memory stores and memory processors (`memory-obsidian`, `fact-extractor`), skills loader, channels, the Web UI, kanban, scheduler jobs, MCP/A2A/OpenAI servers. The builtin memory store lives in the core because sqlite-vec cannot load under the plugin permission model and because the memory tools are core tools.
 
 ## Extension points
 
@@ -35,7 +35,7 @@ Plugins attach to a small fixed set of extension points:
 |---|---|---|
 | `provider` | model protocol adapter | `provider-anthropic` |
 | `tool` | callable tools | `tool-fs`, `tool-web`, `syntet` |
-| `context` | contribute to or transform the prompt built from the journal | custom prompt transforms |
+| `context` | append to the prompt built from the journal (`ctx.context`), or add a stable system-zone block (`ctx.systemSection`) | `skills` (catalog), custom prompt transforms |
 | `memory` | memory providers (recall/write/forget) and processors (`onTurnStart`, `afterRecall`, `beforeContext`, `afterTurn`, `onCompaction`, `onWrite`) | `memory-obsidian`, `fact-extractor` |
 | `channel` | inbound and outbound messages | `channel-telegram`, `channel-web` |
 | `server` | additional HTTP surfaces at `/p/<plugin>/…` | `server-mcp`, `server-openai-api`, `server-agui` |
@@ -81,7 +81,7 @@ The core restarts crashed plugins with backoff. A plugin crash fails only the cu
 
 ## Data flow of one step
 
-1. `context.build` — the core reads the journal for the session, folds old turns into a summary when the window is 65% full, and builds: system prompt, skills catalog, memory blocks from the `MemoryRouter` (profile + recent journal, summary, recalled records — the recall runs once per turn), dialogue; then `context` plugins transform it in order. Output: messages + tool list.
+1. `context.build` — the core reads the journal for the session, folds old turns into a summary when the window is 65% full, and builds: system prompt, plugin system sections (the skills catalog), memory blocks from the `MemoryRouter` (profile + recent journal, summary, recalled records — the recall runs once per turn), dialogue; then `context` plugins transform it in order. Output: messages + tool list.
 2. `model.request` journaled → `provider.call` streams deltas to clients → `model.response` journaled.
 3. For each tool call: validate → policy gate (may emit `tool.call.approval_requested` and block) → `tool.call.started` journaled with idempotency key → plugin runs → `tool.call.completed` or `tool.call.failed` journaled.
 4. Supervisor reads the same events and may journal `supervisor.notice`, which the next `context.build` includes.

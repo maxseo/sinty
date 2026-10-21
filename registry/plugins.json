@@ -140,6 +140,15 @@
       ]
     },
     {
+      "name": "skills",
+      "version": "0.1.0",
+      "description": "Skills: the skills catalog in the prompt and skill.read, skill.files, skill.read_file, skill.write_file, skill.edit, skill.write",
+      "kinds": [
+        "tool",
+        "context"
+      ]
+    },
+    {
       "name": "syntet",
       "version": "0.1.0",
       "description": "Typed calls to a Syntet site: who am I, list generations, record token usage",

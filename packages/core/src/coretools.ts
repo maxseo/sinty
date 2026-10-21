@@ -59,51 +59,6 @@ export const CORE_TOOLS: CoreToolDef[] = [
     idempotent: false,
   },
   {
-    name: "skill.files",
-    description: "List files inside one skill folder: scripts, instructions and SKILL.md.",
-    input: z.object({ name: z.string().min(1) }),
-    sideEffects: "read",
-    idempotent: true,
-  },
-  {
-    name: "skill.read_file",
-    description: "Read one text file inside a skill. path is relative to the skill folder, for example scripts/boil.js or SKILL.md.",
-    input: z.object({ name: z.string().min(1), path: z.string().min(1) }),
-    sideEffects: "read",
-    idempotent: true,
-  },
-  {
-    name: "skill.write_file",
-    description: "Create or replace one text file inside a skill: a script, an extra instruction, or SKILL.md. path is relative to the skill folder.",
-    input: z.object({ name: z.string().min(1), path: z.string().min(1), text: z.string().min(1) }),
-    sideEffects: "write",
-    idempotent: true,
-  },
-  {
-    name: "skill.edit",
-    description: "Replace one unique fragment in a file inside a skill. Read the file first and pass the exact old text. Use this to patch SKILL.md or a script without rewriting the whole file.",
-    input: z.object({ name: z.string().min(1), path: z.string().min(1), old: z.string().min(1), replacement: z.string() }),
-    sideEffects: "write",
-    idempotent: false,
-  },
-  {
-    name: "skill.write",
-    description: "Create or replace skills/<name>/SKILL.md. The name is the folder. Put a description line in the frontmatter so the next turn can list it.",
-    input: z.object({
-      name: z.string().min(1),
-      text: z.string().min(1).describe("full SKILL.md, including frontmatter"),
-    }),
-    sideEffects: "write",
-    idempotent: true,
-  },
-  {
-    name: "skill.read",
-    description: "Read one skill's SKILL.md from the skills folder. Use the name from the skills list in the prompt.",
-    input: z.object({ name: z.string().min(1) }),
-    sideEffects: "read",
-    idempotent: true,
-  },
-  {
     name: "context.recall",
     description: "Read exact earlier events of this session from the journal when the summary in context is not enough.",
     input: z.object({
@@ -162,10 +117,11 @@ export const CORE_TOOLS: CoreToolDef[] = [
 export const CORE_TOOL_NAMES = new Set(CORE_TOOLS.map((t) => t.name));
 
 /**
- * Tool names that only one bundled plugin may register. web.* moved out of the core into tool-web (plan step 7);
- * keeping the names reserved means another plugin still cannot take over web.read and friends.
+ * Tool names that only one bundled plugin may register. web.* moved out of the core into tool-web and skill.* into
+ * skills (plan step 7); keeping the names reserved means another plugin still cannot take over web.read, skill.read
+ * and friends.
  */
-export const RESERVED_TOOL_PREFIXES: Record<string, string> = { "web.": "tool-web" };
+export const RESERVED_TOOL_PREFIXES: Record<string, string> = { "web.": "tool-web", "skill.": "skills" };
 
 /** The bundled plugin that owns this tool name, or undefined when any plugin may use it. */
 export function reservedToolOwner(name: string): string | undefined {

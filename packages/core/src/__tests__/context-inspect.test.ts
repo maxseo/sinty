@@ -65,6 +65,8 @@ test("context snapshot: one per model step, messages identical to the provider r
     const kinds = last.parts.map((p) => p.kind);
     assert.equal(kinds[0], "system");
     assert.equal(kinds[1], "skills");
+    assert.equal(last.parts[1]!.source, "skills", "the catalog comes from the skills plugin");
+    assert.equal(last.parts[1]!.id, "skills/catalog");
     assert.equal(last.parts[1]!.cacheHint, "static");
     assert.equal(last.parts[2]!.id, "memory.profile");
     assert.equal(last.parts[2]!.cacheHint, "session");
