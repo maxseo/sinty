@@ -123,7 +123,7 @@ test("router: a failing afterTurn is retried and given up after 3 attempts with 
   }
 });
 
-test("router: when the summary call fails the prompt is trimmed to the last 12 user turns", async () => {
+test("router: when the summary call fails the prompt is trimmed to the last user turns (12, fewer when those overflow)", async () => {
   const { home, cleanup } = tempHome();
   const cfg = config({}, {}, { memory: { contextTokens: 1500, dimensions: 1536 }, service: { model: "missing/model", compress: "", facts: "" } });
   cfg.plugins = { enabled: ["recording-provider"], config: {}, searchPaths: [FIXTURES] };
@@ -136,8 +136,10 @@ test("router: when the summary call fails the prompt is trimmed to the last 12 u
     }
     const reqs = lines(home, "recording-provider", "requests.jsonl") as { messages: { role: string }[] }[];
     const last = reqs.at(-1)!.messages as { role: string; content: string }[];
-    assert.equal(last.filter((m) => m.role === "user" && !m.content.startsWith("<turn_context>")).length, 12);
-    assert.equal(last.filter((m) => m.role === "user" && m.content.startsWith("<turn_context>")).length, 12, "each kept turn keeps its context");
+    // contextTokens 1500: twelve of these turns alone are over the limit, so fewer are kept (never fewer than 2).
+    const kept = last.filter((m) => m.role === "user" && !m.content.startsWith("<turn_context>")).length;
+    assert.ok(kept >= 2 && kept < 12, `trimmed to ${kept} user turns`);
+    assert.equal(last.filter((m) => m.role === "user" && m.content.startsWith("<turn_context>")).length, kept, "each kept turn keeps its context");
     const events = sinty.journal.events(s.id);
     assert.ok(events.some((e) => e.type === "memory.compacted" && (e.data as { ok: boolean }).ok === false));
     assert.ok(events.some((e) => e.type === "memory.degraded"));

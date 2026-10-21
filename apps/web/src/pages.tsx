@@ -31,6 +31,7 @@ interface PluginInfo {
   ui: string | null;
   permissions: Record<string, unknown>;
   forAll?: boolean;
+  defaultOn?: boolean;
 }
 
 interface SettingsPlugin {
@@ -321,7 +322,7 @@ function PluginsSettings({ enabled, setEnabled }: { enabled: string[]; setEnable
                 <div key={p.name} class="plugin-tile">
                   <b>{p.name}</b>
                   <span class="tile-actions">
-                    <button type="button" class={everyone ? "secondary sm" : "ghost sm"} onClick={() => void setShared(p.name, !everyone)}>{everyone ? "у всех" : "не у всех"}</button>
+                    <button type="button" class={everyone ? "secondary sm" : "ghost sm"} disabled={p.defaultOn} title={p.defaultOn ? "Встроенный плагин: есть у всех агентов, убрать можно в карточке агента" : undefined} onClick={() => void setShared(p.name, !everyone)}>{everyone ? "у всех" : "не у всех"}</button>
                     <button type="button" class={on ? "secondary sm" : "ghost sm"} disabled={p.name === "ui-web"} onClick={() => setEnabled(on ? enabled.filter((n) => n !== p.name) : [...enabled, p.name])}>{on ? "включён" : "выключен"}</button>
                   </span>
                 </div>
@@ -391,7 +392,10 @@ interface AgentRecord {
   facts: string;
   stallSeconds: number | null;
   skills: string[];
+  /** Optional plugins; empty means the shared list. */
   plugins: string[];
+  /** Default-on plugins (former core tools, e.g. tool-web) this agent goes without. */
+  excludedPlugins: string[];
 }
 
 interface PluginRow {
@@ -399,6 +403,7 @@ interface PluginRow {
   description: string;
   runtime?: string;
   forAll?: boolean;
+  defaultOn?: boolean;
   disabled?: boolean;
 }
 
@@ -417,6 +422,7 @@ const blankAgent = (): AgentRecord => ({
   stallSeconds: null,
   skills: [],
   plugins: [],
+  excludedPlugins: [],
 });
 
 interface ProjectRecord {
@@ -443,9 +449,12 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
     if (!draft?.name.trim()) return;
     setError("");
     try {
-      const defaults = (plugins.data?.plugins ?? []).filter((p) => p.forAll !== false).map((p) => p.name);
+      const all = plugins.data?.plugins ?? [];
+      const builtin = new Set(all.filter((p) => p.defaultOn).map((p) => p.name));
+      const defaults = all.filter((p) => !p.defaultOn && p.forAll !== false).map((p) => p.name);
       const own = draft.model || installModel;
-      const body = { ...draft, plugins: draft.plugins.length ? draft.plugins : defaults, fallback: draft.fallback.trim() || own, serviceModel: draft.serviceModel.trim() || own, stallSeconds: draft.stallSeconds };
+      const optional = draft.plugins.filter((n) => !builtin.has(n));
+      const body = { ...draft, plugins: optional.length ? optional : defaults, excludedPlugins: (draft.excludedPlugins ?? []).filter((n) => builtin.has(n)), fallback: draft.fallback.trim() || own, serviceModel: draft.serviceModel.trim() || own, stallSeconds: draft.stallSeconds };
       const saved = draft.id
         ? await api<AgentRecord>(`/v1/roster/agents/${draft.id}`, { method: "PUT", body })
         : await api<AgentRecord>("/v1/roster/agents", { body });
@@ -479,7 +488,7 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
       return;
     }
     if (agentId === "new") {
-      const defaults = (plugins.data?.plugins ?? []).filter((p) => p.forAll !== false).map((p) => p.name);
+      const defaults = (plugins.data?.plugins ?? []).filter((p) => !p.defaultOn && p.forAll !== false).map((p) => p.name);
       setDraft((cur) => (cur && cur.id === "" && cur.name.trim() ? cur : { ...blankAgent(), plugins: defaults }));
       return;
     }
@@ -487,12 +496,21 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
     if (found) setDraft(found);
   }, [agentId, agents.data, plugins.data]);
   const patch = (part: Partial<AgentRecord>): void => setDraft(draft ? { ...draft, ...part } : draft);
-  const defaults = rows.filter((p) => p.forAll !== false).map((p) => p.name);
-  const chosen = draft?.plugins.length ? draft.plugins : defaults;
+  // Default-on plugins (tool-web) are on for every agent unless its card excludes them; the rest follow the card's list.
+  const builtin = rows.filter((p) => p.defaultOn).map((p) => p.name);
+  const defaults = rows.filter((p) => !p.defaultOn && p.forAll !== false).map((p) => p.name);
+  const optional = (draft?.plugins ?? []).filter((n) => !builtin.includes(n));
+  const ownPicks = optional.length ? optional : defaults;
+  const excluded = draft?.excludedPlugins ?? [];
+  const chosen = [...ownPicks, ...builtin.filter((n) => !excluded.includes(n))];
   const togglePlugin = (name: string): void => {
     if (!draft) return;
-    const has = chosen.includes(name);
-    patch({ plugins: has ? chosen.filter((n) => n !== name) : [...chosen, name] });
+    if (builtin.includes(name)) {
+      patch({ excludedPlugins: excluded.includes(name) ? excluded.filter((n) => n !== name) : [...excluded, name] });
+      return;
+    }
+    const has = ownPicks.includes(name);
+    patch({ plugins: has ? ownPicks.filter((n) => n !== name) : [...ownPicks, name] });
   };
   const onAvatar = (file: File): void => {
     if (file.size > 200_000) {
@@ -587,7 +605,7 @@ function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: PluginRow[]
         const on = chosen.includes(p.name);
         return (
           <div key={p.name} class="plugin-tile">
-            <div><b>{p.name}</b><div class="small muted">{p.description}</div></div>
+            <div><b>{p.name}</b>{p.defaultOn && <span class="small muted"> встроенный, у всех агентов</span>}<div class="small muted">{p.description}</div></div>
             <button type="button" class={on ? "secondary sm" : "ghost sm"} onClick={() => onToggle(p.name)}>{on ? "включён" : "выключен"}</button>
           </div>
         );

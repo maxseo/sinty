@@ -147,6 +147,54 @@ test("prompt cache: compaction is stepped and the memory snapshot is refreshed o
   }
 });
 
+test("prompt cache: a turn whose last 12 human turns alone pass the limit folds once, not on every step (ses_01M59Z72… turn D86D67)", async () => {
+  // Repro of 2026-10-21: the kept 12 turns were over 65% of the window, so before every model step the same head was
+  // folded again, the summary came back worded differently, its facts were stored again and the memory snapshot was
+  // rebuilt: the prompt diverged at message 2 on every step and the provider cache read 0%.
+  const { home, cleanup } = tempHome();
+  const summary = { summary: "The user asked for riddles and jokes.", facts: [{ text: "The user likes riddles.", tier: "profile", about: "user" }] };
+  const script: Record<string, Step[]> = {
+    "find eyu2": [
+      { toolCalls: [{ name: "memory__recall", args: { query: "eyu2" } }, { name: "memory__recall", args: { query: "scooter" } }] },
+      { toolCalls: [{ name: "agent__task", args: { task: "look up eyu2", tools: ["memory.recall"] } }] },
+      { text: "here is what I found" },
+    ],
+    "look up eyu2": [{ text: "child: nothing in memory" }],
+  };
+  const config = recConfig(script, { memory: { contextTokens: 6000, dimensions: 1536 } as SintyConfig["memory"] }, { summary, varySummary: true });
+  const sinty = await boot(home, [], { config, plugins: ["recording-provider"], policy: policySchema.parse({ defaults: { none: "allow", read: "allow", write: "allow", external: "allow" } }) });
+  try {
+    const s = sinty.agent.createSession();
+    // 14 human turns of ~1.6k chars: the last 12 alone (~4.8k tokens) are over the 3.9k limit.
+    for (let i = 0; i < 14; i++) await turn(sinty, s.id, `question ${i}: ${"padding ".repeat(200)}`);
+    const warmFolds = requests(home).filter(isSummaryCall).length;
+    assert.ok(warmFolds >= 1 && warmFolds <= 4, `the long turns fold, but not on every turn (${warmFolds} folds in 14 turns)`);
+    const before = requests(home).length;
+    const seqBefore = sinty.journal.events(s.id).at(-1)!.seq;
+    await turn(sinty, s.id, "find eyu2");
+    const all = requests(home).slice(before);
+    const steps = all.filter((r) => !isSummaryCall(r) && r.messages.some((m) => m.role === "user" && m.content === "find eyu2"));
+    assert.equal(steps.length, 3, "three model steps in the turn");
+    assert.ok(all.filter(isSummaryCall).length <= 1, `at most one fold in the turn (${all.filter(isSummaryCall).length})`);
+    const after = sinty.journal.events(s.id).filter((e) => e.seq > seqBefore);
+    assert.ok(after.filter((e) => e.type === "memory.compacted").length <= 1, "memory.compacted at most once in the turn");
+    assert.ok(after.filter((e) => e.type === "memory.snapshot").length <= 1, "the memory snapshot is rebuilt at most once in the turn");
+    assert.equal(divergence(steps[0]!.messages, steps[1]!.messages), -1, "step 2 repeats step 1 and only appends");
+    assert.equal(divergence(steps[1]!.messages, steps[2]!.messages), -1, "step 3 repeats step 2 and only appends");
+    // The next turn may fold once at its start (this history sits right at the limit; the exact size depends on the
+    // turn context, e.g. the time zone name), but never again; without a fold it keeps the prefix.
+    const n = requests(home).length;
+    await turn(sinty, s.id, "thanks");
+    const next = requests(home).slice(n);
+    const nextFolds = next.filter(isSummaryCall).length;
+    assert.ok(nextFolds <= 1, `at most one fold on the next turn (${nextFolds})`);
+    if (nextFolds === 0) assert.equal(divergence(steps[2]!.messages, next[0]!.messages), -1, "the next turn keeps the prefix");
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
 test("prompt cache: a context plugin that rewrites earlier messages only gets to append", async () => {
   const { home, cleanup } = tempHome();
   const sinty = await boot(home, [], { config: recConfig({}), plugins: ["recording-provider", "context-rewrite"] });

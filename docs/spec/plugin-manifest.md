@@ -71,6 +71,9 @@ Input schemas are declared in code (zod) and exported by the plugin at load time
 - Default-on plugins (`DEFAULT_ON_PLUGINS` in `config.ts`, today only `tool-web`) run even when `plugins.enabled`
   does not list them, unless `config.yaml` has them in `plugins.disabled`. Unticking one in Settings writes
   `plugins.disabled`.
+- Agent cards (`roster.json`): a default-on plugin is on every agent, whatever the card's `plugins` list says (cards
+  saved before the plugin existed have a list without it), unless the card lists it in `excludedPlugins`. Every other
+  plugin follows the card's `plugins`, else the shared list. An `agent.task` child turn uses its parent's agent card.
 - `ctx.http({ method, path, public?, handler })` registers a route under `/p/<plugin>`. `:param` is one segment, a trailing `*` the rest. The core strips `Authorization`, `Cookie` and hop-by-hop headers, and removes `token` from the query, before the plugin sees the request. `public: true` skips the bearer check.
 - `ctx.agent` is the same session API the HTTP clients use. Arguments are validated in the core (`plugin-bridge.ts`); write ops need `sessions.write`; idempotency keys are prefixed with the plugin name; the actor is `{ kind: "plugin" }`.
 - `createSSE` / `runTurn` in `@sinty/sdk` are helpers for streaming servers (MCP, OpenAI API, AG-UI).

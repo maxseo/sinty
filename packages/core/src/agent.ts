@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z, type TurnInfo, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
 import { budgetTokens, type CheckpointPhase, type SupervisedTool } from "@sinty/supervisor";
 import type { Bus, StreamOnlyEvent } from "./bus.js";
-import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, effectiveBudget, type SintyConfig, type SintyPolicy } from "./config.js";
+import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, effectiveBudget, type SintyConfig, type SintyPolicy } from "./config.js";
 import { CORE_TOOL_NAMES, CORE_TOOLS, coreToolSchema } from "./coretools.js";
 import { newId } from "./ids.js";
 import type { PluginHost, PluginProcess, RegisteredTool } from "./host/host.js";
@@ -23,7 +23,7 @@ import { renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
 import { watchStall } from "./stall.js";
-import { listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
+import { agentHasPlugin, listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
 import type { SecretStore } from "./secrets.js";
 import type { SupervisorClient } from "./supervisor-client.js";
 
@@ -471,7 +471,9 @@ export class Agent {
     const trace = inspectors.length ? newTrace() : undefined;
     const messages = await this.buildContext(sessionId, turnId, signal, trace);
     const allow = this.allowedTools(sessionId);
-    const tools = this.toolSchemas().filter((t) => (!allow || allow.includes(t.name)) && this.pluginVisible(sessionId, t.name));
+    // Schemas carry wire names (web_search); a child turn's list holds tool names (web.search).
+    const allowWire = allow?.map(toWire);
+    const tools = this.toolSchemas().filter((t) => (!allowWire || allowWire.includes(t.name)) && this.pluginVisible(sessionId, t.name));
     const stepId = newId("stp");
     if (trace) this.sendSnapshot(inspectors, trace, { sessionId, turnId, stepId, messages, tools, route: routes[0], speaker });
     else this.lastPrompt.clear();
@@ -908,9 +910,12 @@ export class Agent {
    * member; otherwise the project lead (when a member), otherwise the first member. No members: undefined, and the
    * global AGENTS.md with `config.agent.name` applies.
    */
-  private speaker(sessionId: string): AgentRecord | undefined {
+  private speaker(sessionId: string, depth = 0): AgentRecord | undefined {
     const session = this.d.journal.getSession(sessionId);
     if (!session) return undefined;
+    // A child turn (agent.task) works as the agent that delegated it: same persona, plugins and memory scope.
+    const parent = session.metadata?.parentSessionId;
+    if (typeof parent === "string" && !session.projectId && !Array.isArray(session.metadata?.agentIds) && depth < 4) return this.speaker(parent, depth + 1);
     const roster = loadRoster(this.d.paths);
     const project = session.projectId ? roster.projects.find((p) => p.id === session.projectId) : undefined;
     const known = (id: string): boolean => roster.agents.some((a) => a.id === id);
@@ -928,10 +933,7 @@ export class Agent {
     if (!speaker) return true;
     const tool = this.allTools().find((t) => toWire(t.name) === wireName || t.name === wireName);
     if (!tool?.plugin) return true;
-    if (speaker.plugins.length > 0) return speaker.plugins.includes(tool.plugin);
-    const shared = sharedPlugins(this.d.paths);
-    if (shared === null || shared.includes(tool.plugin)) return true;
-    return false;
+    return agentHasPlugin(speaker, tool.plugin, DEFAULT_ON_PLUGINS, sharedPlugins(this.d.paths));
   }
 
   private systemPrompt(sessionId?: string): string {

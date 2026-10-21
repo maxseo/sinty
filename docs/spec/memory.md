@@ -59,11 +59,11 @@ message.user ─▶ turn starts
    │     │     │     ├─ memory.updates: facts saved since the session snapshot and not announced by an earlier turn
    │     │     │     └─ processors.beforeContext(turn, blocks)  — once per turn, the result is frozen
    │     │     └─ time (minutes, zone) + blocks → <turn_context> message before the turn's first human message
-   │     ├─ maybeCompact (≥ 65% of memory.contextTokens and > 12 user turns; stepped, see below)
+   │     ├─ maybeCompact (≥ 65% of memory.contextTokens and > 2 user turns; first step of a turn only; stepped, see below)
    │     │     ├─ processors.onCompaction → else builtin summary call through the model gateway
    │     │     ├─ facts → write path with source "summary" → memory.written
    │     │     ├─ journal memory.compacted
-   │     │     └─ failure → keep the last 12 user turns (trim to the window) + memory.degraded
+   │     │     └─ failure → keep the last user turns (12, fewer when they overflow) + memory.degraded
    │     └─ router.sessionMessages() → [memory snapshot (memory.snapshot), summary?]
    ├─ callModel step 2..n ─▶ same prefix, the turn context is read from the journal
    │
@@ -81,8 +81,19 @@ the next turn's `<memory_updates>` block, once. A forgotten fact stays in the sn
 `memory.forget` tool result tells the model in the same turn.
 
 **Stepped compaction.** Once the history was folded, the summary and everything after `coversUntil` are kept while
-they fit under 65% of `memory.contextTokens`; only then is it folded again to the last 12 user turns. The prompt
-prefix therefore changes once per fold, not on every turn.
+they fit under 65% of `memory.contextTokens`; only then is it folded again to the last 12 user turns. When those 12
+turns alone are over the limit (long tool output), fewer are kept, down to 2, until they take at most half of it, so
+the next turn does not fold again. The prompt prefix therefore changes once per fold, not on every turn.
+
+**One fold per turn, at its start.** A fold rewrites the summary and the memory snapshot, i.e. the start of the
+prompt. It runs only before the first model step of a turn. Later steps of the same turn keep exactly the dialogue
+the previous step was sent (everything after the last `memory.compacted` `coversUntil`) and fold again only when that
+estimate reaches the whole `memory.contextTokens`. A head that was already folded is never folded again: the old
+code re-ran the summary on every step when the kept 12 turns alone were over the limit, and each new wording and
+its re-stored facts rebuilt the snapshot, so the prompt changed at message 2 on every step (fixed 2026-10-21).
+
+**Child turns.** An `agent.task` child runs in its own session; it speaks as the parent's agent (same persona, memory
+scope and plugins) but its `memory.snapshot` and summary live in the child session and never touch the parent's.
 
 ## TurnInfo
 

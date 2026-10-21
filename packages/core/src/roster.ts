@@ -23,8 +23,13 @@ export interface AgentRecord {
   /** null uses the installation stall threshold. */
   stallSeconds: number | null;
   skills: string[];
-  /** Plugins in addition to those marked for every agent. Includes extra MCP connectors. */
+  /**
+   * The optional plugins this agent gets (tools, MCP connectors). Empty means the shared list. Bundled default-on
+   * plugins that replace former core tools (`DEFAULT_ON_PLUGINS`, e.g. tool-web) are not taken from this list.
+   */
   plugins: string[];
+  /** Default-on plugins this agent explicitly goes without. Only these can take a default-on plugin away from it. */
+  excludedPlugins: string[];
 }
 
 export interface ProjectRecord {
@@ -98,6 +103,7 @@ export function saveAgent(paths: SintyPaths, input: Partial<AgentRecord> & { nam
     name,
     skills: input.skills ?? prev?.skills ?? [],
     plugins: input.plugins ?? prev?.plugins ?? [],
+    excludedPlugins: input.excludedPlugins ?? prev?.excludedPlugins ?? [],
   });
   const i = roster.agents.findIndex((a) => a.id === next.id);
   if (i >= 0) roster.agents[i] = next;
@@ -147,6 +153,17 @@ export function deleteProject(paths: SintyPaths, id: string): void {
   save(paths, roster);
 }
 
+/**
+ * Whether a plugin is on for this agent. A default-on plugin (it replaces former core tools) is on unless the agent
+ * lists it in `excludedPlugins`: agent cards saved before that plugin existed carry a plugin list without it and must
+ * not lose the capability. Any other plugin follows the agent's own list, else the shared list (null: every plugin).
+ */
+export function agentHasPlugin(agent: AgentRecord, plugin: string, defaultOn: readonly string[], shared: string[] | null): boolean {
+  if (defaultOn.includes(plugin)) return !agent.excludedPlugins.includes(plugin);
+  if (agent.plugins.length > 0) return agent.plugins.includes(plugin);
+  return shared === null || shared.includes(plugin);
+}
+
 export function sharedPlugins(paths: SintyPaths): string[] | null {
   return loadRoster(paths).sharedPlugins;
 }
@@ -174,6 +191,7 @@ function fillAgent(raw: Partial<AgentRecord>): AgentRecord {
     stallSeconds: typeof raw.stallSeconds === "number" && Number.isFinite(raw.stallSeconds) ? raw.stallSeconds : null,
     skills: [...new Set((raw.skills ?? []).map((s) => s.trim()).filter(Boolean))],
     plugins: [...new Set((raw.plugins ?? []).map((s) => s.trim()).filter(Boolean))],
+    excludedPlugins: [...new Set((Array.isArray(raw.excludedPlugins) ? raw.excludedPlugins : []).map((s) => s.trim()).filter(Boolean))],
   };
 }
 
