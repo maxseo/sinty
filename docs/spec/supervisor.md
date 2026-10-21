@@ -15,7 +15,8 @@ Actions are `notice` (recorded as `supervisor.notice` and shown to the model as 
 
 | Detector | Fires when | Status |
 |---|---|---|
-| `tool_error` | `tool.call.failed` | done |
+| `tool_error` | `tool.call.failed` with the tool's own error | done |
+| `external_error` | `tool.call.failed` with a code from `EXTERNAL_ERROR_CODES` (`http_4xx`, `http_5xx`, `too_large`, `timeout`, `net_failed`): the target site or the network refused. Never stops the turn and never counts toward `maxNoticesPerTurn`; past `maxNoticesPerDetector` its notices are just not sent. No docs, no incidents, no patch suggestion | done |
 | `invalid_args` | schema validation failed before the call | done |
 | `interrupted` | resume found a tool call with unknown outcome (`code: interrupted`) | done, as a `tool_error` notice with a "check the state first" hint |
 | `loop` | same tool with the same arguments ≥ `loopThreshold` times; `loopBlockAfter` (default `loopThreshold + 2`) escalates | done |
@@ -30,28 +31,32 @@ Actions are `notice` (recorded as `supervisor.notice` and shown to the model as 
 [supervisor] Pay attention: tool flaky.get failed (bug: flaky.get is broken).
 Hint from the tool: the plugin has a bug
 Think about why it failed before calling it again.
-Tool docs (README.md):
-  <first docsMaxChars of the tool docs file>
+Tool docs (README.md, section flaky.get):
+  <the section under the heading that names the tool, else the start of the file; docsMaxChars at most>
 A similar incident was solved before: after bug ("…") the call worked with arguments {...}
 Propose a fix: correct the arguments, choose another approach, or explain to the user what is blocking you.
 ```
 
-The docs file is `tools[].docs` from the manifest, otherwise the plugin's `README.md`.
+The docs file is `tools[].docs` from the manifest, otherwise the plugin's `README.md`. A notice carries a tool's docs once per turn (the model keeps them in its history); the section is the one under a heading that names the tool (`## web.read`, `### \`web.read\``), up to the next heading of that level.
+
+An `external_error` notice says the site or network refused, quotes the tool's hint and suggests another source; it carries no docs or incidents.
 
 ## Escalation ladder
 
 | Level | Trigger | Action |
 |---|---|---|
 | 1. Hint | first failure | notice with hint, docs and similar incidents |
-| 2. Strategy | same tool and code failed `repeatFailures` (2) times in the turn | notice: do not repeat, change the approach |
-| 3. Patch | the tool failed in ≥ `patchAfterTurns` (3) different turns and its plugin is editable | notice suggesting `plugin.read` → `plugin.propose_patch` |
-| 4. Human | more than `maxNoticesPerDetector` (2) notices from one detector or `maxNoticesPerTurn` in total, or a hard loop; with `escalate: false` extra notices are dropped instead | `supervisor.escalated` + `turn.blocked{reason: supervisor}` |
+| 2. Strategy | same tool, code and target (url host, or the first of `path`, `file`, `command`, `query`, `name`, `id`) failed `repeatFailures` (2) times in the turn | notice: do not repeat, change the approach |
+| 3. Patch | the tool failed with its own errors (not `external_error`) in ≥ `patchAfterTurns` (3) different turns and its plugin is editable | notice suggesting `plugin.read` → `plugin.propose_patch` |
+| 4. Human | more than `maxNoticesPerDetector` (2) notices from one detector or `maxNoticesPerTurn` in total (`external_error` excluded), or a hard loop; with `escalate: false` extra notices are dropped instead | `supervisor.escalated` + `turn.blocked{reason: supervisor}` |
 
 A blocked turn (reason `supervisor` or `budget`) continues when a human sends a message to the session: the message is recorded in the same turn, and the step, token and time budgets and the supervisor counters restart from it.
 
 ## Incident memory
 
-When a turn completes, the supervisor looks for tools that failed and then succeeded in that turn. It reports `{ tool, code, message, fixSummary }`, which says which arguments worked. The core stores this in the `incidents` table and records `supervisor.incident_resolved`. Later failures of the same tool with the same error code include the last two such incidents. Matching is exact on tool and code. Summaries written by a model come later.
+When a turn completes, the supervisor looks for failed calls that a later call of the same tool corrected: the same target (url host, or the first target-like argument), or any call when the failed one named no target (say, a missing argument). Another site read after a failure is not a fix. External errors (`EXTERNAL_ERROR_CODES`) and `interrupted` are never stored. It reports `{ tool, code, message, fixSummary }`, which says which arguments worked. The core stores this in the `incidents` table and records `supervisor.incident_resolved`. A later failure quotes the last two incidents with the same tool, code and message key (masked, one line, urls cut to their host, numbers of 4+ digits dropped), skipping incidents whose fix names a url on another host than the failing call. Summaries written by a model come later.
+
+On its first start with this rule the core drops the `web.*` incidents with code `web_failed` stored by the old rule (journal `migrations` row `2026-10-21-drop-web-failed-incidents`).
 
 ## Masking
 
@@ -78,10 +83,10 @@ supervisor:
   maxNoticesPerTurn: 6
   maxNoticesPerDetector: 2
   escalate: true            # false: never stop the turn for notice limits or loops, just stop sending notices
-  repeatFailures: 2         # same tool + code in a turn before "do not repeat" (level 2)
+  repeatFailures: 2         # same tool + code + target in a turn before "do not repeat" (level 2)
   patchAfterTurns: 3        # turns a tool failed in before the patch suggestion (level 3); 0 never
-  docsMaxChars: 1500        # tool docs quoted in a notice; 0 none
-  useIncidents: true        # quote earlier fixes of the same error
+  docsMaxChars: 500         # tool docs quoted in a notice (the tool's section, once per tool per turn); 0 none
+  useIncidents: true        # quote earlier fixes of the same error on the same target
   checks: { toolErrors: true, loop: true, budget: true, badOutput: true }
   budget:
     # steps: 60             # unset: policy.yaml budgets.turn; 0 = no limit

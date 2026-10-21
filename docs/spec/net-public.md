@@ -20,8 +20,9 @@ core and cannot be patched by the agent. Used by `tool-web` (`web.search`, `web.
 ## API
 
 ```ts
-const res = await ctx.net.public.fetch(url, { method, headers, body, timeoutMs, maxBytes, maxRedirects });
+const res = await ctx.net.public.fetch(url, { method, headers, body, timeoutMs, maxBytes, maxRedirects, truncate });
 res.url;          // final address after redirects
+res.truncated;    // true when truncate cut the body at maxBytes
 await ctx.net.public.check(url);              // resolve and check only
 const proxy = await ctx.net.public.proxy();   // { server, username, password } for the browser
 ```
@@ -32,6 +33,11 @@ const proxy = await ctx.net.public.proxy();   // { server, username, password } 
 | `timeoutMs` (whole request, redirects included) | 20 000 | 60 000 |
 | `maxBytes` (decoded body; larger fails `too_large`) | 5 000 000 | 20 000 000 |
 | `maxRedirects` | 5 | 10 |
+| `truncate` (over `maxBytes`, return the first `maxBytes` and `truncated: true` instead of `too_large`) | `false` | |
+
+`truncate` is for pages read as text (tool-web's `web.read`, `web.links`, `web.search`). Downloads and binary bodies
+keep the hard limit. The compressed stream is still limited to 4 × `maxBytes`; with `truncate` the decoder's output so
+far is returned.
 
 The core decodes gzip, deflate and br and drops `content-encoding` / `content-length`. `Host`, `Connection`,
 `Proxy-*` and similar request headers are set by the core. `Authorization` and `Cookie` are dropped on a cross-origin

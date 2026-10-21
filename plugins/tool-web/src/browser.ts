@@ -1,13 +1,14 @@
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import type { PublicNet } from "@sinty/sdk";
+import { ToolError, type PublicNet } from "@sinty/sdk";
 
 /** The part of Playwright this plugin uses. */
 export interface BrowserPage {
   url(): string;
   title(): Promise<string>;
   content(): Promise<string>;
-  goto(url: string, opts: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
+  /** Playwright's Response of the main document, or null (same-document navigation, about:blank). */
+  goto(url: string, opts: { waitUntil: "domcontentloaded"; timeout: number }): Promise<{ status(): number } | null>;
   click(selector: string, opts: { timeout: number }): Promise<unknown>;
   fill(selector: string, text: string, opts?: { timeout: number }): Promise<unknown>;
   keyboard: { press(key: string): Promise<unknown> };
@@ -59,9 +60,9 @@ export function assertHttpUrl(url: string): void {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error("url is not valid");
+    throw new ToolError("bad_request", "url is not valid");
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("only http and https");
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new ToolError("net_blocked", "only http and https");
 }
 
 /** After a navigation the page must still be an http(s) page (or the blank start page). */
@@ -75,7 +76,12 @@ export function assertPageUrl(url: string): void {
  * the core resolves each host and refuses private addresses, loopback included (Playwright forces `<-loopback>`
  * into the bypass list so localhost is proxied too). WebRTC may not send UDP around the proxy.
  */
-export async function withBrowser<T>(net: PublicNet, url: string, timeoutMs: number, run: (page: BrowserPage) => Promise<T>): Promise<T> {
+/** HTTP status of the page's last main-document navigation (undefined when the browser reported none). */
+export interface Navigation {
+  status?: number;
+}
+
+export async function withBrowser<T>(net: PublicNet, url: string, timeoutMs: number, run: (page: BrowserPage, nav: Navigation) => Promise<T>): Promise<T> {
   assertHttpUrl(url);
   await net.check(url);
   const playwright = await loadPlaywright();
@@ -88,9 +94,10 @@ export async function withBrowser<T>(net: PublicNet, url: string, timeoutMs: num
   try {
     const context = await browser.newContext({ acceptDownloads: false, serviceWorkers: "block" });
     const page = await context.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    const nav: Navigation = res ? { status: res.status() } : {};
     assertPageUrl(page.url());
-    return await run(page);
+    return await run(page, nav);
   } finally {
     await browser.close();
   }

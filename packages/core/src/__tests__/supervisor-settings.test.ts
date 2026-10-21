@@ -145,3 +145,29 @@ test("incidents: stored typed text and secrets are masked on start; /v1/supervis
     cleanup();
   }
 });
+
+test("incidents: web.* web_failed incidents of the old fix rule are dropped once on start; others stay", async () => {
+  const { home, cleanup } = tempHome();
+  const path = resolvePaths(home).journal;
+  const j = new Journal(path);
+  j.addIncident({ id: "inc_web", tool: "web.read", code: "web_failed", message: "page returned 429", fixSummary: 'after web_failed ("page returned 429") the call worked with arguments {"url":"https://privetpeople.ru/publ/x"}' });
+  j.addIncident({ id: "inc_echo", tool: "echo.say", code: "invalid_args", message: "text is required", fixSummary: 'after invalid_args the call worked with arguments {"text":"hi"}' });
+  j.close();
+  let sinty = await boot(home, [{ text: "ok" }], { policy: allow(), plugins: PLUGINS });
+  try {
+    assert.deepEqual(sinty.journal.incidents().map((i) => i.id), ["inc_echo"]);
+  } finally {
+    await sinty.stop();
+  }
+  // A web_failed incident stored later (a real browser-action fix) is not dropped again on the next start.
+  const again = new Journal(path);
+  again.addIncident({ id: "inc_web_new", tool: "web.interact", code: "web_failed", message: "no such selector", fixSummary: "after web_failed the call worked" });
+  again.close();
+  sinty = await boot(home, [{ text: "ok" }], { policy: allow(), plugins: PLUGINS });
+  try {
+    assert.deepEqual(sinty.journal.incidents().map((i) => i.id).sort(), ["inc_echo", "inc_web_new"]);
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});

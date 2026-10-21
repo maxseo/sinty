@@ -14,6 +14,21 @@ export interface WebSettings {
   actionTimeoutMs: number;
   screenshotDir: string;
   userAgent: string;
+  acceptLanguage: string;
+}
+
+/**
+ * A current desktop Chrome. Many shops and anti-bot services answer 401/403 to an unknown agent such as the old
+ * default `Sinty/1.0`, so that value (saved into config.yaml by older Settings pages) also maps to this one.
+ */
+export const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+const LEGACY_USER_AGENT = "Sinty/1.0";
+export const DEFAULT_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7";
+export const ACCEPT_HTML = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+
+function header(v: unknown, def: string, legacy?: string): string {
+  const t = typeof v === "string" ? v.trim().replace(/[\r\n]+/g, " ").slice(0, 300) : "";
+  return !t || t === legacy ? def : t;
 }
 
 function num(v: unknown, def: number, min: number, max: number): number {
@@ -35,12 +50,13 @@ export function readSettings(config: Readonly<Record<string, unknown>>): WebSett
     searxngUrl: typeof config.searxngUrl === "string" ? config.searxngUrl : "",
     maxResults: Math.round(num(config.maxResults, 8, 1, 20)),
     timeoutMs: num(config.timeoutSeconds, 20, 1, 60) * 1000,
-    maxBytes: Math.round(num(config.maxPageKb, 1500, 50, 20_000) * 1000),
+    maxBytes: Math.round(num(config.maxPageKb, 5000, 50, 20_000) * 1000),
     maxChars: Math.round(num(config.maxChars, 20_000, 1000, 200_000)),
     maxLinks: Math.round(num(config.maxLinks, 40, 1, 200)),
     browserTimeoutMs: num(config.browserTimeoutSeconds, 20, 1, 60) * 1000,
     actionTimeoutMs: num(config.actionTimeoutSeconds, 8, 1, 60) * 1000,
     screenshotDir: safeSubdir(config.screenshotDir),
-    userAgent: typeof config.userAgent === "string" && config.userAgent.trim() ? config.userAgent.trim().slice(0, 200) : "Sinty/1.0",
+    userAgent: header(config.userAgent, BROWSER_USER_AGENT, LEGACY_USER_AGENT),
+    acceptLanguage: header(config.acceptLanguage, DEFAULT_ACCEPT_LANGUAGE),
   };
 }

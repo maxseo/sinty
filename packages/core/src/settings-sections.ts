@@ -49,10 +49,10 @@ export const SUPERVISOR_SECTION: SettingsSectionManifest = {
     { key: "repeatFailures", label: "Одинаковых ошибок до «не повторяй»", type: "number", group: LIMITS, min: 1, max: 20, integer: true },
     { key: "patchAfterTurns", label: "Ходов с ошибкой до предложения патча", type: "number", group: LIMITS, min: 0, max: 50, integer: true, help: "0 — не предлагать." },
     { key: "maxNoticesPerTurn", label: "Заметок за ход", type: "number", group: LIMITS, min: 1, max: 50, integer: true },
-    { key: "maxNoticesPerDetector", label: "Заметок одной проверки за ход", type: "number", group: LIMITS, min: 1, max: 20, integer: true },
+    { key: "maxNoticesPerDetector", label: "Заметок одной проверки за ход", type: "number", group: LIMITS, min: 1, max: 20, integer: true, help: "Отказы сайтов (401/403/404/429, 5xx, тайм-аут, слишком большая страница) идут отдельной проверкой «ошибка сайта» и ход не останавливают." },
     { key: "escalate", label: "Останавливать ход сверх лимитов", type: "boolean", group: LIMITS, help: "Выключено — лишние заметки просто не отправляются, цикл не останавливает ход." },
     { key: "useIncidents", label: "Подсказывать прошлые решения", type: "boolean", group: LIMITS, help: "Заметка об ошибке цитирует, как такая же ошибка была исправлена раньше." },
-    { key: "docsMaxChars", label: "Документации инструмента в заметке", type: "number", group: LIMITS, min: 0, max: 20000, integer: true, unit: "симв." },
+    { key: "docsMaxChars", label: "Документации инструмента в заметке", type: "number", group: LIMITS, min: 0, max: 20000, integer: true, unit: "симв.", help: "Раздел упавшего инструмента, один раз за ход. 0 — без документации." },
   ],
 };
 

@@ -88,8 +88,8 @@ export const configSchema = z.object({
       repeatFailures: z.number().int().min(1).default(2),
       /** Turns a tool failed in before the notice suggests a plugin patch; 0 never. */
       patchAfterTurns: z.number().int().min(0).default(3),
-      /** Tool docs quoted in failure notices, characters; 0 none. */
-      docsMaxChars: z.number().int().min(0).default(1500),
+      /** Tool docs quoted in failure notices (the failing tool's section, once per tool per turn), characters; 0 none. */
+      docsMaxChars: z.number().int().min(0).default(500),
       useIncidents: z.boolean().default(true),
       checks: z
         .object({
