@@ -1,7 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { SintyEvent } from "@sinty/sdk";
 import { Agent } from "./agent.js";
+import { newApiToken } from "./api-token.js";
 import { Bus } from "./bus.js";
 import { scrubText, type SupervisorSettings } from "@sinty/supervisor";
 import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, effectiveBudget, loadConfig, loadPolicy, withDefaultPlugins, type SintyConfig, type SintyPolicy } from "./config.js";
@@ -48,7 +48,7 @@ export function initHome(home?: string): InitResult {
   const secrets = new SecretStore(paths);
   let apiToken: string | undefined;
   if (!secrets.get("api.token")) {
-    apiToken = `snt_${randomBytes(24).toString("base64url")}`;
+    apiToken = newApiToken();
     secrets.set("api.token", apiToken);
   }
   return { paths, created, ...(apiToken ? { apiToken } : {}) };

@@ -8,6 +8,7 @@ import { scrubText } from "@sinty/supervisor";
 import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
 import { saveBlob } from "../blobs.js";
+import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
@@ -62,11 +63,29 @@ const SUPERVISOR_EVENTS: EventType[] = ["supervisor.notice", "supervisor.escalat
 
 export function createApp(sinty: Sinty): Hono {
   const app = new Hono();
-  const token = sinty.secrets.resolve(sinty.config.server.token);
-  const authorized = (c: Context): boolean => {
+  // Resolved on every request: after a rotation (POST /v1/auth/rotate or `sinty token rotate` next to this server)
+  // only the new token is accepted, without a restart.
+  const given = (c: Context): string => {
     const header = c.req.header("authorization") ?? "";
-    const given = header.startsWith("Bearer ") ? header.slice(7) : (c.req.query("token") ?? "");
-    return Boolean(token) && safeEqual(given, token!);
+    return header.startsWith("Bearer ") ? header.slice(7) : (c.req.query("token") ?? "");
+  };
+  const valid = (t: string): boolean => {
+    const token = sinty.secrets.resolve(sinty.config.server.token);
+    return Boolean(token) && safeEqual(t, token!);
+  };
+  const authorized = (c: Context): boolean => valid(given(c));
+  // Open event streams were authorized when they started; each one re-checks its token on every ping and right
+  // after a rotation, and ends when it is no longer valid.
+  const streams = new Set<() => void>();
+  const guard = (c: Context) => {
+    const t = given(c);
+    return {
+      valid: () => valid(t),
+      register: (check: () => void) => {
+        streams.add(check);
+        return () => void streams.delete(check);
+      },
+    };
   };
   const unauthorized = (c: Context): Response => c.json({ error: { code: "unauthorized", message: "missing or invalid bearer token" } }, 401);
 
@@ -81,6 +100,20 @@ export function createApp(sinty: Sinty): Hono {
     if (c.req.path === "/v1/health") return next();
     if (!authorized(c)) return unauthorized(c);
     return next();
+  });
+
+  /** New login token; the caller (already signed in with the old one) gets it once in the answer. */
+  app.post("/v1/auth/rotate", (c) => {
+    let next: string;
+    try {
+      next = rotateApiToken(sinty.secrets, sinty.config);
+    } catch (e) {
+      if (e instanceof TokenRotationError) return c.json({ error: { code: e.code, message: e.message, hint: e.hint } }, 409);
+      throw e;
+    }
+    for (const check of [...streams]) check();
+    c.header("cache-control", "no-store");
+    return c.json({ token: next });
   });
 
   app.get("/v1/registry", (c) => {
@@ -355,7 +388,7 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/v1/sessions/:id/stream", (c) => {
     const sessionId = c.req.param("id");
     const after = Number(c.req.query("after") ?? c.req.header("last-event-id") ?? 0);
-    return sse(c, (push) => liveEvents(sinty.journal, sinty.bus, sessionId, after, push));
+    return sse(c, (push) => liveEvents(sinty.journal, sinty.bus, sessionId, after, push), guard(c));
   });
 
   app.get("/v1/sessions/:id/pending", (c) => c.json({ pending: sinty.agent.pending(c.req.param("id")) }));
@@ -445,6 +478,7 @@ export function createApp(sinty: Sinty): Hono {
       sinty.bus.subscribe((m) => {
         if (m.kind === "journal" && OVERVIEW.has(m.event.type)) push(m.event);
       }),
+      guard(c),
     ),
   );
 
@@ -496,29 +530,50 @@ export function createApp(sinty: Sinty): Hono {
   return app;
 }
 
-function sse(c: Context, subscribe: (push: (e: LiveEvent) => void) => () => void): Response {
+interface StreamGuard {
+  /** Whether the token the stream was opened with is still the login token. */
+  valid: () => boolean;
+  /** Registers a re-check to run right after a rotation; returns the unregister function. */
+  register: (check: () => void) => () => void;
+}
+
+function sse(c: Context, subscribe: (push: (e: LiveEvent) => void) => () => void, guard: StreamGuard): Response {
   const queue: LiveEvent[] = [];
   let wake: (() => void) | undefined;
+  let revoked = false;
   const unsubscribe = subscribe((e) => {
     queue.push(e);
     wake?.();
   });
+  const check = () => {
+    if (revoked || guard.valid()) return;
+    revoked = true;
+    wake?.();
+  };
+  const unregister = guard.register(check);
   return streamSSE(c, async (stream) => {
     stream.onAbort(() => {
       unsubscribe();
       wake?.();
     });
-    const ping = setInterval(() => void stream.writeSSE({ event: "ping", data: "{}" }), 15_000);
+    const ping = setInterval(() => {
+      check();
+      if (!revoked) void stream.writeSSE({ event: "ping", data: "{}" });
+    }, 15_000);
     try {
-      while (!stream.aborted) {
+      while (!stream.aborted && !revoked) {
         if (!queue.length) await new Promise<void>((r) => (wake = r));
         wake = undefined;
+        if (revoked) break;
         for (const e of queue.splice(0)) {
           await stream.writeSSE({ ...("seq" in e ? { id: String(e.seq) } : {}), event: e.type, data: JSON.stringify(e) });
         }
       }
+      // The login token changed: say so and end the stream; the client's reconnect gets 401 with the old token.
+      if (revoked && !stream.aborted) await stream.writeSSE({ event: "auth.revoked", data: "{}" });
     } finally {
       clearInterval(ping);
+      unregister();
       unsubscribe();
     }
   });

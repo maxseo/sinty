@@ -79,6 +79,15 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return body as T;
 }
 
+/**
+ * Asks the server for a new login token and keeps it in this tab. The old token stops working everywhere at once:
+ * other tabs and devices get the sign-in screen on their next request.
+ */
+export async function rotateToken(): Promise<void> {
+  const res = await api<{ token: string }>("/v1/auth/rotate", { method: "POST" });
+  token.set(res.token);
+}
+
 export interface SSEMessage {
   event: string;
   data: string;
@@ -128,7 +137,7 @@ export function subscribe(path: (lastId: string | undefined) => string, onMessag
             if (!data.length) continue;
             m.data = data.join("\n");
             if (m.id) lastId = m.id;
-            if (m.event !== "ping") onMessage(m);
+            if (m.event !== "ping" && m.event !== "auth.revoked") onMessage(m);
           }
         }
       } catch {

@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import type { SintyPaths } from "./paths.js";
 
 interface Sealed {
@@ -14,13 +14,39 @@ const REF = /^secret:\/\/(.+)$/;
 export class SecretStore {
   private readonly key: Buffer;
   private readonly values = new Map<string, string>();
+  /** mtime and size of secrets.json as last read or written; another process's write changes them. */
+  private stamp = "";
 
   constructor(private readonly paths: SintyPaths) {
     this.key = loadOrCreateKey(paths.secretKey);
-    if (existsSync(paths.secrets)) {
-      const sealed = JSON.parse(readFileSync(paths.secrets, "utf8")) as Record<string, Sealed>;
-      for (const [name, s] of Object.entries(sealed)) this.values.set(name, this.open(s));
+    this.load();
+  }
+
+  /**
+   * Re-reads secrets.json when another process (the CLI next to a running server: `sinty secret set`,
+   * `sinty token rotate`) wrote it. Before this, a running server kept the values it started with, and its next write
+   * put the old ones back. A file that cannot be read keeps the values in memory.
+   */
+  private refresh(): void {
+    const now = fileStamp(this.paths.secrets);
+    if (now === this.stamp) return;
+    try {
+      this.load();
+    } catch {
+      // A half-written file from another process: try again on the next read.
     }
+  }
+
+  private load(): void {
+    const stamp = fileStamp(this.paths.secrets);
+    const next = new Map<string, string>();
+    if (existsSync(this.paths.secrets)) {
+      const sealed = JSON.parse(readFileSync(this.paths.secrets, "utf8")) as Record<string, Sealed>;
+      for (const [name, s] of Object.entries(sealed)) next.set(name, this.open(s));
+    }
+    this.values.clear();
+    for (const [k, v] of next) this.values.set(k, v);
+    this.stamp = stamp;
   }
 
   static isRef(value: unknown): value is string {
@@ -36,22 +62,26 @@ export class SecretStore {
   }
 
   get(name: string): string | undefined {
+    this.refresh();
     const env = process.env[`SINTY_SECRET_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`];
     return env ?? this.values.get(name);
   }
 
   set(name: string, value: string): void {
+    this.refresh();
     this.values.set(name, value);
     this.persist();
   }
 
   delete(name: string): boolean {
+    this.refresh();
     const had = this.values.delete(name);
     if (had) this.persist();
     return had;
   }
 
   names(): string[] {
+    this.refresh();
     return [...this.values.keys()].sort();
   }
 
@@ -65,6 +95,7 @@ export class SecretStore {
   }
 
   private allValues(): string[] {
+    this.refresh();
     const env = Object.entries(process.env)
       .filter(([k]) => k.startsWith("SINTY_SECRET_"))
       .map(([, v]) => v ?? "");
@@ -75,6 +106,7 @@ export class SecretStore {
     const sealed: Record<string, Sealed> = {};
     for (const [name, value] of this.values) sealed[name] = this.seal(value);
     writeFileSync(this.paths.secrets, JSON.stringify(sealed, null, 2), { mode: 0o600 });
+    this.stamp = fileStamp(this.paths.secrets);
   }
 
   private seal(value: string): Sealed {
@@ -101,4 +133,13 @@ function loadOrCreateKey(file: string): Buffer {
     // chmod is a no-op on Windows; the file inherits the profile ACL.
   }
   return key;
+}
+
+function fileStamp(file: string): string {
+  try {
+    const st = statSync(file, { bigint: true });
+    return `${st.mtimeNs}:${st.size}:${st.ino}`;
+  } catch {
+    return "";
+  }
 }

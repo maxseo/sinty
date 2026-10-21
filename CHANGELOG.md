@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format follows
 - Memory recall by word form: facts are also indexed as stems (`facts_stem`; Snowball Russian in `stem.ts`, English
   through SQLite's porter tokenizer), with stemmed AND and OR stages after the exact AND. "столы новые" finds "новый
   стол", "cats runs" finds "cat ... running". Existing databases build the index on first open.
+- Login token rotation: `sinty token rotate [--print]`, Settings → Основные → «Сменить токен входа» and
+  `POST /v1/auth/rotate`. The old token stops working at once, also in a server that is already running; open event
+  streams with it end with `event: auth.revoked`. `sinty token` prints the current token (the Web UI sign-in screen
+  already pointed to this command, which did not exist). Refused with `409` for a literal `server.token` or a
+  `SINTY_SECRET_API_TOKEN` override.
 - Plugin `skills` with the skills catalog and `skill.read`, `skill.files`, `skill.read_file`, `skill.write_file`,
   `skill.edit`, `skill.write` (moved out of the core; same names, descriptions, input schemas, error codes and
   hints; `skill.*` names reserved for it). On by default: `plugins.disabled: [skills]` or unticking it in Settings
@@ -179,6 +184,9 @@ All notable changes to this project are documented here. The format follows
   on every start. Only that warning code is switched off, only in those processes (`--disable-warning=PERM0002`;
   on Node releases that print it without a code, such as 24.12, `--disable-warning=SecurityWarning` in those
   processes); the host logs one info line naming the grant instead. Other warnings are unaffected.
+- The API read its login token once at start, and a running server kept the secrets it started with: a
+  `sinty secret set` next to it had no effect until a restart, and the server's next secret write put the old values
+  back. `SecretStore` now re-reads `secrets.json` when it changes.
 - A turn that read a few shops was stopped with "supervisor notices did not help (tool_error: 3, total 3)": site
   refusals (401, 404, a 1.5 MB page) counted as tool misuse toward `maxNoticesPerDetector`, every notice repeated the
   whole tool-web README, said "Private hosts are blocked" and offered an unrelated incident (another site's url as the
