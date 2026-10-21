@@ -1,3 +1,4 @@
+import { STEM_VERSION, stemText } from "./stem.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -104,8 +105,31 @@ export class MemoryStore {
         created_at TEXT NOT NULL
       );
     `);
+    // Stemmed copy of every fact for recall by word form: Russian stems from stem.ts, English by the porter tokenizer.
+    this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS facts_stem USING fts5(stems, fact_id UNINDEXED, tokenize = 'porter unicode61 remove_diacritics 2')`);
+    this.rebuildStemsIfStale();
     if (this.vec && !this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facts_vec'").get()) {
       this.db.exec(`CREATE VIRTUAL TABLE facts_vec USING vec0(embedding float[${this.opts.dimensions}], fact_id text)`);
+    }
+  }
+
+  /**
+   * facts_stem is derived data: built for every existing fact the first time a database is opened by a core with
+   * stemming, and again whenever STEM_VERSION changes (memory_meta "fts.stem"). One transaction; a few ms per 1000 facts.
+   */
+  private rebuildStemsIfStale(): void {
+    const row = this.db.prepare("SELECT value FROM memory_meta WHERE key = 'fts.stem'").get() as { value: string } | undefined;
+    if (row?.value === STEM_VERSION) return;
+    this.db.exec("BEGIN");
+    try {
+      this.db.exec("DELETE FROM facts_stem");
+      const insert = this.db.prepare("INSERT INTO facts_stem (stems, fact_id) VALUES (?, ?)");
+      for (const r of this.db.prepare("SELECT id, text FROM memory_facts").all() as { id: string; text: string }[]) insert.run(stemText(r.text), r.id);
+      this.db.prepare("INSERT OR REPLACE INTO memory_meta (key, value) VALUES ('fts.stem', ?)").run(STEM_VERSION);
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
     }
   }
 
@@ -300,23 +324,32 @@ export class MemoryStore {
   }
 
   /**
-   * Full-text candidates, best first: facts with every word (AND), then facts with any word of 3+ letters (OR),
-   * then facts with a word that starts like one of them (OR over prefixes, so "памяти" finds "память").
+   * Full-text candidates, best first: facts with every word (AND), then with every word in any form (AND over
+   * stems: "сводку компакции" finds "сводка компакция", "deployed servers" finds "deploying the server"), then with
+   * any word of 3+ letters (OR), then with any of their stems (OR), then with a word that starts like one of them
+   * (OR over crude prefixes, for forms the stemmer keeps apart: "память" → "памя", "памяти" → "памят").
    * Each stage is ranked by FTS5 bm25; later stages only add ids the earlier ones did not return.
    */
   private ftsIds(query: string): string[] {
     const words = ftsWords(query);
     if (!words.length) return [];
     const loose = words.filter((t) => [...t].length >= 3);
-    const stages = [words.map((t) => `"${t}"`).join(" AND ")];
+    const stems = (ws: string[]): string[] => [...new Set(ws.flatMap((w) => stemText(w).split(" ")).filter(Boolean))];
+    const raw = "SELECT fact_id FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT 50";
+    const stemmed = "SELECT fact_id FROM facts_stem WHERE facts_stem MATCH ? ORDER BY rank LIMIT 50";
+    const stages: [string, string][] = [[raw, words.map((t) => `"${t}"`).join(" AND ")]];
+    const all = stems(words);
+    if (all.length) stages.push([stemmed, all.map((t) => `"${t}"`).join(" AND ")]);
     if (loose.length) {
-      stages.push(loose.map((t) => `"${t}"`).join(" OR "));
-      stages.push([...new Set(loose.map(ftsStem))].map((t) => `"${t}"*`).join(" OR "));
+      stages.push([raw, loose.map((t) => `"${t}"`).join(" OR ")]);
+      const some = stems(loose);
+      if (some.length) stages.push([stemmed, some.map((t) => `"${t}"`).join(" OR ")]);
+      stages.push([raw, [...new Set(loose.map(ftsStem))].map((t) => `"${t}"*`).join(" OR ")]);
     }
     const out: string[] = [];
     const seen = new Set<string>();
-    const stmt = this.db.prepare("SELECT fact_id FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT 50");
-    for (const q of stages) {
+    for (const [sql, q] of stages) {
+      const stmt = this.db.prepare(sql);
       if (out.length >= 50) break;
       let rows: { fact_id: string }[] = [];
       try {
@@ -380,6 +413,8 @@ export class MemoryStore {
   private syncFts(id: string, text: string): void {
     this.db.prepare("DELETE FROM facts_fts WHERE fact_id = ?").run(id);
     this.db.prepare("INSERT INTO facts_fts (text, fact_id) VALUES (?, ?)").run(text, id);
+    this.db.prepare("DELETE FROM facts_stem WHERE fact_id = ?").run(id);
+    this.db.prepare("INSERT INTO facts_stem (stems, fact_id) VALUES (?, ?)").run(stemText(text), id);
   }
 
   private syncVec(id: string, embedding?: Float32Array): void {
@@ -391,6 +426,7 @@ export class MemoryStore {
   private deleteId(id: string): void {
     this.db.prepare("DELETE FROM memory_facts WHERE id = ?").run(id);
     this.db.prepare("DELETE FROM facts_fts WHERE fact_id = ?").run(id);
+    this.db.prepare("DELETE FROM facts_stem WHERE fact_id = ?").run(id);
     if (this.vec) this.db.prepare("DELETE FROM facts_vec WHERE fact_id = ?").run(id);
   }
 

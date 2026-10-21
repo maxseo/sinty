@@ -189,12 +189,21 @@ sinty memory reindex [--dry-run] [--batch 64] [--json]
 
 ## Full-text recall
 
-`MemoryStore.recall` builds FTS5 candidates in three stages and keeps the first 50 distinct ids:
+`MemoryStore.recall` builds FTS5 candidates in five stages and keeps the first 50 distinct ids:
 
 1. **AND** — every query word (lowercased, 2+ letters, at most 12), ranked by bm25;
-2. **OR** — any word of 3+ letters, ranked by bm25 (facts with more and rarer words come first);
-3. **prefix OR** — the same words cut to a crude stem (`ftsStem`: words over 5 letters lose up to 3 trailing
-   letters, keeping at least 4) with `*`, so other inflections match ("память" finds "памяти").
+2. **stem AND** — every query word in any form, on `facts_stem` (see below): "столы новые" finds "новый стол";
+3. **OR** — any word of 3+ letters, ranked by bm25 (facts with more and rarer words come first);
+4. **stem OR** — any of their stems;
+5. **prefix OR** — the same words cut to a crude stem (`ftsStem`: words over 5 letters lose up to 3 trailing
+   letters, keeping at least 4) with `*`, for forms the stemmer keeps apart ("память" → `памя`, "памяти" → `памят`).
+
+**Stems.** `facts_stem` (FTS5, `tokenize = 'porter unicode61 remove_diacritics 2'`) holds `stemText(fact)`
+(`packages/core/src/stem.ts`): Cyrillic words replaced by their Snowball Russian stems (`stemRussian`, ё → е),
+other words as they are, which the porter tokenizer stems as English ("deploying" ~ "deployed"). Query words go
+through the same function. The table is derived data: it is built for every fact the first time a database is
+opened by a core that has it, and rebuilt whenever `STEM_VERSION` changes (`memory_meta` key `fts.stem`), in one
+transaction.
 
 Later stages only add ids the earlier ones did not return, so a fact with every word always ranks above a partial
 match. The list is fused with vector hits (RRF) and decayed by age as before; a plain substring scan runs only
