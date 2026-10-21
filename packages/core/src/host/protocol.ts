@@ -62,10 +62,11 @@ export interface NetPublicInit {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  truncate?: boolean;
 }
 
 export type NetPublicResult =
-  | { url: string; status: number; statusText: string; headers: [string, string][]; body: Uint8Array; redirects: string[] }
+  | { url: string; status: number; statusText: string; headers: [string, string][]; body: Uint8Array; redirects: string[]; truncated: boolean }
   | { server: string; username: string; password: string }
   | { ok: true };
 

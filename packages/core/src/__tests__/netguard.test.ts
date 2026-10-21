@@ -194,6 +194,29 @@ test("netguard: bodies are decoded and limited", async () => {
   }
 });
 
+test("netguard: truncate keeps the first maxBytes instead of failing; off by default", async () => {
+  const page = `<html><title>Big</title><body>${"<p>item</p>".repeat(20_000)}</body></html>`;
+  const srv = await listen((req, res) => {
+    if (req.url === "/gz") res.writeHead(200, { "content-encoding": "gzip", "content-type": "text/html" }).end(gzipSync(page));
+    else res.writeHead(200, { "content-type": "text/html" }).end(page);
+  });
+  const allow = parseAllowPrivate(`127.0.0.1:${srv.port}`);
+  try {
+    for (const path of ["/plain", "/gz"]) {
+      const r = await publicFetch(`http://127.0.0.1:${srv.port}${path}`, { maxBytes: 5000, truncate: true }, { allow });
+      assert.equal(r.truncated, true, path);
+      assert.equal(r.body.length, 5000, path);
+      assert.equal(Buffer.from(r.body).toString(), page.slice(0, 5000), path);
+      await assert.rejects(publicFetch(`http://127.0.0.1:${srv.port}${path}`, { maxBytes: 5000 }, { allow }), (e: unknown) => e instanceof NetGuardError && e.code === "too_large", `${path}: binary/download uses keep the hard limit`);
+    }
+    const small = await publicFetch(`http://127.0.0.1:${srv.port}/plain`, { truncate: true }, { allow });
+    assert.equal(small.truncated, false);
+    assert.equal(small.body.length, page.length);
+  } finally {
+    srv.server.close();
+  }
+});
+
 function rawConnect(proxyPort: number, request: string): Promise<string> {
   return new Promise((resolveText, reject) => {
     const s = connect(proxyPort, "127.0.0.1", () => s.write(request));

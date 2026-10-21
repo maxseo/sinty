@@ -3,6 +3,15 @@ import type { SintyEvent, ToolSideEffects } from "@sinty/sdk";
 /** How the turn budget counts tokens. See budgetTokens(). */
 export type BudgetCount = "all" | "uncached" | "weighted";
 
+/**
+ * Tool error codes that mean "the target site or the network refused", not "the call was wrong": a site's HTTP
+ * status (`http_4xx`, `http_5xx`), a page over the size limit, a timeout or an unreachable host. Their failures get
+ * an `external_error` notice that never stops the turn, they do not count toward a plugin patch, and they are never
+ * stored as incidents (another call that worked is not a fix for them). Tools that wrap such errors should use these
+ * codes (tool-web does).
+ */
+export const EXTERNAL_ERROR_CODES: ReadonlySet<string> = new Set(["http_4xx", "http_5xx", "too_large", "timeout", "net_failed"]);
+
 export interface SupervisorChecks {
   /** Notices after failed tool calls (tool_error, invalid_args). */
   toolErrors: boolean;
@@ -21,7 +30,7 @@ export interface SupervisorSettings {
   loopBlockAfter?: number;
   maxNoticesPerTurn: number;
   maxNoticesPerDetector: number;
-  /** Tool docs added to a failure notice, in characters; 0 adds none. */
+  /** Tool docs added to a failure notice, in characters; 0 adds none. Sent once per tool per turn: the section of the failing tool when the docs have one. */
   docsMaxChars: number;
   /** Stop the turn when notices exceed their limits (or a loop passes loopBlockAfter). False: stop sending notices, never stop the turn. Default true. */
   escalate?: boolean;

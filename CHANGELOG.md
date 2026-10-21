@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `ctx.net.public.fetch` option `truncate`: over `maxBytes` the first `maxBytes` decoded bytes come back with
+  `response.truncated` instead of a `too_large` failure. Off by default (downloads and binary bodies keep the limit).
+- Supervisor detector `external_error` for failures where the target site or the network refused
+  (`EXTERNAL_ERROR_CODES`: `http_4xx`, `http_5xx`, `too_large`, `timeout`, `net_failed`). Its notices never stop the
+  turn, do not count toward `maxNoticesPerTurn`, carry no docs or incidents and never lead to a patch suggestion.
+- `tool-web`: `web.interact` and `web.screenshot` return the page's HTTP `status` and, for an error, captcha or
+  anti-bot page, `blocked` with a note for the model. `web.read` marks a page cut at `maxPageKb` with
+  `truncated: true` and `…[truncated]`. Setting `acceptLanguage` (Settings → Веб → Accept-Language).
+- Journal table `migrations` for one-time data fixes (`Journal.once`), and `Journal.dropIncidents`.
 - Plugin `tool-web` with `web.search`, `web.read`, `web.links`, `web.screenshot` and `web.interact` (moved out of the
   core, same names, descriptions and input schemas). It is on by default; `plugins.disabled: [tool-web]` or unticking
   it in Settings turns it off. Settings section **Веб**: search engine (DuckDuckGo or your own SearXNG), result
@@ -92,6 +101,19 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- `tool-web` errors keep their meaning: core codes (`net_blocked`, `too_large`, `timeout`, `net_failed`,
+  `bad_request`) pass through, a site's non-2xx answer is `http_4xx` / `http_5xx` with the status and host in the
+  message, argument mistakes are `invalid_args`, and only the rest is `web_failed`. Each gets its own hint; the
+  "Private hosts are blocked" hint is only on `net_blocked`. 401/403/429 and too-large pages point to `web.interact`.
+- `tool-web` defaults: `maxPageKb` 5000 (was 1500), and requests go out as a desktop Chrome with `accept` and
+  `accept-language` headers instead of `Sinty/1.0` (an old saved `Sinty/1.0` also means the new default).
+- Supervisor failure notices quote a tool's docs once per tool per turn, only the section under the heading that names
+  the tool; `supervisor.docsMaxChars` defaults to 500 (was 1500). The `tool-web` README has a section per tool.
+- "Failure #N … do not repeat" (level 2) counts failures of the same tool, code **and target** (url host, path, …), so
+  reading three different shops is no longer a repeat.
+- Incidents: only a later call of the same tool on the same target is a fix (another site read after a failure is
+  not), external errors are never stored, and a failure quotes only incidents with the same tool, code and message
+  key whose fix is not aimed at another host.
 - The web tools are no longer core tools: `packages/core/src/web.ts` is gone and `playwright` moved from
   `@sinty/core` to `@sinty/plugin-tool-web`. Policies, approvals and the supervisor see the same tool names;
   `supervisedTools()` now reports them as `tool-web` tools, so the agent may patch them (for example the DuckDuckGo
@@ -139,6 +161,13 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- A turn that read a few shops was stopped with "supervisor notices did not help (tool_error: 3, total 3)": site
+  refusals (401, 404, a 1.5 MB page) counted as tool misuse toward `maxNoticesPerDetector`, every notice repeated the
+  whole tool-web README, said "Private hosts are blocked" and offered an unrelated incident (another site's url as the
+  fix for a 429). See `docs/journal/2026-10-21-web-errors-supervisor-notices.md`.
+- `web.read` failed on pages over 1.5 MB (Yandex Market) instead of reading their beginning.
+- `web.interact` reported a 403 captcha page as a normal result.
+- The incidents stored by the old fix rule for `web.*` with code `web_failed` are dropped once on start.
 - Web broken for roster agents after `tool-web` left the core: agent cards saved before it existed list their plugins
   explicitly without `tool-web`, so every `web.search` was denied with "this plugin is not on this agent". Default-on
   plugins (`DEFAULT_ON_PLUGINS`) are now on every agent unless its card lists them in the new `excludedPlugins`;

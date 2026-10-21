@@ -112,6 +112,10 @@ export class Journal {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS migrations (
+        name TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS plugin_model_usage (
         plugin TEXT NOT NULL,
         day TEXT NOT NULL,
@@ -299,6 +303,26 @@ export class Journal {
       }
     }
     return changed;
+  }
+
+  /** Deletes stored incidents that `drop` picks; returns how many. */
+  dropIncidents(drop: (i: IncidentRow) => boolean): number {
+    const del = this.db.prepare("DELETE FROM incidents WHERE id = ?");
+    let n = 0;
+    for (const i of this.incidents(1_000_000)) {
+      if (!drop(i)) continue;
+      del.run(i.id);
+      n++;
+    }
+    return n;
+  }
+
+  /** Runs a one-time data fix once per journal (recorded in `migrations`); returns whether it ran now. */
+  once(name: string, run: () => void): boolean {
+    if (this.db.prepare("SELECT 1 FROM migrations WHERE name = ?").get(name)) return false;
+    run();
+    this.db.prepare("INSERT INTO migrations (name, applied_at) VALUES (?, ?)").run(name, new Date().toISOString());
+    return true;
   }
 
   savePatch(p: PatchRow): void {

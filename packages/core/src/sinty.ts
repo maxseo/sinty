@@ -115,6 +115,12 @@ export class Sinty {
     // Incident memory written before arguments were masked may hold typed passwords or whole files: scrub it once.
     const scrubbed = this.journal.scrubIncidents((t) => scrubText(t));
     if (scrubbed) this.log("info", `supervisor: masked ${scrubbed} stored incident(s)`);
+    // Until tool-web kept its error codes, every web failure was `web_failed`, and any later web call that worked
+    // was stored as its "fix" (another site's url offered as the fix for a 429). Drop those incidents once.
+    this.journal.once("2026-10-21-drop-web-failed-incidents", () => {
+      const dropped = this.journal.dropIncidents((i) => i.tool.startsWith("web.") && i.code === "web_failed");
+      if (dropped) this.log("info", `supervisor: dropped ${dropped} web.* web_failed incident(s) recorded by the old fix rule`);
+    });
     this.supervisor = this.config.supervisor.enabled
       ? new SupervisorClient(
           this.paths,

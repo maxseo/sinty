@@ -150,6 +150,11 @@ export interface PublicRequest {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  /**
+   * Over `maxBytes`, keep the first `maxBytes` decoded bytes and set `truncated` instead of failing with `too_large`.
+   * For pages read as text (web.read); downloads and binary bodies keep the hard limit (the default).
+   */
+  truncate?: boolean;
 }
 
 export interface PublicResponse {
@@ -160,6 +165,8 @@ export interface PublicResponse {
   body: Uint8Array;
   /** Every address the request went through, for the journal. */
   redirects: string[];
+  /** The body was cut at `maxBytes` (only with `truncate: true`). */
+  truncated: boolean;
 }
 
 export const PUBLIC_LIMITS = { timeoutMs: 20_000, maxTimeoutMs: 60_000, maxBytes: 5_000_000, maxMaxBytes: 20_000_000, maxRedirects: 5, maxMaxRedirects: 10 };
@@ -227,14 +234,14 @@ export async function publicFetch(rawUrl: string, req: PublicRequest = {}, opts:
       url = next;
       continue;
     }
-    const bytes = method === "HEAD" ? new Uint8Array() : await readBody(res, maxBytes, deadline);
+    const read = method === "HEAD" ? { bytes: new Uint8Array(), truncated: false } : await readBody(res, maxBytes, deadline, req.truncate === true);
     const out: [string, string][] = [];
     for (let i = 0; i < res.rawHeaders.length; i += 2) {
       const k = res.rawHeaders[i]!.toLowerCase();
       if (k === "content-encoding" || k === "content-length" || k === "transfer-encoding" || k === "connection") continue;
       out.push([k, res.rawHeaders[i + 1]!]);
     }
-    return { url: url.toString(), status: res.statusCode ?? 0, statusText: res.statusMessage ?? "", headers: out, body: bytes, redirects };
+    return { url: url.toString(), status: res.statusCode ?? 0, statusText: res.statusMessage ?? "", headers: out, body: read.bytes, redirects, truncated: read.truncated };
   }
 }
 
@@ -270,7 +277,12 @@ function once(url: URL, target: Target, method: string, headers: Record<string, 
   });
 }
 
-function readBody(res: IncomingMessage, maxBytes: number, deadline: number): Promise<Uint8Array> {
+/**
+ * Reads and decodes the body up to `maxBytes`. Over the limit it fails with `too_large`, or with `truncate` returns the
+ * first `maxBytes` decoded bytes and `truncated: true`. The raw (compressed) stream is limited to 4 × maxBytes either
+ * way, so a decompression bomb is cut early.
+ */
+function readBody(res: IncomingMessage, maxBytes: number, deadline: number, truncate = false): Promise<{ bytes: Uint8Array; truncated: boolean }> {
   return new Promise((resolveBody, reject) => {
     const enc = String(res.headers["content-encoding"] ?? "").toLowerCase().trim();
     const stream: NodeJS.ReadableStream =
@@ -278,27 +290,52 @@ function readBody(res: IncomingMessage, maxBytes: number, deadline: number): Pro
     const chunks: Buffer[] = [];
     let size = 0;
     let raw = 0;
+    let done = false;
     const timer = setTimeout(() => fail(new NetGuardError("timeout", "the body did not arrive in time")), Math.max(1, deadline - Date.now()));
+    const finish = (truncated: boolean): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (truncated) res.destroy();
+      resolveBody({ bytes: new Uint8Array(Buffer.concat(chunks)), truncated });
+    };
     const fail = (e: Error): void => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
       res.destroy();
       reject(e);
     };
-    res.on("data", (c: Buffer) => {
-      raw += c.length;
-      if (raw > maxBytes * 4) fail(new NetGuardError("too_large", `response is larger than ${maxBytes} bytes`));
-    });
+    const tooLarge = (): void => (truncate ? finish(true) : fail(new NetGuardError("too_large", `response is larger than ${maxBytes} bytes`)));
+    let rawCut = false;
+    // The raw limit only matters for a compressed body (a plain one is the decoded one, limited below).
+    if (stream !== res) {
+      res.on("data", (c: Buffer) => {
+        raw += c.length;
+        if (raw <= maxBytes * 4 || rawCut) return;
+        if (!truncate) return tooLarge();
+        // Stop reading, let the decoder flush what it has; "end" then returns that prefix as truncated.
+        rawCut = true;
+        res.unpipe(stream as unknown as NodeJS.WritableStream);
+        (stream as unknown as NodeJS.WritableStream).end();
+        res.destroy();
+      });
+    }
     stream.on("data", (c: Buffer) => {
+      if (done) return;
+      if (size + c.length > maxBytes) {
+        if (truncate) chunks.push(c.subarray(0, maxBytes - size));
+        size = maxBytes;
+        return tooLarge();
+      }
       size += c.length;
-      if (size > maxBytes) return fail(new NetGuardError("too_large", `response is larger than ${maxBytes} bytes`));
       chunks.push(c);
     });
-    stream.on("end", () => {
-      clearTimeout(timer);
-      resolveBody(new Uint8Array(Buffer.concat(chunks)));
-    });
+    stream.on("end", () => finish(rawCut));
     stream.on("error", (e: Error) => fail(new NetGuardError("net_failed", `bad response body: ${e.message}`)));
-    res.on("error", (e: Error) => fail(new NetGuardError("net_failed", e.message)));
+    res.on("error", (e: Error) => {
+      if (!rawCut) fail(new NetGuardError("net_failed", e.message));
+    });
   });
 }
 

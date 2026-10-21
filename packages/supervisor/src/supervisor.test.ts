@@ -31,19 +31,19 @@ test("a loop of identical successful calls gets a notice, then escalates", () =>
   assert.deepEqual(sup.checkpoint("t1", "before_model"), [], "nothing more after escalation");
 });
 
-test("a tool failing in three turns suggests a plugin patch; fixes become incidents", () => {
+test("a tool failing in three turns suggests a plugin patch; corrected calls become incidents", () => {
   const sup = new Supervisor(settings, tools, []);
   for (const t of ["t1", "t2"]) {
     sup.onEvent(ev(t, "turn.started", { trigger: "message" }));
-    step(sup, t, `${t}a`, { url: "x" }, "http_500");
+    step(sup, t, `${t}a`, { url: "https://a.test/x" }, "bug");
     sup.checkpoint(t, "before_model");
-    step(sup, t, `${t}b`, { url: "y" });
+    step(sup, t, `${t}b`, { url: "https://a.test/y" });
     const incidents = sup.onEvent(ev(t, "turn.completed", { steps: 2 }));
     if (t === "t1") assert.equal(incidents[0]?.tool, "web.get");
     if (incidents[0]) sup.addIncident({ ...incidents[0], id: `inc_${t}`, createdAt: "" });
   }
   sup.onEvent(ev("t3", "turn.started", { trigger: "message" }));
-  step(sup, "t3", "t3a", { url: "x" }, "http_500");
+  step(sup, "t3", "t3a", { url: "https://a.test/z" }, "bug");
   const [n] = sup.checkpoint("t3", "before_model");
   assert.ok(n?.type === "notice");
   assert.equal(n.level, 3);

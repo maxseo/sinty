@@ -14,6 +14,7 @@ import {
   type PluginContext,
   type PluginDefinition,
   type ProviderDefinition,
+  type PublicFetchResponse,
   type PublicNet,
   type SintyEvent,
   type ToolDefinition,
@@ -76,7 +77,7 @@ function netCall<T>(msg: { op: "fetch"; url: string; init: NetPublicInit } | { o
 /** ctx.net.public: the request runs in the core (netguard.ts); the plugin gets a Response with the final url. */
 const publicNet: PublicNet = {
   async fetch(url, init = {}) {
-    const r = await netCall<{ url: string; status: number; statusText: string; headers: [string, string][]; body: Uint8Array }>({
+    const r = await netCall<{ url: string; status: number; statusText: string; headers: [string, string][]; body: Uint8Array; truncated?: boolean }>({
       op: "fetch",
       url: url.toString(),
       init: {
@@ -86,12 +87,14 @@ const publicNet: PublicNet = {
         ...(init.timeoutMs !== undefined ? { timeoutMs: init.timeoutMs } : {}),
         ...(init.maxBytes !== undefined ? { maxBytes: init.maxBytes } : {}),
         ...(init.maxRedirects !== undefined ? { maxRedirects: init.maxRedirects } : {}),
+        ...(init.truncate ? { truncate: true } : {}),
       },
     });
     const noBody = [101, 204, 205, 304].includes(r.status);
     const res = new Response(noBody ? null : r.body, { status: r.status < 200 || r.status > 599 ? 502 : r.status, statusText: r.statusText, headers: r.headers });
     Object.defineProperty(res, "url", { value: r.url });
-    return res;
+    Object.defineProperty(res, "truncated", { value: r.truncated === true });
+    return res as PublicFetchResponse;
   },
   check: async (url) => {
     await netCall({ op: "check", url: url.toString() });

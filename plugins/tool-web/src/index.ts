@@ -2,40 +2,58 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { definePlugin, ToolError, z, type PluginContext } from "@sinty/sdk";
 import { assertHttpUrl, assertPageUrl, withBrowser } from "./browser.ts";
+import { blockedNote, blockedReason, httpError, toWebError } from "./errors.ts";
 import { htmlToMarkdown, type PageDoc } from "./page.ts";
 import { parseDuckDuckGo, parseSearxng, searchUrl, type SearchResult } from "./search.ts";
-import { readSettings, type WebSettings } from "./settings.ts";
+import { ACCEPT_HTML, readSettings, type WebSettings } from "./settings.ts";
 
 /**
  * web.* tools, moved out of the core (plan step 7). Names, descriptions and input schemas are the ones the core had,
  * so policies, approvals, the supervisor and old journals keep working. All traffic goes through ctx.net.public.
  */
 
-const HINT = "Only public http(s) pages. Private hosts are blocked.";
-
+/** Every error leaves with a code and a hint that fit it (see errors.ts). */
 function fail(e: unknown): never {
-  if (e instanceof ToolError && e.code === "aborted") throw e;
-  throw new ToolError("web_failed", e instanceof Error ? e.message : String(e), { hint: HINT });
+  throw toWebError(e);
 }
 
 function newId(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function fetchText(ctx: PluginContext, s: WebSettings, url: string): Promise<{ url: string; body: string }> {
-  const res = await ctx.net.public.fetch(url, { headers: { "user-agent": s.userAgent }, timeoutMs: s.timeoutMs, maxBytes: s.maxBytes });
-  if (!res.ok) throw new Error(`page returned ${res.status}`);
-  return { url: res.url, body: await res.text() };
+/**
+ * GET a page as text. A page over maxPageKb is cut there (`truncate`), not failed: the Markdown is cut at maxChars
+ * anyway, and big shop pages are mostly scripts and markup. A non-2xx answer is an `http_4xx`/`http_5xx` error.
+ */
+async function fetchText(ctx: PluginContext, s: WebSettings, url: string): Promise<{ url: string; body: string; truncated: boolean }> {
+  const res = await ctx.net.public.fetch(url, {
+    headers: { "user-agent": s.userAgent, accept: ACCEPT_HTML, "accept-language": s.acceptLanguage },
+    timeoutMs: s.timeoutMs,
+    maxBytes: s.maxBytes,
+    truncate: true,
+  });
+  if (!res.ok) throw httpError(res.status, res.statusText, res.url || url);
+  return { url: res.url, body: await res.text(), truncated: res.truncated === true };
 }
 
-export async function readPage(ctx: PluginContext, s: WebSettings, url: string): Promise<PageDoc> {
+export async function readPage(ctx: PluginContext, s: WebSettings, url: string): Promise<PageDoc & { truncated?: true }> {
   const page = await fetchText(ctx, s, url);
-  return { url: page.url, ...htmlToMarkdown(page.body, page.url, s), untrusted: true };
+  const doc = htmlToMarkdown(page.body, page.url, s);
+  if (!page.truncated) return { url: page.url, ...doc, untrusted: true };
+  // The page was longer than maxPageKb: say so where the model reads it, unless maxChars already cut it.
+  const markdown = doc.markdown.endsWith("…[truncated]") ? doc.markdown : `${doc.markdown}\n…[truncated]`;
+  return { url: page.url, ...doc, markdown, untrusted: true, truncated: true };
+}
+
+/** status and, for a captcha / anti-bot / error page, `blocked` with a note for the model. */
+function pageState(status: number | undefined, title: string, markdown: string): { status?: number; blocked?: string } {
+  const reason = blockedReason(status, title, markdown);
+  return { ...(status !== undefined ? { status } : {}), ...(reason ? { blocked: blockedNote(reason) } : {}) };
 }
 
 export async function searchWeb(ctx: PluginContext, s: WebSettings, query: string): Promise<{ query: string; results: SearchResult[]; untrusted: true }> {
   const q = query.trim();
-  if (!q) throw new Error("query is empty");
+  if (!q) throw new ToolError("invalid_args", "query is empty");
   const page = await fetchText(ctx, s, searchUrl(s.searchEngine, q, s.searxngUrl));
   const results = s.searchEngine === "searxng" ? parseSearxng(page.body, s.maxResults) : parseDuckDuckGo(page.body, s.maxResults);
   return { query: q, results, untrusted: true };
@@ -107,11 +125,12 @@ export default definePlugin({
       timeoutMs: 180_000,
       async run({ url }) {
         try {
-          const shot = await withBrowser(ctx.net.public, url, s.browserTimeoutMs, async (p) => {
+          const shot = await withBrowser(ctx.net.public, url, s.browserTimeoutMs, async (p, nav) => {
             const title = await p.title();
             const path = shotPath(ctx, s);
             await p.screenshot({ path, fullPage: false });
-            return { url: p.url(), path, title };
+            const text = htmlToMarkdown(await p.content(), p.url(), s).markdown;
+            return { url: p.url(), path, title, ...pageState(nav.status, title, text) };
           });
           return { content: shot };
         } catch (e) {
@@ -140,19 +159,20 @@ export default definePlugin({
       timeoutMs: 300_000,
       async run({ url, actions }) {
         try {
-          if (actions.length > 8) throw new Error("at most 8 actions");
-          const doc = await withBrowser(ctx.net.public, url, s.browserTimeoutMs, async (p) => {
+          if (actions.length > 8) throw new ToolError("invalid_args", "at most 8 actions");
+          const doc = await withBrowser(ctx.net.public, url, s.browserTimeoutMs, async (p, nav) => {
             for (const a of actions) {
               if (a.type === "goto") {
-                if (!a.text) throw new Error("goto needs text with a url");
+                if (!a.text) throw new ToolError("invalid_args", "goto needs text with a url");
                 assertHttpUrl(a.text);
                 await ctx.net.public.check(a.text);
-                await p.goto(a.text, { waitUntil: "domcontentloaded", timeout: s.browserTimeoutMs });
+                const res = await p.goto(a.text, { waitUntil: "domcontentloaded", timeout: s.browserTimeoutMs });
+                if (res) nav.status = res.status();
               } else if (a.type === "click") {
-                if (!a.selector) throw new Error("click needs a selector");
+                if (!a.selector) throw new ToolError("invalid_args", "click needs a selector");
                 await p.click(a.selector, { timeout: s.actionTimeoutMs });
               } else if (a.type === "type") {
-                if (!a.selector) throw new Error("type needs a selector");
+                if (!a.selector) throw new ToolError("invalid_args", "type needs a selector");
                 await p.fill(a.selector, a.text ?? "");
               } else {
                 await p.keyboard.press(a.text || "Enter");
@@ -163,7 +183,7 @@ export default definePlugin({
             const md = htmlToMarkdown(html, p.url(), s);
             const screenshot = shotPath(ctx, s);
             await p.screenshot({ path: screenshot, fullPage: false });
-            return { url: p.url(), ...md, untrusted: true as const, screenshot };
+            return { url: p.url(), ...md, untrusted: true as const, screenshot, ...pageState(nav.status, md.title, md.markdown) };
           });
           return { content: doc };
         } catch (e) {

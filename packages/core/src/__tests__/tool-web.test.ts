@@ -84,7 +84,7 @@ test("tool-web: on by default, owns the five web tools with the old names, descr
   }
 });
 
-test("tool-web: web.read of a private address fails with web_failed and the old hint", async () => {
+test("tool-web: web.read of a private address fails with net_blocked and the private-host hint", async () => {
   const { home, cleanup } = tempHome();
   const sinty = await boot(home, [{ text: "hi" }]);
   try {
@@ -92,7 +92,7 @@ test("tool-web: web.read of a private address fails with web_failed and the old 
       const out = await sinty.host.toolOwner("web.read")!.callTool("web.read", { url }, ctx, {});
       assert.equal(out.ok, false, url);
       if (!out.ok) {
-        assert.equal(out.error.code, "web_failed");
+        assert.equal(out.error.code, "net_blocked", url);
         assert.equal(out.error.hint, "Only public http(s) pages. Private hosts are blocked.");
       }
     }
@@ -196,6 +196,60 @@ test("ctx.net.public: needs $PUBLIC, blocks loopback, honours the human's allowP
   }
 });
 
+test("tool-web: big pages are read and marked [truncated]; site errors get http codes and fitting hints; browser headers", async () => {
+  const seen: { ua: string | undefined; lang: string | undefined; accept: string | undefined }[] = [];
+  const big = `<html><head><title>Маркет</title></head><body><h1>PS5 Pro</h1><p>79 990 ₽</p>${"<div class=\"x\">".repeat(30_000)}</body></html>`;
+  const srv = createServer((req, res) => {
+    seen.push({ ua: req.headers["user-agent"], lang: req.headers["accept-language"], accept: req.headers.accept });
+    const status = Number(req.url?.slice(1)) || 200;
+    if (req.url === "/big") res.writeHead(200, { "content-type": "text/html" }).end(big);
+    else res.writeHead(status, { "content-type": "text/html" }).end("<html><title>err</title></html>");
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const port = (srv.address() as AddressInfo).port;
+  const { home, cleanup } = tempHome();
+  const base = testConfig([{ text: "hi" }]);
+  const sinty = new Sinty({ home, config: { ...base, plugins: { ...base.plugins!, config: { "tool-web": { allowPrivate: `127.0.0.1:${port}`, maxPageKb: 100 } } } } });
+  const read = (path: string) => sinty.host.toolOwner("web.read")!.callTool("web.read", { url: `http://127.0.0.1:${port}${path}` }, ctx, {});
+  try {
+    await sinty.start();
+    assert.ok(big.length > 400_000);
+    const out = await read("/big");
+    assert.equal(out.ok, true, JSON.stringify(out).slice(0, 300));
+    if (out.ok) {
+      const c = out.content as { title: string; markdown: string; truncated?: boolean };
+      assert.equal(c.title, "Маркет");
+      assert.match(c.markdown, /PS5 Pro[\s\S]*79 990 ₽/);
+      assert.match(c.markdown, /…\[truncated\]$/);
+      assert.equal(c.truncated, true);
+    }
+    const PRIVATE = /Private hosts/;
+    const cases: [string, string, RegExp][] = [
+      ["/401", "http_4xx", /anti-bot[\s\S]*web\.interact/],
+      ["/403", "http_4xx", /anti-bot[\s\S]*web\.interact/],
+      ["/429", "http_4xx", /rate-limits[\s\S]*web\.interact/],
+      ["/404", "http_4xx", /web\.search or web\.links/],
+      ["/503", "http_5xx", /server error/],
+    ];
+    for (const [path, code, hint] of cases) {
+      const r = await read(path);
+      assert.equal(r.ok, false, path);
+      if (!r.ok) {
+        assert.equal(r.error.code, code, path);
+        assert.match(r.error.message, new RegExp(`page returned ${path.slice(1)}.*\\(127\\.0\\.0\\.1:${port}\\)`), path);
+        assert.match(r.error.hint ?? "", hint, path);
+        assert.doesNotMatch(r.error.hint ?? "", PRIVATE, path);
+      }
+    }
+    assert.ok(seen.every((h) => /^Mozilla\/5\.0 .*Chrome\//.test(h.ua ?? "")), JSON.stringify(seen[0]));
+    assert.ok(seen.every((h) => h.lang?.startsWith("ru-RU") && h.accept?.startsWith("text/html")), JSON.stringify(seen[0]));
+  } finally {
+    await sinty.stop();
+    cleanup();
+    srv.close();
+  }
+});
+
 function hasChromium(): boolean {
   try {
     return readdirSync(browsersPath()).some((d) => d.startsWith("chromium"));
@@ -238,6 +292,50 @@ test("tool-web: the browser goes through the core proxy; a page cannot reach loo
     await sinty.stop();
     cleanup();
     leak.close();
+    page.close();
+  }
+});
+
+test("tool-web: web.interact and web.screenshot return the HTTP status and flag captcha pages", { skip: hasChromium() ? false : "Playwright Chromium is not installed" }, async () => {
+  const page = createServer((req, res) => {
+    if (req.url === "/captcha") res.writeHead(403, { "content-type": "text/html" }).end("<html><head><title>Ой!</title></head><body>Слишком много запросов с вашего IP. Подтвердите, что вы не робот.</body></html>");
+    else if (req.url === "/robot") res.writeHead(200, { "content-type": "text/html" }).end("<html><head><title>Вы не робот?</title></head><body>SmartCaptcha</body></html>");
+    else res.writeHead(200, { "content-type": "text/html" }).end("<html><head><title>PS5</title></head><body><h1>PS5 Pro</h1></body></html>");
+  });
+  await new Promise<void>((r) => page.listen(0, "127.0.0.1", () => r()));
+  const port = (page.address() as AddressInfo).port;
+  const { home, cleanup } = tempHome();
+  const base = testConfig([{ text: "hi" }]);
+  const sinty = new Sinty({ home, config: { ...base, plugins: { ...base.plugins!, config: { "tool-web": { allowPrivate: `127.0.0.1:${port}` } } } } });
+  const url = (p: string) => `http://127.0.0.1:${port}${p}`;
+  try {
+    await sinty.start();
+    const interact = (u: string, actions: unknown[] = []) => sinty.host.toolOwner("web.interact")!.callTool("web.interact", { url: u, actions }, ctx, { timeoutMs: 120_000 });
+    const ok = await interact(url("/"));
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    if (ok.ok) {
+      const c = ok.content as { status?: number; blocked?: string };
+      assert.equal(c.status, 200);
+      assert.equal(c.blocked, undefined);
+    }
+    const cap = await interact(url("/"), [{ type: "goto", text: url("/captcha") }]);
+    assert.equal(cap.ok, true, JSON.stringify(cap));
+    if (cap.ok) {
+      const c = cap.content as { status?: number; blocked?: string };
+      assert.equal(c.status, 403, "the status of the last navigation");
+      assert.match(c.blocked ?? "", /HTTP 403[\s\S]*Do not repeat/);
+    }
+    const shot = await sinty.host.toolOwner("web.screenshot")!.callTool("web.screenshot", { url: url("/robot") }, ctx, { timeoutMs: 120_000 });
+    assert.equal(shot.ok, true, JSON.stringify(shot));
+    if (shot.ok) {
+      const c = shot.content as { status?: number; blocked?: string; path: string };
+      assert.equal(c.status, 200);
+      assert.match(c.blocked ?? "", /captcha/);
+      assert.ok(existsSync(c.path));
+    }
+  } finally {
+    await sinty.stop();
+    cleanup();
     page.close();
   }
 });

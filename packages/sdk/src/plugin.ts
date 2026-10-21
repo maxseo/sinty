@@ -246,7 +246,15 @@ export interface PublicFetchInit {
   maxBytes?: number;
   /** Default 5, at most 10. */
   maxRedirects?: number;
+  /**
+   * Over `maxBytes`, return the first `maxBytes` decoded bytes with `truncated: true` instead of failing with
+   * `too_large`. Meant for pages read as text; leave it off for downloads and binary bodies.
+   */
+  truncate?: boolean;
 }
+
+/** A `Response` whose `url` is the final address; `truncated` is true when `truncate` cut the body at `maxBytes`. */
+export type PublicFetchResponse = Response & { readonly truncated: boolean };
 
 /** What the browser should use as its proxy; every connection through it gets the same checks as `fetch`. */
 export interface PublicProxy {
@@ -264,7 +272,7 @@ export interface PublicProxy {
  */
 export interface PublicNet {
   /** Follows redirects itself; `response.url` is the final address. */
-  fetch(url: string | URL, init?: PublicFetchInit): Promise<Response>;
+  fetch(url: string | URL, init?: PublicFetchInit): Promise<PublicFetchResponse>;
   /** Resolves and checks an http(s) url without fetching it; throws `net_blocked` like fetch would. */
   check(url: string | URL): Promise<void>;
   /** A loopback HTTP proxy owned by the core for this plugin process; needs `permissions.browser`. */
