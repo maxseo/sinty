@@ -54,6 +54,21 @@ export interface CallCtx {
   idempotencyKey: string;
 }
 
+/** ctx.net.public.fetch over IPC; the core does the request (see netguard.ts). */
+export interface NetPublicInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | Uint8Array | null;
+  timeoutMs?: number;
+  maxBytes?: number;
+  maxRedirects?: number;
+}
+
+export type NetPublicResult =
+  | { url: string; status: number; statusText: string; headers: [string, string][]; body: Uint8Array; redirects: string[] }
+  | { server: string; username: string; password: string }
+  | { ok: true };
+
 export type ProviderWireRequest = Omit<ProviderRequest, "signal">;
 
 export type ToChild =
@@ -75,6 +90,8 @@ export type ToChild =
   | { t: "models.result"; id: number; ok: false; error: WireError }
   | { t: "memory.call"; id: number; kind: "provider" | "processor"; name: string; method: string; args: unknown[] }
   | { t: "context.snapshot"; snapshot: ContextSnapshot }
+  | { t: "net.result"; id: number; ok: true; value: NetPublicResult }
+  | { t: "net.result"; id: number; ok: false; error: WireError }
   | { t: "shutdown" };
 
 export type FromChild =
@@ -94,6 +111,9 @@ export type FromChild =
   | { t: "provider.embedded"; id: number; ok: true; value: { vectors: number[][]; usage?: { inputTokens: number } } }
   | { t: "provider.embedded"; id: number; ok: false; error: WireError }
   | { t: "models.call"; id: number; op: "complete" | "embed"; req: Record<string, unknown> }
+  | { t: "net.public"; id: number; op: "fetch"; url: string; init: NetPublicInit }
+  | { t: "net.public"; id: number; op: "proxy" }
+  | { t: "net.public"; id: number; op: "check"; url: string }
   | { t: "memory.result"; id: number; ok: true; value: unknown }
   | { t: "memory.result"; id: number; ok: false; error: WireError }
   | { t: "http.start"; id: number; status: number; headers: [string, string][] }

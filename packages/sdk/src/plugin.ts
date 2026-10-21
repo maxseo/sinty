@@ -14,7 +14,16 @@ export type AgentScope = "sessions.read" | "sessions.write";
 
 export interface PluginPermissions {
   fs?: { read?: string[]; write?: string[] };
+  /**
+   * Hosts `ctx.net.fetch` may reach (each must also be in policy.yaml `net.allow`). The token `"$PUBLIC"` grants
+   * `ctx.net.public`: public internet through the core, which refuses private, loopback and link-local addresses.
+   */
   net?: string[];
+  /**
+   * Launch a headless browser (Playwright Chromium). The process may start child processes and read the browser
+   * install; its traffic must go through `ctx.net.public.proxy()`. Needs `"$PUBLIC"` in `net`. See docs/spec/net-public.md.
+   */
+  browser?: boolean;
   secrets?: string[];
   env?: string[];
   shell?: boolean;
@@ -225,6 +234,43 @@ export interface AgentApi {
   interrupt(sessionId: string): Promise<boolean>;
 }
 
+// ---- public internet through the core ----
+
+export interface PublicFetchInit {
+  method?: "GET" | "HEAD" | "POST";
+  headers?: Record<string, string>;
+  body?: string | Uint8Array;
+  /** Whole request including redirects. Default 20000, at most 60000. */
+  timeoutMs?: number;
+  /** Decoded body limit. Default 5000000, at most 20000000. A larger body fails with `too_large`. */
+  maxBytes?: number;
+  /** Default 5, at most 10. */
+  maxRedirects?: number;
+}
+
+/** What the browser should use as its proxy; every connection through it gets the same checks as `fetch`. */
+export interface PublicProxy {
+  server: string;
+  username: string;
+  password: string;
+}
+
+/**
+ * Public internet through the core (`permissions.net: ["$PUBLIC"]`). The core resolves the host, refuses loopback,
+ * RFC 1918, link-local (169.254.169.254), CGNAT, IPv6 ULA/link-local and mapped forms, then connects to the address it
+ * checked (no DNS rebinding) and checks again on every redirect. config.yaml `plugins.config.<plugin>.allowPrivate`
+ * (set by the human) may let named private host[:port] entries through. Errors carry code `net_blocked`, `net_denied`,
+ * `too_large`, `timeout` or `net_failed`.
+ */
+export interface PublicNet {
+  /** Follows redirects itself; `response.url` is the final address. */
+  fetch(url: string | URL, init?: PublicFetchInit): Promise<Response>;
+  /** Resolves and checks an http(s) url without fetching it; throws `net_blocked` like fetch would. */
+  check(url: string | URL): Promise<void>;
+  /** A loopback HTTP proxy owned by the core for this plugin process; needs `permissions.browser`. */
+  proxy(): Promise<PublicProxy>;
+}
+
 // ---- setup context ----
 
 export interface PluginContext {
@@ -234,8 +280,8 @@ export interface PluginContext {
   readonly paths: { readonly workspace: string; readonly skills: string; readonly plugin: string; readonly data: string };
   readonly log: { debug(msg: string, data?: unknown): void; info(msg: string, data?: unknown): void; warn(msg: string, data?: unknown): void; error(msg: string, data?: unknown): void };
 
-  /** Network access limited to `permissions.net`. */
-  readonly net: { fetch(input: string | URL, init?: RequestInit): Promise<Response> };
+  /** Network access limited to `permissions.net`; `public` needs `"$PUBLIC"` there. */
+  readonly net: { fetch(input: string | URL, init?: RequestInit): Promise<Response>; readonly public: PublicNet };
   /** Secret values by name from `permissions.secrets`; never journaled. */
   readonly secrets: { get(name: string): Promise<string> };
   /** Read-only journal access. */

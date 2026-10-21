@@ -7,3 +7,4 @@ export * from "./inspect.js";
 export * from "./settings.js";
 export * from "./sse.js";
 export * from "./agent-client.js";
+export * from "./netaddr.js";

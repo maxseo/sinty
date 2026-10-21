@@ -1,14 +1,16 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent } from "@sinty/sdk";
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
-import { CORE_TOOL_NAMES } from "../coretools.js";
+import { CORE_TOOL_NAMES, reservedToolOwner } from "../coretools.js";
+import { checkPublicUrl, NetGuardError, parseAllowPrivate, publicFetch, startGuardProxy, type GuardOptions, type GuardProxy } from "../netguard.js";
 import { findPlugin, pluginDataDir, resolveFsGrants, type LoadedManifest } from "./manifest.js";
-import type { AgentOp, CallCtx, FromChild, ProviderWireRequest, RouteInfo, ToChild, ToolInfo, WireError } from "./protocol.js";
+import type { AgentOp, CallCtx, FromChild, NetPublicInit, ProviderWireRequest, RouteInfo, ToChild, ToolInfo, WireError } from "./protocol.js";
 
 const RUNNER = join(dirname(fileURLToPath(import.meta.url)), "runner.js");
 const READY_TIMEOUT_MS = 15_000;
@@ -35,6 +37,21 @@ export interface AgentBridge {
   call(plugin: string, op: AgentOp, args: unknown[]): Promise<unknown>;
   /** Replays the journal after `afterSeq`, then pushes live events. Returns the unsubscribe function. */
   stream(sessionId: string, afterSeq: number, push: (e: LiveEvent) => void): () => void;
+}
+
+/** `permissions.net` token for ctx.net.public (public internet through the core). */
+export const PUBLIC_NET = "$PUBLIC";
+
+/** Files Playwright checks on Linux before it starts Chromium. */
+const LINUX_BROWSER_PROBES = ["/proc/sys/fs/binfmt_misc/WSLInterop", "/run/WSL", "/etc/os-release", "/usr/lib/os-release"];
+
+/** Where Playwright keeps its browsers: PLAYWRIGHT_BROWSERS_PATH, else the per-user cache Playwright uses itself. */
+export function browsersPath(): string {
+  const env = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (env && env !== "0") return resolve(env);
+  if (process.platform === "win32") return join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "ms-playwright");
+  if (process.platform === "darwin") return join(homedir(), "Library", "Caches", "ms-playwright");
+  return join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "ms-playwright");
 }
 
 export interface HostEvents {
@@ -79,6 +96,8 @@ export class PluginProcess {
   /** A `ui`-only plugin without an entry: the core serves its files, no process runs. */
   staticOnly = false;
   private readonly streams = new Map<number, () => void>();
+  /** The browser proxy for this process (permissions.browser); closed when the process exits. */
+  private proxy: Promise<GuardProxy> | undefined;
 
   constructor(
     readonly loaded: LoadedManifest,
@@ -103,6 +122,7 @@ export class PluginProcess {
     }
     if (m.runtime !== "node" && m.runtime !== "mcp-stdio" && m.runtime !== "http") throw new Error(`plugin ${m.name}: runtime ${m.runtime} is not supported by this core version yet`);
     if (m.runtime === "node" && !m.entry) throw new Error(`plugin ${m.name}: entry is required`);
+    if (m.permissions.browser && !(m.permissions.net ?? []).includes(PUBLIC_NET)) throw new Error(`plugin ${m.name}: permissions.browser needs "${PUBLIC_NET}" in permissions.net`);
     const child = fork(RUNNER, [], { execArgv: this.permissionArgs(), env: this.childEnv(), cwd: this.loaded.dir, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "advanced" });
     this.child = child;
     child.stdout?.on("data", (b: Buffer) => this.events.log(this.name, "info", b.toString().trimEnd()));
@@ -121,6 +141,13 @@ export class PluginProcess {
             this.stopping = true;
             child.kill();
             reject(new Error(`plugin ${this.name}: tool name ${reserved.join(", ")} is reserved by the core; rename the tool (core tools cannot be replaced by plugins)`));
+            return;
+          }
+          const taken = msg.tools.filter((t) => (reservedToolOwner(t.name) ?? this.name) !== this.name).map((t) => `${t.name} (${reservedToolOwner(t.name)})`);
+          if (taken.length) {
+            this.stopping = true;
+            child.kill();
+            reject(new Error(`plugin ${this.name}: tool name ${taken.join(", ")} is reserved for a bundled plugin; rename the tool`));
             return;
           }
           this.tools = msg.tools;
@@ -186,8 +213,31 @@ export class PluginProcess {
       `--allow-fs-read=${join(this.paths.plugins, "node_modules")}`,
       ...grants.read.map((p) => `--allow-fs-read=${p}`),
       ...grants.write.flatMap((p) => [`--allow-fs-read=${p}`, `--allow-fs-write=${p}`]),
-      ...(this.loaded.manifest.permissions.shell || this.loaded.manifest.runtime === "mcp-stdio" ? ["--allow-child-process"] : []),
+      ...(this.loaded.manifest.permissions.shell || this.loaded.manifest.runtime === "mcp-stdio" || this.loaded.manifest.permissions.browser ? ["--allow-child-process"] : []),
+      ...(this.loaded.manifest.permissions.browser ? this.browserArgs() : []),
       "--disable-warning=ExperimentalWarning",
+    ];
+  }
+
+  /** `$DATA/tmp`: the browser profile and Playwright's temp files; the process gets TMP/TEMP/TMPDIR pointing here. */
+  private browserTmp(): string {
+    return join(pluginDataDir(this.paths, this.name), "tmp");
+  }
+
+  /**
+   * permissions.browser: read the Playwright browser install and use a temp folder of its own. Launching Chromium
+   * needs --allow-child-process, which the Node permission model cannot narrow further; its network goes through
+   * the core's proxy (net.public proxy). On Linux Playwright also probes a few system files (WSL markers,
+   * os-release) with existsSync, which throws under the permission model unless reading them is allowed.
+   */
+  private browserArgs(): string[] {
+    const tmp = this.browserTmp();
+    mkdirSync(tmp, { recursive: true });
+    return [
+      `--allow-fs-read=${browsersPath()}`,
+      `--allow-fs-read=${tmp}`,
+      `--allow-fs-write=${tmp}`,
+      ...(process.platform === "linux" ? LINUX_BROWSER_PROBES.map((p) => `--allow-fs-read=${p}`) : []),
     ];
   }
 
@@ -195,6 +245,13 @@ export class PluginProcess {
     const env: NodeJS.ProcessEnv = {};
     for (const k of ["NODE_ENV", "PATH", "SYSTEMROOT", "TEMP", "TMP", ...(this.loaded.manifest.permissions.env ?? [])]) {
       if (process.env[k] !== undefined) env[k] = process.env[k];
+    }
+    if (this.loaded.manifest.permissions.browser) {
+      const tmp = this.browserTmp();
+      env.TMP = tmp;
+      env.TEMP = tmp;
+      env.TMPDIR = tmp;
+      env.PLAYWRIGHT_BROWSERS_PATH = browsersPath();
     }
     env.SINTY_USER_ID = this.config.agent.userId;
     env.SINTY_AGENT_NAME = this.config.agent.name;
@@ -403,6 +460,47 @@ export class PluginProcess {
       .catch((e: unknown) => this.send({ t: "models.result", id, ok: false, error: wireOf(e) }));
   }
 
+  /** What the guard allows for this plugin: config.yaml `plugins.config.<name>.allowPrivate`, never the manifest default. */
+  guardOptions(): GuardOptions {
+    return { allow: parseAllowPrivate(this.config.plugins.config[this.name]?.allowPrivate) };
+  }
+
+  private onNetPublic(msg: { id: number; op: "fetch"; url: string; init: NetPublicInit } | { id: number; op: "proxy" } | { id: number; op: "check"; url: string }): void {
+    const reply = (p: Promise<unknown>): void => {
+      p.then((value) => this.send({ t: "net.result", id: msg.id, ok: true, value: value as never })).catch((e: unknown) => {
+        const error: WireError = e instanceof NetGuardError ? { code: e.code, message: e.message, ...(e.hint ? { hint: e.hint } : {}) } : wireOf(e);
+        this.send({ t: "net.result", id: msg.id, ok: false, error });
+      });
+    };
+    const perms = this.loaded.manifest.permissions;
+    if (!(perms.net ?? []).includes(PUBLIC_NET)) {
+      return reply(Promise.reject(new NetGuardError("net_denied", `plugin ${this.name} lacks permissions.net "${PUBLIC_NET}"`, `Add "${PUBLIC_NET}" to permissions.net in the manifest.`)));
+    }
+    if (msg.op === "proxy") {
+      if (!perms.browser) return reply(Promise.reject(new NetGuardError("net_denied", `plugin ${this.name} lacks permissions.browser`)));
+      this.proxy ??= startGuardProxy(() => this.guardOptions(), (m) => this.events.log(this.name, "info", m));
+      const p = this.proxy;
+      p.catch(() => {
+        if (this.proxy === p) this.proxy = undefined;
+      });
+      return reply(p.then(({ server, username, password }) => ({ server, username, password })));
+    }
+    if (msg.op === "check") return reply(checkPublicUrl(String(msg.url), this.guardOptions()).then(() => ({ ok: true })));
+    const init = msg.init && typeof msg.init === "object" ? msg.init : {};
+    reply(
+      publicFetch(String(msg.url), init, this.guardOptions()).then((r) => {
+        if (r.redirects.length) this.events.log(this.name, "debug", `net.public ${msg.url} redirected`, r.redirects);
+        return r;
+      }),
+    );
+  }
+
+  private closeProxy(): void {
+    const p = this.proxy;
+    this.proxy = undefined;
+    p?.then((x) => x.close()).catch(() => undefined);
+  }
+
   /** Forwards an HTTP request to one of the plugin's routes; the response body streams back chunk by chunk. */
   async handleHttp(route: number, params: Record<string, string>, req: Request, relativeUrl: string): Promise<Response> {
     await this.whenRunning();
@@ -534,6 +632,7 @@ export class PluginProcess {
     }
     if (msg.t === "agent.call") return this.onAgentCall(msg.id, msg.op, msg.args);
     if (msg.t === "models.call") return this.onModelsCall(msg.id, msg.op, msg.req);
+    if (msg.t === "net.public") return this.onNetPublic(msg);
     if (msg.t === "agent.stream") return this.onAgentStream(msg.id, msg.sessionId, msg.afterSeq);
     if (msg.t === "agent.stream.close") {
       this.streams.get(msg.id)?.();
@@ -549,6 +648,7 @@ export class PluginProcess {
     this.pending.clear();
     for (const unsubscribe of this.streams.values()) unsubscribe();
     this.streams.clear();
+    this.closeProxy();
     this.child = undefined;
     if (this.stopping || !this.autoRestart) return;
 

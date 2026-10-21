@@ -18,7 +18,6 @@ import { hint, renderTurnContext, resolveTimezone, withoutHint } from "./prompt.
 import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
 import { runShell } from "./shell.js";
-import { interactPage, readPage, searchWeb, shotPage } from "./web.js";
 import { editSkillFile, listSkillFiles, listSkills, readSkill, readSkillFile, skillCatalog, writeSkill, writeSkillFile } from "./skills.js";
 import { renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
@@ -663,21 +662,6 @@ export class Agent {
     const args = parsed.data as unknown;
     if (name === "context.recall") return this.recall(sessionId, args);
     if (name.startsWith("memory.")) return this.memoryTool(sessionId, name, args);
-    if (name === "web.search" || name === "web.read" || name === "web.links" || name === "web.screenshot" || name === "web.interact") {
-      const a = args as { query?: string; url?: string; actions?: { type: "click" | "type" | "press" | "goto"; selector?: string; text?: string }[] };
-      try {
-        if (name === "web.search") return await searchWeb(a.query ?? "");
-        if (name === "web.read") return await readPage(a.url ?? "");
-        if (name === "web.links") {
-          const page = await readPage(a.url ?? "");
-          return { url: page.url, links: page.links, untrusted: true };
-        }
-        if (name === "web.screenshot") return await shotPage(this.d.paths.workspace, a.url ?? "");
-        return await interactPage(this.d.paths.workspace, a.url ?? "", a.actions ?? []);
-      } catch (e) {
-        throw new CoreToolError("web_failed", e instanceof Error ? e.message : String(e), "Only public http(s) pages. Private hosts are blocked.");
-      }
-    }
     if (name === "agent.task") return this.delegate(sessionId, args as { task: string; tools?: string[] });
     if (name === "shell.run") {
       const a = args as { command: string; cwd?: string; timeoutMs?: number };

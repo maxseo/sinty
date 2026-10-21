@@ -1,0 +1,54 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "tool-web",
+  "version": "0.1.0",
+  "description": "Web tools: web.search, web.read, web.links, web.screenshot, web.interact. Public internet only; the core checks every address",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "net": ["$PUBLIC"],
+    "browser": true,
+    "fs": { "write": ["$WORKSPACE"] }
+  },
+  "tools": [
+    { "name": "web.search", "sideEffects": "external", "idempotent": true, "docs": "README.md", "defaultPolicy": "ask" },
+    { "name": "web.read", "sideEffects": "external", "idempotent": true, "docs": "README.md", "defaultPolicy": "ask" },
+    { "name": "web.links", "sideEffects": "external", "idempotent": true, "docs": "README.md", "defaultPolicy": "ask" },
+    { "name": "web.screenshot", "sideEffects": "external", "idempotent": false, "docs": "README.md", "defaultPolicy": "ask" },
+    { "name": "web.interact", "sideEffects": "external", "idempotent": false, "docs": "README.md", "defaultPolicy": "ask" }
+  ],
+  "config": {
+    "searchEngine": "duckduckgo",
+    "searxngUrl": "",
+    "maxResults": 8,
+    "timeoutSeconds": 20,
+    "maxPageKb": 1500,
+    "maxChars": 20000,
+    "maxLinks": 40,
+    "browserTimeoutSeconds": 20,
+    "actionTimeoutSeconds": 8,
+    "screenshotDir": "browser",
+    "userAgent": "Sinty/1.0",
+    "allowPrivate": ""
+  },
+  "settings": {
+    "title": "Веб",
+    "description": "Инструменты web.search, web.read, web.links, web.screenshot и web.interact. Ходят только в публичный интернет: адреса проверяет ядро. Изменения применятся после перезапуска плагина.",
+    "fields": [
+      { "key": "searchEngine", "label": "Поисковик", "type": "select", "group": "Поиск", "options": [{ "value": "duckduckgo", "label": "DuckDuckGo (HTML)" }, { "value": "searxng", "label": "SearXNG (свой сервер)" }] },
+      { "key": "searxngUrl", "label": "Адрес SearXNG", "type": "text", "group": "Поиск", "optional": true, "help": "Например https://searx.example.org. Если сервер в локальной сети, добавьте его в «Разрешённые приватные адреса»." },
+      { "key": "maxResults", "label": "Результатов поиска", "type": "number", "group": "Поиск", "min": 1, "max": 20, "integer": true },
+      { "key": "timeoutSeconds", "label": "Тайм-аут загрузки", "type": "number", "group": "Страницы", "min": 1, "max": 60, "integer": true, "unit": "с" },
+      { "key": "maxPageKb", "label": "Предел размера страницы", "type": "number", "group": "Страницы", "min": 50, "max": 20000, "integer": true, "unit": "КБ" },
+      { "key": "maxChars", "label": "Предел текста страницы", "type": "number", "group": "Страницы", "min": 1000, "max": 200000, "integer": true, "unit": "симв." },
+      { "key": "maxLinks", "label": "Ссылок со страницы", "type": "number", "group": "Страницы", "min": 1, "max": 200, "integer": true },
+      { "key": "userAgent", "label": "User-Agent", "type": "text", "group": "Страницы" },
+      { "key": "browserTimeoutSeconds", "label": "Тайм-аут открытия в браузере", "type": "number", "group": "Браузер", "min": 1, "max": 60, "integer": true, "unit": "с" },
+      { "key": "actionTimeoutSeconds", "label": "Тайм-аут клика", "type": "number", "group": "Браузер", "min": 1, "max": 60, "integer": true, "unit": "с" },
+      { "key": "screenshotDir", "label": "Папка снимков", "type": "text", "group": "Браузер", "help": "Внутри рабочей папки, например browser." },
+      { "key": "allowPrivate", "label": "Разрешённые приватные адреса", "type": "text", "group": "Сеть", "optional": true, "help": "host или host:port через запятую, например 127.0.0.1:8080, nas.lan. Пусто: локальные и приватные адреса закрыты. Список читает ядро из config.yaml, плагин его изменить не может." }
+    ]
+  },
+  "editable": true
+}

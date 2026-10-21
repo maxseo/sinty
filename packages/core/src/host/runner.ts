@@ -14,13 +14,14 @@ import {
   type PluginContext,
   type PluginDefinition,
   type ProviderDefinition,
+  type PublicNet,
   type SintyEvent,
   type ToolDefinition,
 } from "@sinty/sdk";
 import { hostAllowed } from "../policy.js";
 import { connectMcp } from "./mcp-stdio.js";
 import { connectMcpHttp } from "./mcp-http.js";
-import type { AgentOp, FromChild, InitMessage, ToChild, ToolInfo, WireError, WireHttpRequest } from "./protocol.js";
+import type { AgentOp, FromChild, InitMessage, NetPublicInit, ToChild, ToolInfo, WireError, WireHttpRequest } from "./protocol.js";
 
 const send = (msg: FromChild): void => {
   process.send?.(msg);
@@ -44,6 +45,8 @@ const agentStreams = new Map<number, { push(e: LiveEvent): void; end(error?: Wir
 let agentSeq = 0;
 const modelWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
 let modelSeq = 0;
+const netWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
+let netSeq = 0;
 let closeMcp: (() => void) | undefined;
 
 function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
@@ -61,6 +64,40 @@ function modelsCall<T>(op: "complete" | "embed", req: object): Promise<T> {
     send({ t: "models.call", id, op, req: { ...req } as Record<string, unknown> });
   });
 }
+
+function netCall<T>(msg: { op: "fetch"; url: string; init: NetPublicInit } | { op: "proxy" } | { op: "check"; url: string }): Promise<T> {
+  const id = ++netSeq;
+  return new Promise<T>((resolve, reject) => {
+    netWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
+    send({ t: "net.public", id, ...msg });
+  });
+}
+
+/** ctx.net.public: the request runs in the core (netguard.ts); the plugin gets a Response with the final url. */
+const publicNet: PublicNet = {
+  async fetch(url, init = {}) {
+    const r = await netCall<{ url: string; status: number; statusText: string; headers: [string, string][]; body: Uint8Array }>({
+      op: "fetch",
+      url: url.toString(),
+      init: {
+        ...(init.method ? { method: init.method } : {}),
+        ...(init.headers ? { headers: { ...init.headers } } : {}),
+        ...(init.body !== undefined ? { body: init.body } : {}),
+        ...(init.timeoutMs !== undefined ? { timeoutMs: init.timeoutMs } : {}),
+        ...(init.maxBytes !== undefined ? { maxBytes: init.maxBytes } : {}),
+        ...(init.maxRedirects !== undefined ? { maxRedirects: init.maxRedirects } : {}),
+      },
+    });
+    const noBody = [101, 204, 205, 304].includes(r.status);
+    const res = new Response(noBody ? null : r.body, { status: r.status < 200 || r.status > 599 ? 502 : r.status, statusText: r.statusText, headers: r.headers });
+    Object.defineProperty(res, "url", { value: r.url });
+    return res;
+  },
+  check: async (url) => {
+    await netCall({ op: "check", url: url.toString() });
+  },
+  proxy: () => netCall({ op: "proxy" }),
+};
 
 const agentApi: AgentApi = {
   listSessions: (opts) => agentCall("listSessions", opts ?? {}),
@@ -173,7 +210,7 @@ async function init(msg: InitMessage): Promise<void> {
     config: Object.freeze({ ...msg.config }),
     paths: Object.freeze({ ...msg.paths }),
     log: { debug: log("debug"), info: log("info"), warn: log("warn"), error: log("error") },
-    net: { fetch: guarded },
+    net: { fetch: guarded, public: publicNet },
     secrets: {
       async get(name) {
         const v = msg.secrets[name];
@@ -390,6 +427,13 @@ process.on("message", (raw: ToChild) => {
     case "agent.result": {
       const w = agentWaiters.get(raw.id);
       agentWaiters.delete(raw.id);
+      if (raw.ok) w?.resolve(raw.value);
+      else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
+      break;
+    }
+    case "net.result": {
+      const w = netWaiters.get(raw.id);
+      netWaiters.delete(raw.id);
       if (raw.ok) w?.resolve(raw.value);
       else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
       break;

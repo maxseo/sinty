@@ -54,6 +54,7 @@ const manifestSchema = z
         secrets: z.array(z.string()).optional(),
         env: z.array(z.string()).optional(),
         shell: z.boolean().optional(),
+        browser: z.boolean().optional(),
         agent: z.array(z.enum(["sessions.read", "sessions.write"])).optional(),
         models: z.array(z.string().min(1)).optional(),
         context: z.array(z.enum(["inspect"])).optional(),

@@ -32,10 +32,18 @@
             "write": { "type": "array", "items": { "type": "string" } }
           }
         },
-        "net": { "type": "array", "items": { "type": "string" } },
+        "net": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Hosts for ctx.net.fetch (each also needs policy.yaml net.allow). \"$PUBLIC\" grants ctx.net.public: public internet through the core, private addresses refused"
+        },
         "secrets": { "type": "array", "items": { "type": "string" } },
         "env": { "type": "array", "items": { "type": "string" } },
         "shell": { "type": "boolean" },
+        "browser": {
+          "type": "boolean",
+          "description": "Launch a headless browser (Playwright Chromium) whose traffic goes through ctx.net.public.proxy(). Needs \"$PUBLIC\" in net; allows child processes"
+        },
         "agent": {
           "type": "array",
           "uniqueItems": true,

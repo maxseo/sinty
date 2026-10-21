@@ -4,7 +4,7 @@ import type { SintyEvent } from "@sinty/sdk";
 import { Agent } from "./agent.js";
 import { Bus } from "./bus.js";
 import { scrubText, type SupervisorSettings } from "@sinty/supervisor";
-import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, effectiveBudget, loadConfig, loadPolicy, type SintyConfig, type SintyPolicy } from "./config.js";
+import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, effectiveBudget, loadConfig, loadPolicy, withDefaultPlugins, type SintyConfig, type SintyPolicy } from "./config.js";
 import { PluginHost } from "./host/host.js";
 import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
@@ -83,7 +83,7 @@ export class Sinty {
     this.paths = resolvePaths(opts.home);
     if (!existsSync(this.paths.home)) throw new Error(`${this.paths.home} does not exist; run: sinty init`);
     this.log = opts.log ?? (() => undefined);
-    this.config = { ...loadConfig(this.paths), ...opts.config };
+    this.config = withDefaultPlugins({ ...loadConfig(this.paths), ...opts.config });
     this.policy = { ...loadPolicy(this.paths), ...opts.policy };
     this.secrets = new SecretStore(this.paths);
     this.journal = new Journal(this.paths.journal, (t) => this.secrets.redact(t));

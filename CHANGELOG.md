@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Plugin `tool-web` with `web.search`, `web.read`, `web.links`, `web.screenshot` and `web.interact` (moved out of the
+  core, same names, descriptions and input schemas). It is on by default; `plugins.disabled: [tool-web]` or unticking
+  it in Settings turns it off. Settings section **Веб**: search engine (DuckDuckGo or your own SearXNG), result
+  count, timeouts, page size and text limits, user agent, screenshot folder, allowed private addresses.
+- `ctx.net.public` for plugins with `permissions.net: ["$PUBLIC"]`: `fetch`, `check` and, with the new
+  `permissions.browser`, `proxy()` for a headless browser. See `docs/spec/net-public.md`.
+- `config.yaml` `plugins.disabled` for default-on bundled plugins.
 - Supervisor settings in `config.yaml` `supervisor:`, editable in the Web UI under Settings → **Супервизор** and applied
   without a restart:
   - `checks.{toolErrors,loop,budget,badOutput}`, `escalate`, `loopBlockAfter`, `repeatFailures`, `patchAfterTurns`,
@@ -85,6 +92,11 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- The web tools are no longer core tools: `packages/core/src/web.ts` is gone and `playwright` moved from
+  `@sinty/core` to `@sinty/plugin-tool-web`. Policies, approvals and the supervisor see the same tool names;
+  `supervisedTools()` now reports them as `tool-web` tools, so the agent may patch them (for example the DuckDuckGo
+  parser in `plugins/tool-web/src/search.ts`).
+- `web.*` tool names are reserved for `tool-web`; another plugin that registers one fails to start.
 - The left sidebar no longer has **Журнал** or **Супервизор**: both are chat-header tabs. `#/pending` and `#/supervisor` open the chat list.
 - Budget stops count cost-weighted tokens by default instead of every prompt token. Set `supervisor.budget.count: all`
   for the old behaviour.
@@ -149,6 +161,15 @@ All notable changes to this project are documented here. The format follows
   `packages/core/sandbox/ShellBox.exe` in a source checkout, so the shell sandbox works in a fresh clone.
 
 ### Security
+- Web SSRF protection is a core service (`netguard.ts`) and covers more:
+  - CGNAT `100.64.0.0/10`, IPv4-mapped/compatible, NAT64 and 6to4 forms (`::ffff:127.0.0.1`), `::`, site-local,
+    multicast, reserved and documentation ranges are now refused too;
+  - every DNS answer and every redirect hop is checked, and the socket connects to the checked address (no DNS
+    rebinding window);
+  - the browser runs behind a core proxy that applies the same checks to every connection, so a page can no longer
+    load `http://127.0.0.1/...` or `169.254.169.254` sub-resources;
+  - `allowPrivate` (Settings → Веб) lets named private host[:port] through; the core reads it from `config.yaml`
+    only.
 - Supervisor incidents and notices no longer store or show raw arguments:
   - text typed into pages (`web.interact` `type`) and password/token/secret fields are replaced by `[hidden]`;
   - long values are cut;
