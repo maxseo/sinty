@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Plugin `skills` with the skills catalog and `skill.read`, `skill.files`, `skill.read_file`, `skill.write_file`,
+  `skill.edit`, `skill.write` (moved out of the core; same names, descriptions, input schemas, error codes and
+  hints; `skill.*` names reserved for it). On by default: `plugins.disabled: [skills]` or unticking it in Settings
+  turns it off, an agent card's `excludedPlugins` hides it from one agent. Settings section **Навыки**:
+  `catalogLimit` (default 60). `GET /p/skills/list`; `GET /v1/roster/skills` forwards there.
+- `ctx.systemSection(name, render, { order, kind })`: a plugin block in the static zone of the prompt, right after the
+  system prompt, rendered for the speaking agent; a failed or slow section repeats its last good text.
 - `ctx.net.public.fetch` option `truncate`: over `maxBytes` the first `maxBytes` decoded bytes come back with
   `response.truncated` instead of a `too_large` failure. Off by default (downloads and binary bodies keep the limit).
 - Supervisor detector `external_error` for failures where the target site or the network refused
@@ -101,6 +108,9 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- The skills catalog is now a system section of the `skills` plugin. The prompt is byte-identical (same text, place
+  and `static` hint); context snapshots label it `source: skills`, `id: skills/catalog`. With the plugin off, or
+  excluded for an agent, there is no catalog and the system prompt carries the `static` hint.
 - `tool-web` errors keep their meaning: core codes (`net_blocked`, `too_large`, `timeout`, `net_failed`,
   `bad_request`) pass through, a site's non-2xx answer is `http_4xx` / `http_5xx` with the status and host in the
   message, argument mistakes are `invalid_args`, and only the rest is `web_failed`. Each gets its own hint; the

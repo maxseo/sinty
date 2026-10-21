@@ -18,7 +18,6 @@ import { hint, renderTurnContext, resolveTimezone, withoutHint } from "./prompt.
 import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
 import { runShell } from "./shell.js";
-import { editSkillFile, listSkillFiles, listSkills, readSkill, readSkillFile, skillCatalog, writeSkill, writeSkillFile } from "./skills.js";
 import { renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
@@ -128,6 +127,8 @@ export class Agent {
   private readonly lastPrompt = new Map<string, PreviousPrompt>();
   /** Context contributors already warned about rewriting messages before the tail. */
   private readonly warnedContexts = new Set<string>();
+  /** Last good text of each system section per session, for a section that fails or times out. */
+  private readonly lastSections = new Map<string, string>();
 
   constructor(private readonly d: AgentDeps) {}
 
@@ -673,33 +674,6 @@ export class Agent {
         throw new CoreToolError("invalid_args", e instanceof Error ? e.message : String(e), "cwd stays inside the workspace.");
       }
     }
-    if (name === "skill.files" || name === "skill.read_file" || name === "skill.write_file" || name === "skill.edit") {
-      const a = args as { name: string; path?: string; text?: string; old?: string; replacement?: string };
-      try {
-        if (name === "skill.files") return listSkillFiles(this.d.paths.skills, a.name);
-        if (name === "skill.read_file") return readSkillFile(this.d.paths.skills, a.name, a.path ?? "");
-        if (name === "skill.write_file") return writeSkillFile(this.d.paths.skills, a.name, a.path ?? "", a.text ?? "");
-        return editSkillFile(this.d.paths.skills, a.name, a.path ?? "", a.old ?? "", a.replacement ?? "");
-      } catch (e) {
-        throw new CoreToolError(name.startsWith("skill.read") || name === "skill.files" ? "not_found" : "invalid_args", e instanceof Error ? e.message : String(e), "Paths stay inside the skill folder. skill.edit needs a fragment that appears once.");
-      }
-    }
-    if (name === "skill.write") {
-      const a = args as { name: string; text: string };
-      try {
-        return writeSkill(this.d.paths.skills, a.name, a.text);
-      } catch (e) {
-        throw new CoreToolError("invalid_args", e instanceof Error ? e.message : String(e));
-      }
-    }
-    if (name === "skill.read") {
-      try {
-        return readSkill(this.d.paths.skills, (args as { name: string }).name);
-      } catch (e) {
-        throw new CoreToolError("not_found", e instanceof Error ? e.message : String(e), "Use a name from the skills list.");
-      }
-    }
-
     const patches = this.d.patches;
     if (!patches) throw new CoreToolError("unavailable", "the patch pipeline is not enabled");
     switch (name) {
@@ -754,7 +728,7 @@ export class Agent {
 
   /**
    * The prompt of one model step, in stability zones (docs/spec/protocol.md, "Prompt caching"):
-   * system prompt and skills (`static`) → session memory snapshot and summary (`session`) → the dialogue, where each
+   * system prompt and plugin system sections such as the skills catalog (`static`) → session memory snapshot and summary (`session`) → the dialogue, where each
    * turn's context sits before its first user message (`turn` on the last message). Context plugins append after it.
    * Every later call of the session repeats this list and only appends, until compaction or a trim step.
    */
@@ -766,16 +740,18 @@ export class Agent {
     dialogue = await this.maybeCompact(sessionId, events, dialogue, signal, turn);
     dialogue = trimOldToolResults(dialogue);
     const speaker = this.speaker(sessionId);
-    const skills = listSkills(this.d.paths.skills).filter((s) => !speaker || speaker.skills.includes(s.name));
+    const sections = await this.systemSections(sessionId, speaker);
     const memory = this.d.memory.sessionMessages({ sessionId, agentId: turn.agentId }, trace?.memory);
-    const head: ChatMessage[] = [{ role: "system", content: this.systemPrompt(sessionId) }, hint({ role: "system", content: skillCatalog(skills) }, "static"), ...memory];
+    const head: ChatMessage[] = [{ role: "system", content: this.systemPrompt(sessionId) }, ...sections.map((x) => ({ role: "system" as const, content: x.text }))];
+    head[head.length - 1] = hint(head[head.length - 1]!, "static");
+    head.push(...memory);
     if (memory.length) head[head.length - 1] = hint(head[head.length - 1]!, "session");
     if (dialogue.length) dialogue[dialogue.length - 1] = hint(dialogue[dialogue.length - 1]!, "turn");
     let messages: ChatMessage[] = [...head, ...dialogue];
     if (trace) {
       const turnBlocks = new Map<string, string[]>();
       for (const e of events) if (e.type === "context.turn") turnBlocks.set((e as SintyEvent<"context.turn">).data.text, (e as SintyEvent<"context.turn">).data.blocks.map((b) => b.id));
-      traceBase(trace, messages, memory.length, turnBlocks);
+      traceBase(trace, messages, sections.map((x) => x.label), memory.length, turnBlocks);
     }
     for (const c of this.d.host.contexts()) {
       const before = messages;
@@ -926,6 +902,34 @@ export class Agent {
     const agentId = (asked?.data as { agentId?: string } | undefined)?.agentId;
     const id = agentId && members.includes(agentId) ? agentId : project?.leadId && members.includes(project.leadId) ? project.leadId : members[0];
     return roster.agents.find((a) => a.id === id);
+  }
+
+  /**
+   * ctx.systemSection blocks of the plugins this speaker has (e.g. the skills catalog), in their fixed order. They sit
+   * in the static zone, so a block that fails or times out repeats the session's last good text instead of vanishing.
+   */
+  private async systemSections(sessionId: string, speaker: AgentRecord | undefined): Promise<{ text: string; label: { kind: "system" | "skills"; source: string; id: string } }[]> {
+    const out: { text: string; label: { kind: "system" | "skills"; source: string; id: string } }[] = [];
+    const sections = this.d.host.sections();
+    if (!sections.length) return out;
+    const shared = speaker ? sharedPlugins(this.d.paths) : null;
+    const input = { sessionId, ...(speaker ? { agent: { id: speaker.id, name: speaker.name, skills: [...speaker.skills] } } : {}) };
+    for (const s of sections) {
+      if (speaker && !agentHasPlugin(speaker, s.plugin.name, DEFAULT_ON_PLUGINS, shared)) continue;
+      const key = `${sessionId}\u0000${s.plugin.name}/${s.name}`;
+      let text: string | null | undefined;
+      try {
+        text = await s.plugin.runSection(s.name, input);
+        this.lastSections.delete(key);
+        this.lastSections.set(key, text ?? "");
+        if (this.lastSections.size > 500) this.lastSections.delete(this.lastSections.keys().next().value!);
+      } catch (e) {
+        text = this.lastSections.get(key);
+        this.d.log?.("warn", `system section ${s.plugin.name}/${s.name} failed; ${text === undefined ? "left out" : "repeating its last text"}`, e instanceof Error ? e.message : e);
+      }
+      if (text) out.push({ text, label: { kind: s.kind, source: s.plugin.name, id: `${s.plugin.name}/${s.name}` } });
+    }
+    return out;
   }
 
   private pluginVisible(sessionId: string, wireName: string): boolean {

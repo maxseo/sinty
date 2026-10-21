@@ -57,7 +57,7 @@ Layout, most stable first:
 | Zone | Content | Changes when | Hint |
 |---|---|---|---|
 | tools | tool schemas, sorted by wire name; plugins kept in `plugins.enabled` order | plugins, policy or skills change | covered by `static` |
-| system | system prompt (persona/agent, rules, project, workspace folder), skill catalog | config, agent or skills change | `static` on the skill catalog (last system block of the zone) |
+| system | system prompt (persona/agent, rules, project, workspace folder), then plugin system sections (`ctx.systemSection`; the skills plugin's catalog, order 0) | config, agent or skills change | `static` on the last system block of the zone (the system prompt itself when no section is present) |
 | session | memory snapshot (`memory.snapshot`), conversation summary | compaction, another agent speaks | `session` on the last of these |
 | dialogue | per turn: the turn context, then the human message, assistant/tool messages | appended only | `turn` on the last message |
 | tail | what `context` plugins append | every call | none |
@@ -73,6 +73,11 @@ Layout, most stable first:
   12–19 human turns), not on every turn.
 - **Compaction is stepped:** the summary and everything after it are kept while they fit; only then is the history
   folded again (once per several turns instead of every turn).
+- **System sections are stable.** A plugin block in the system zone (`ctx.systemSection(name, render, { order, kind })`)
+  is rendered before every model step for the speaking agent (`{ sessionId, agent?: { id, name, skills } }`), in
+  order, then `plugins.enabled` order, then name. It must return the same text for the same input. A section of a
+  plugin the agent card excludes is left out; a section that throws or takes more than 5 s repeats the session's last
+  good text, so a hiccup does not break the cache.
 - **Context plugins may only append.** When a contributor inserts, edits or removes earlier messages, the core keeps
   the input as it was, keeps only what the contributor added after the last input message and logs a warning
   (the context snapshot marks it `reordered`).

@@ -1,0 +1,9 @@
+{
+  "name": "section-flaky",
+  "version": "0.0.1",
+  "description": "A system section that fails after its first answer",
+  "kinds": ["context"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {}
+}

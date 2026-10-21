@@ -85,16 +85,18 @@ export function traceContributor(trace: ContextTrace, plugin: string, name: stri
 }
 
 /**
- * Labels the messages built before plugin contributors: system, skills, session memory blocks, then the dialogue,
- * where turn context messages are `turn` parts (their block ids come from the journaled `context.turn` events).
+ * Labels the messages built before plugin contributors: system, plugin system sections (the skills catalog is a
+ * `skills` part from the skills plugin), session memory blocks, then the dialogue, where turn context messages are
+ * `turn` parts (their block ids come from the journaled `context.turn` events).
  */
-export function traceBase(trace: ContextTrace, messages: ChatMessage[], memoryCount: number, turnBlocks: Map<string, string[]> = new Map()): void {
+export function traceBase(trace: ContextTrace, messages: ChatMessage[], sections: { kind: "system" | "skills"; source: string; id: string }[], memoryCount: number, turnBlocks: Map<string, string[]> = new Map()): void {
   trace.base = messages;
+  const first = 1 + sections.length;
   trace.labels = messages.map((m, i): Label => {
     if (i === 0) return { kind: "system", source: "core", id: "system" };
-    if (i === 1) return { kind: "skills", source: "core", id: "skills" };
-    if (i < 2 + memoryCount) {
-      const b = trace.memory.blocks[i - 2];
+    if (i < first) return { ...sections[i - 1]! };
+    if (i < first + memoryCount) {
+      const b = trace.memory.blocks[i - first];
       const id = b?.id ?? "memory";
       const kind: ContextPartKind = id === "memory.summary" ? "summary" : "memory";
       return { kind, source: b?.source ?? "builtin:sqlite", id };

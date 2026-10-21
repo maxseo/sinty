@@ -188,6 +188,29 @@ export interface ContextInput {
  */
 export type ContextContributor = (input: ContextInput) => Promise<ChatMessage[]>;
 
+// ---- system sections ----
+
+export interface SystemSectionInput {
+  sessionId: string;
+  /** The roster agent that speaks in this session; absent outside projects (the global persona speaks). */
+  agent?: { id: string; name: string; skills: string[] };
+}
+
+/**
+ * A stable block of the system zone of the prompt, placed right after the system prompt and before session memory
+ * (docs/spec/protocol.md, "Prompt caching"). Return the same text for the same input, or the provider's prompt cache
+ * misses from this block on: no clock, no counters, no random order. Return null or "" to add nothing. Called before
+ * every model step; when it throws or times out (5 s) the core reuses the session's last good text.
+ */
+export type SystemSectionContributor = (input: SystemSectionInput) => string | null | Promise<string | null>;
+
+export interface SystemSectionOptions {
+  /** Lower first; ties keep plugins.enabled order. Default 100. */
+  order?: number;
+  /** How the context inspector labels the block. Default "system". */
+  kind?: "system" | "skills";
+}
+
 // ---- channels ----
 
 export interface ChannelDefinition {
@@ -304,6 +327,8 @@ export interface PluginContext {
   tool<I extends z.ZodType>(def: ToolDefinition<I>): void;
   provider(def: ProviderDefinition): void;
   context(name: string, contributor: ContextContributor, opts?: { order?: number }): void;
+  /** A stable system-zone block of the prompt (see SystemSectionContributor). Hidden from agents whose card excludes the plugin. */
+  systemSection(name: string, contributor: SystemSectionContributor, opts?: SystemSectionOptions): void;
   channel(def: ChannelDefinition): void;
   schedule(name: string, cron: string, run: (signal: AbortSignal) => Promise<void>): void;
   on<T extends EventType>(type: T | "*", handler: (event: SintyEvent<T>) => void | Promise<void>): void;

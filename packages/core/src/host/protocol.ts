@@ -1,9 +1,15 @@
-import type { ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, ToolSideEffects } from "@sinty/sdk";
+import type { ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, SystemSectionInput, ToolSideEffects } from "@sinty/sdk";
 
 export interface RouteInfo {
   method: string;
   path: string;
   public: boolean;
+}
+
+export interface SectionInfo {
+  name: string;
+  order: number;
+  kind: "system" | "skills";
 }
 
 export interface WireHttpRequest {
@@ -78,6 +84,7 @@ export type ToChild =
   | { t: "tool.recover"; id: number; name: string; ctx: CallCtx }
   | { t: "provider.stream"; id: number; protocol: string; req: ProviderWireRequest }
   | { t: "context.run"; id: number; name: string; input: ContextInput }
+  | { t: "section.run"; id: number; name: string; input: SystemSectionInput }
   | { t: "cancel"; id: number }
   | { t: "event"; event: SintyEvent }
   | { t: "journal.events"; id: number; events: SintyEvent[] }
@@ -101,6 +108,8 @@ export type FromChild =
       tools: ToolInfo[];
       providers: string[];
       contexts: { name: string; order: number }[];
+      /** ctx.systemSection blocks; absent from plugins built against an older SDK. */
+      sections?: SectionInfo[];
       subscriptions: (EventType | "*")[];
       routes: RouteInfo[];
       /** Provider protocols that implement embed(). */
@@ -134,5 +143,7 @@ export type FromChild =
   | { t: "provider.error"; id: number; error: WireError }
   | { t: "context.result"; id: number; messages: ChatMessage[] }
   | { t: "context.error"; id: number; error: WireError }
+  | { t: "section.result"; id: number; text: string | null }
+  | { t: "section.error"; id: number; error: WireError }
   | { t: "journal.read"; id: number; sessionId: string; afterSeq?: number; types?: EventType[] }
   | { t: "log"; level: "debug" | "info" | "warn" | "error"; msg: string; data?: unknown };
