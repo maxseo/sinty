@@ -133,8 +133,13 @@ export const configSchema = z.object({
        * point is min(0.65 × window, cap). Absent: 150000. 0 or null: no cap. Settings → Память и контекст.
        */
       compactCapTokens: z.number().int().nonnegative().nullable().optional(),
-      /** sqlite-vec width. Fixed for the life of memory.db. */
+      /** sqlite-vec width; must equal the embedding model's width. After a change run `sinty memory reembed`. */
       dimensions: z.number().int().default(1536),
+      /**
+       * Vectors of facts with none or of another embedding model (models.routes.embed changed): "manual" (default)
+       * leaves them to `sinty memory reembed`, "auto" embeds them in the background on start.
+       */
+      reembed: z.enum(["manual", "auto"]).optional(),
       /** Plugin memory providers used for recall. Unset: every enabled one. See docs/spec/memory.md. */
       providers: z.array(z.string()).optional(),
       /** Plugin memory providers that receive mirrored writes and forgets. Default: none. */

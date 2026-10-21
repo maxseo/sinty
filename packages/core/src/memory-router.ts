@@ -195,6 +195,8 @@ export class MemoryRouter {
         userId: this.d.config.agent.userId,
         agentId: this.d.config.agent.name,
         dimensions: this.d.config.memory.dimensions,
+        // Vectors are stamped with the embed route; a changed route makes the old ones stale until reembedded.
+        embedModel: () => (this.d.embedder?.() ? this.d.config.models.routes?.embed ?? "" : ""),
       }),
     );
     return this.builtinStore;
@@ -770,17 +772,31 @@ export class MemoryRouter {
   }
 
   /**
-   * Computes embeddings for facts that have no vector yet (`sinty memory reindex`). Batched and idempotent: only
-   * facts missing in facts_vec are sent, so an interrupted run continues where it stopped. Uses the core embed route
+   * `sinty memory reembed` (and its older name `reindex`): computes vectors for live facts that have none or whose
+   * vector came from another embedding model or width (stale), batched and idempotent, so an interrupted run
+   * continues where it stopped. When facts_vec was created with another width than memory.dimensions it is rebuilt
+   * first (every old vector is dropped; they could not be searched anyway). Uses the core embed route
    * (models.routes.embed through the ModelGateway); errors are thrown, not degraded, so the command can report them.
    */
-  async reindexVectors(opts: { dryRun?: boolean; batchSize?: number; signal?: AbortSignal; onProgress?: (p: { done: number; total: number }) => void } = {}): Promise<{ total: number; embedded: number; dryRun: boolean }> {
+  async reindexVectors(opts: { dryRun?: boolean; batchSize?: number; signal?: AbortSignal; onProgress?: (p: { done: number; total: number }) => void } = {}): Promise<{ total: number; embedded: number; dryRun: boolean; stale: number; rebuilt: boolean }> {
     const store = this.builtin.store;
     const dryRun = opts.dryRun === true;
     if (!store.vec) throw new MemoryError("vec_unavailable", "sqlite-vec is not loaded, so vectors cannot be stored", "Check that the sqlite-vec package is installed for this platform.");
-    const total = store.countMissingVectors();
-    if (dryRun || total === 0) return { total, embedded: 0, dryRun };
     const embedder = this.d.embedder?.();
+    const status = store.vectorStatus();
+    if (status.widthMismatch) {
+      // Everything has to be embedded again at the new width.
+      if (dryRun) return { total: status.facts, embedded: 0, dryRun, stale: status.facts - status.missing, rebuilt: false };
+      if (!embedder) throw new MemoryError("embed_route", "models.routes.embed is not set", "Set models.routes.embed in config.yaml, e.g. openai/text-embedding-3-small.");
+      const probe = await embedder.embed(["dimension probe"], opts.signal);
+      const width = probe[0]?.length ?? 0;
+      if (width !== status.dimensions) throw new MemoryError("embed_width", `embed route returned width ${width}, memory.dimensions is ${status.dimensions}`, "Set memory.dimensions to the width of the embedding model.");
+      store.rebuildVectors();
+      this.d.log?.("info", `memory: facts_vec rebuilt from width ${status.width} to ${status.dimensions}`);
+    }
+    const stale = status.widthMismatch ? status.facts - status.missing : status.stale;
+    const total = store.countMissingVectors();
+    if (dryRun || total === 0) return { total, embedded: 0, dryRun, stale, rebuilt: status.widthMismatch };
     if (!embedder) throw new MemoryError("embed_route", "models.routes.embed is not set", "Set models.routes.embed in config.yaml, e.g. openai/text-embedding-3-small.");
     const size = Math.min(Math.max(Math.floor(opts.batchSize ?? 64), 1), 512);
     const dims = this.d.config.memory.dimensions;
@@ -792,12 +808,28 @@ export class MemoryRouter {
       const vectors = await embedder.embed(batch.map((b) => b.text), opts.signal);
       if (vectors.length !== batch.length) throw new MemoryError("embed_count", `embed route returned ${vectors.length} vectors for ${batch.length} facts`);
       const bad = vectors.find((v) => v.length !== dims);
-      if (bad) throw new MemoryError("embed_width", `embed route returned width ${bad.length}, memory.dimensions is ${dims}`, "memory.dimensions is fixed for the life of memory.db; use an embedding model with that width.");
+      if (bad) throw new MemoryError("embed_width", `embed route returned width ${bad.length}, memory.dimensions is ${dims}`, "Set memory.dimensions to the width of the embedding model, then run sinty memory reembed.");
       batch.forEach((b, i) => store.setVector(b.id, Float32Array.from(vectors[i]!)));
       embedded += batch.length;
       opts.onProgress?.({ done: embedded, total });
     }
-    return { total, embedded, dryRun };
+    this.vectorsChecked = false;
+    return { total, embedded, dryRun, stale, rebuilt: status.widthMismatch };
+  }
+
+  private vectorsChecked = false;
+
+  /** Once per process: journal that part of the vectors cannot be searched until `sinty memory reembed`. */
+  private checkVectors(sessionId?: string): void {
+    if (this.vectorsChecked) return;
+    this.vectorsChecked = true;
+    try {
+      const st = this.builtin.store.vectorStatus();
+      if (st.widthMismatch) this.degraded(sessionId, BUILTIN, "embed", `facts_vec has width ${st.width} but memory.dimensions is ${st.dimensions}; vector search is off until sinty memory reembed, full-text search still works`);
+      else if (st.stale) this.degraded(sessionId, BUILTIN, "embed", `${st.stale} fact(s) have vectors of another embedding model than ${st.model}; they are found by full-text search only until sinty memory reembed`);
+    } catch (e) {
+      this.d.log?.("warn", "memory: vector status check failed", e instanceof Error ? e.message : e);
+    }
   }
 
   /** Job rows, for tests and `sinty memory` diagnostics. */
@@ -879,6 +911,7 @@ export class MemoryRouter {
       const vectors = await embedder.embed(texts);
       const dims = this.d.config.memory.dimensions;
       if (vectors.length !== texts.length || vectors.some((v) => v.length !== dims)) throw new Error(`embed route returned width ${vectors[0]?.length ?? 0}, memory.dimensions is ${dims}`);
+      this.checkVectors(sessionId);
       return vectors.map((v) => Float32Array.from(v));
     } catch (e) {
       if (!this.embedFailed) {

@@ -260,15 +260,15 @@ test("router: reindexVectors embeds facts that have no vector, in batches, idemp
     }
     const second = await boot(home, [], { config: withEmbed, plugins: [] });
     try {
-      assert.deepEqual(await second.memory.reindexVectors({ dryRun: true }), { total: 3, embedded: 0, dryRun: true });
+      assert.deepEqual(await second.memory.reindexVectors({ dryRun: true }), { total: 3, embedded: 0, dryRun: true, stale: 0, rebuilt: false });
       assert.equal(embedCalls(), 0, "dry run calls no model");
       const progress: string[] = [];
       const r = await second.memory.reindexVectors({ batchSize: 2, onProgress: (p) => progress.push(`${p.done}/${p.total}`) });
-      assert.deepEqual(r, { total: 3, embedded: 3, dryRun: false });
+      assert.deepEqual(r, { total: 3, embedded: 3, dryRun: false, stale: 0, rebuilt: false });
       assert.deepEqual(progress, ["2/3", "3/3"]);
       assert.equal(embedCalls(), 2, "two batches");
       assert.equal(second.memory.builtin.store.countMissingVectors(), 0);
-      assert.deepEqual(await second.memory.reindexVectors(), { total: 0, embedded: 0, dryRun: false }, "rerun is a no-op");
+      assert.deepEqual(await second.memory.reindexVectors(), { total: 0, embedded: 0, dryRun: false, stale: 0, rebuilt: false }, "rerun is a no-op");
       assert.equal(embedCalls(), 2);
       // the backfilled vectors are used: no word overlap, found by vector
       const s = second.agent.createSession();

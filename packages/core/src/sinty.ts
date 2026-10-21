@@ -209,6 +209,7 @@ export class Sinty {
     }
     this.memory.kick();
     this.windows.warm();
+    if (this.config.memory.reembed === "auto" && this.models.hasRoute("embed")) this.reembedInBackground();
     const resumedTurns = this.agent.resumeAll();
     return { failedPlugins: failed, resumedTurns };
   }
@@ -218,6 +219,8 @@ export class Sinty {
    * then stops plugins. Jobs that do not finish in time stay pending and resume on the next start.
    */
   async stop(opts: { drainTimeoutMs?: number } = {}): Promise<void> {
+    this.reembed?.controller.abort();
+    await this.reembed?.done;
     await this.agent.stop();
     try {
       await this.memory.drainBeforeClose(opts.drainTimeoutMs);
@@ -229,6 +232,22 @@ export class Sinty {
     this.host.stop();
     await this.memory.close();
     this.journal.close();
+  }
+
+  private reembed: { controller: AbortController; done: Promise<void> } | undefined;
+
+  /** memory.reembed: auto. Never fails the start; a stop aborts it between batches. */
+  private reembedInBackground(): void {
+    const controller = new AbortController();
+    const done = this.memory
+      .reindexVectors({ signal: controller.signal })
+      .then((r) => {
+        if (r.embedded || r.rebuilt) this.log("info", `memory: re-embedded ${r.embedded} of ${r.total} fact(s)${r.rebuilt ? " after rebuilding facts_vec" : ""}`);
+      })
+      .catch((e: unknown) => {
+        if (!controller.signal.aborted) this.log("warn", "memory: background re-embed failed", e instanceof Error ? e.message : e);
+      });
+    this.reembed = { controller, done };
   }
 
   private openTurnEvents(): SintyEvent[] {
