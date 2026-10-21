@@ -49,6 +49,11 @@ export const configSchema = z.object({
       config: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
       searchPaths: z.array(z.string()).default([]),
       /**
+       * Bundled plugins that are on by default (DEFAULT_ON_PLUGINS, e.g. tool-web) and that the human turned off.
+       * A config.yaml without this key keeps them on, so configs from before they left the core keep working.
+       */
+      disabled: z.array(z.string()).optional(),
+      /**
        * Plugins allowed to receive context snapshots (the full prompt of every model step, private memory included).
        * Off by default; the plugin's manifest must also ask for permissions.context ["inspect"]. See docs/spec/context-inspect.md.
        */
@@ -205,8 +210,24 @@ export const policySchema = z.object({
 
 export type SintyPolicy = z.infer<typeof policySchema>;
 
+/**
+ * Bundled plugins that are enabled unless config.yaml lists them in `plugins.disabled`. tool-web carries web.search,
+ * web.read, web.links, web.screenshot and web.interact, which were core tools before plan step 7: an existing
+ * config.yaml whose plugins.enabled predates the move keeps its web tools without being rewritten.
+ */
+export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web"];
+
+/** Appends DEFAULT_ON_PLUGINS that are neither enabled nor disabled, in memory. Idempotent. */
+export function withDefaultPlugins<T extends { plugins: { enabled: string[]; disabled?: string[] | undefined } }>(config: T): T {
+  const disabled = new Set(config.plugins.disabled ?? []);
+  for (const name of DEFAULT_ON_PLUGINS) {
+    if (!config.plugins.enabled.includes(name) && !disabled.has(name)) config.plugins.enabled = [...config.plugins.enabled, name];
+  }
+  return config;
+}
+
 export function loadConfig(paths: SintyPaths): SintyConfig {
-  return configSchema.parse(readYaml(paths.config));
+  return withDefaultPlugins(configSchema.parse(readYaml(paths.config)));
 }
 
 export function loadPolicy(paths: SintyPaths): SintyPolicy {
@@ -250,6 +271,16 @@ export function saveSettings(
   doc.setIn(["models", "default"], model);
   doc.setIn(["models", "fallback"], fallback);
   doc.setIn(["plugins", "enabled"], enabled);
+  // A default-on plugin the human unticked goes to plugins.disabled; ticking it again takes it out.
+  const disabledNode = doc.getIn(["plugins", "disabled"]);
+  const wasDisabled = disabledNode && typeof (disabledNode as { toJSON?: () => unknown }).toJSON === "function" ? ((disabledNode as { toJSON: () => unknown }).toJSON() as unknown[]) : [];
+  const disabled = new Set((Array.isArray(wasDisabled) ? wasDisabled : []).filter((n): n is string => typeof n === "string"));
+  for (const name of DEFAULT_ON_PLUGINS) {
+    if (enabled.includes(name)) disabled.delete(name);
+    else disabled.add(name);
+  }
+  if (disabled.size) doc.setIn(["plugins", "disabled"], [...disabled]);
+  else if (doc.hasIn(["plugins", "disabled"])) doc.deleteIn(["plugins", "disabled"]);
   if (patch.stallSeconds !== undefined) {
     if (!Number.isInteger(patch.stallSeconds) || patch.stallSeconds < 0 || patch.stallSeconds > 3600) throw new Error("stall seconds must be a whole number from 0 to 3600");
     doc.setIn(["supervisor", "stallSeconds"], patch.stallSeconds);
@@ -320,6 +351,7 @@ plugins:
   enabled: [provider-openai-compat, provider-anthropic, tool-fs, ui-web, kanban]
   # optional: provider-openai-responses, server-openai-api, server-mcp, server-agui
   # M4, off until configured: channel-webhook, channel-telegram, channel-voice, server-a2a, delegate, herdr, otel, syntet
+  # tool-web (web.search, web.read, ...) is on unless listed here: disabled: [tool-web]
 
 server:
   host: 127.0.0.1

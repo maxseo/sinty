@@ -156,6 +156,14 @@
       ]
     },
     {
+      "name": "tool-web",
+      "version": "0.1.0",
+      "description": "Web tools: web.search, web.read, web.links, web.screenshot, web.interact. Public internet only; the core checks every address",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
       "name": "ui-web",
       "version": "0.1.0",
       "description": "Web UI: chat, sessions, approvals, journal, supervisor and kanban. Built from apps/web",

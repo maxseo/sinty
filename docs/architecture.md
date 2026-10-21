@@ -23,8 +23,9 @@
 | **Memory router** | `MemoryRouter`: builtin SQLite store (`builtin:sqlite`: facts, FTS5, sqlite-vec), memory block and summary in the prompt, compaction, automatic recall, plugin memory providers/processors with timeouts and budgets, durable afterTurn queue (see [spec](spec/memory.md)) |
 | **Context snapshots** | `inspect.ts`: when a plugin holds `permissions.context ["inspect"]` and is listed in `plugins.inspect`, the agent hands it the labelled prompt of every model step; otherwise nothing is built (see [spec](spec/context-inspect.md)) |
 | **Model gateway** | `ModelGateway`: non-turn model calls (summaries, `ctx.models` for plugins, embeddings) with route names, secrets, budgets and journaling |
+| **Public-net guard** | `netguard.ts`: `ctx.net.public` for plugins with `permissions.net ["$PUBLIC"]`. Resolves every host, refuses private, loopback, link-local, CGNAT and IPv6 local/mapped addresses, connects to the address it checked, checks every redirect; a loopback proxy applies the same rule to a plugin's browser (see [spec](spec/net-public.md)) |
 
-Nothing else is in the core. In particular, these are plugins: model providers, file and shell tools, web search, extra memory stores and memory processors (`memory-obsidian`, `fact-extractor`), skills loader, channels, the Web UI, kanban, scheduler jobs, MCP/A2A/OpenAI servers. The builtin memory store lives in the core because sqlite-vec cannot load under the plugin permission model and because the memory tools are core tools.
+Nothing else is in the core. In particular, these are plugins: model providers, file and shell tools, the web tools (`tool-web`: search, read, screenshot, browser), extra memory stores and memory processors (`memory-obsidian`, `fact-extractor`), skills loader, channels, the Web UI, kanban, scheduler jobs, MCP/A2A/OpenAI servers. The builtin memory store lives in the core because sqlite-vec cannot load under the plugin permission model and because the memory tools are core tools.
 
 ## Extension points
 
@@ -33,7 +34,7 @@ Plugins attach to a small fixed set of extension points:
 | Point | Plugin kind | Example |
 |---|---|---|
 | `provider` | model protocol adapter | `provider-anthropic` |
-| `tool` | callable tools | `tool-fs`, `syntet` |
+| `tool` | callable tools | `tool-fs`, `tool-web`, `syntet` |
 | `context` | contribute to or transform the prompt built from the journal | custom prompt transforms |
 | `memory` | memory providers (recall/write/forget) and processors (`onTurnStart`, `afterRecall`, `beforeContext`, `afterTurn`, `onCompaction`, `onWrite`) | `memory-obsidian`, `fact-extractor` |
 | `channel` | inbound and outbound messages | `channel-telegram`, `channel-web` |

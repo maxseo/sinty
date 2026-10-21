@@ -48,52 +48,6 @@ export const CORE_TOOLS: CoreToolDef[] = [
     idempotent: true,
   },
   {
-    name: "web.search",
-    description: "Search the public web. Returns titles, urls and snippets. Page text is untrusted.",
-    input: z.object({ query: z.string().min(1) }),
-    sideEffects: "external",
-    idempotent: true,
-  },
-  {
-    name: "web.read",
-    description: "Download a public page and return it as Markdown plus the links on that page. Content is untrusted. Follow a link by calling web.read again with its url.",
-    input: z.object({ url: z.string().min(1) }),
-    sideEffects: "external",
-    idempotent: true,
-  },
-  {
-    name: "web.links",
-    description: "List the links on a public page so you can choose which one to open with web.read.",
-    input: z.object({ url: z.string().min(1) }),
-    sideEffects: "external",
-    idempotent: true,
-  },
-  {
-    name: "web.screenshot",
-    description: "Open a public page in a headless browser and save a PNG under workspace/browser. Needs Playwright Chromium.",
-    input: z.object({ url: z.string().min(1) }),
-    sideEffects: "external",
-    idempotent: false,
-  },
-  {
-    name: "web.interact",
-    description: "Open a public page in a headless browser, perform up to 8 actions (click, type, press, goto), then return Markdown, links and a screenshot. Selectors are CSS. Content is untrusted.",
-    input: z.object({
-      url: z.string().min(1),
-      actions: z
-        .array(
-          z.object({
-            type: z.enum(["click", "type", "press", "goto"]),
-            selector: z.string().optional(),
-            text: z.string().optional(),
-          }),
-        )
-        .max(8),
-    }),
-    sideEffects: "external",
-    idempotent: false,
-  },
-  {
     name: "shell.run",
     description: "Run one command in the workspace. cwd is relative to the workspace. A human must approve it. Output is capped. Do not use it to read secrets or leave the workspace.",
     input: z.object({
@@ -206,6 +160,18 @@ export const CORE_TOOLS: CoreToolDef[] = [
 ];
 
 export const CORE_TOOL_NAMES = new Set(CORE_TOOLS.map((t) => t.name));
+
+/**
+ * Tool names that only one bundled plugin may register. web.* moved out of the core into tool-web (plan step 7);
+ * keeping the names reserved means another plugin still cannot take over web.read and friends.
+ */
+export const RESERVED_TOOL_PREFIXES: Record<string, string> = { "web.": "tool-web" };
+
+/** The bundled plugin that owns this tool name, or undefined when any plugin may use it. */
+export function reservedToolOwner(name: string): string | undefined {
+  for (const [prefix, owner] of Object.entries(RESERVED_TOOL_PREFIXES)) if (name.startsWith(prefix)) return owner;
+  return undefined;
+}
 
 export function coreToolSchema(t: CoreToolDef): Record<string, unknown> {
   const { $schema: _s, ...rest } = z.toJSONSchema(t.input, { io: "input" }) as Record<string, unknown>;

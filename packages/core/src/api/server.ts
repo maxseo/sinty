@@ -139,6 +139,7 @@ export function createApp(sinty: Sinty): Hono {
     sinty.config.models.default = next.models.default;
     sinty.config.models.fallback = next.models.fallback;
     sinty.config.plugins.enabled = next.plugins.enabled;
+    sinty.config.plugins.disabled = next.plugins.disabled;
     sinty.config.service = next.service;
     sinty.config.supervisor.stallSeconds = next.supervisor.stallSeconds;
     return c.json({ ok: true, restart: true, model: sinty.config.models.default ?? "", enabled: sinty.config.plugins.enabled });

@@ -43,6 +43,8 @@ Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-mani
 | `runtime` | `node` (SDK, own process), `mcp-stdio` (any MCP server, any language), `http` (remote MCP endpoint) |
 | `entry` | required for a node plugin unless `kinds` is only `ui` (static files, no process) |
 | `permissions` | the only rights the plugin process receives; enforced by the host |
+| `permissions.net` | hosts `ctx.net.fetch` may reach; each must also match `policy.yaml` `net.allow`. The token `"$PUBLIC"` grants `ctx.net.public`: public internet through the core, private addresses refused (see `docs/spec/net-public.md`); it never opens raw `fetch` |
+| `permissions.browser` | `true`: the plugin may launch Playwright Chromium. The host adds `--allow-child-process`, read access to the Playwright browser folder, its own temp folder `$DATA/tmp` (TMP/TEMP/TMPDIR point there) and, on Linux, the few system files Playwright probes. Needs `"$PUBLIC"`; the browser must use `ctx.net.public.proxy()`. Used by `tool-web` |
 | `permissions.agent` | `sessions.read` and/or `sessions.write`: the plugin may call the agent API over IPC |
 | `permissions.models` | model routes the plugin may call through `ctx.models` (`default`, `cheap`, `embed`, a `models.routes` key, or `*`) |
 | `permissions.context` | `["inspect"]`: receive a context snapshot of every model step through `ctx.onContextSnapshot`; also needs the plugin in config `plugins.inspect` (see `docs/spec/context-inspect.md`) |
@@ -64,6 +66,11 @@ Input schemas are declared in code (zod) and exported by the plugin at load time
   `plugins.config.<plugin>.<key>`; the manifest's own `config` defaults are ignored, and an unset or relative value
   drops the grant. Used by `memory-obsidian` for its vault.
 - Tool names of core tools (`memory.write`, `ask_human`, …) are reserved: a plugin that registers one fails to start.
+- `web.*` names belong to the bundled `tool-web` (`RESERVED_TOOL_PREFIXES` in `coretools.ts`); another plugin that
+  registers one fails to start, so nothing can sit in front of `web.read` after it left the core.
+- Default-on plugins (`DEFAULT_ON_PLUGINS` in `config.ts`, today only `tool-web`) run even when `plugins.enabled`
+  does not list them, unless `config.yaml` has them in `plugins.disabled`. Unticking one in Settings writes
+  `plugins.disabled`.
 - `ctx.http({ method, path, public?, handler })` registers a route under `/p/<plugin>`. `:param` is one segment, a trailing `*` the rest. The core strips `Authorization`, `Cookie` and hop-by-hop headers, and removes `token` from the query, before the plugin sees the request. `public: true` skips the bearer check.
 - `ctx.agent` is the same session API the HTTP clients use. Arguments are validated in the core (`plugin-bridge.ts`); write ops need `sessions.write`; idempotency keys are prefixed with the plugin name; the actor is `{ kind: "plugin" }`.
 - `createSSE` / `runTurn` in `@sinty/sdk` are helpers for streaming servers (MCP, OpenAI API, AG-UI).

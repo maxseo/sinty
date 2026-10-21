@@ -1,0 +1,10 @@
+{
+  "name": "net-nopublic",
+  "version": "0.0.1",
+  "description": "Uses ctx.net.public without permissions.net $PUBLIC",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {},
+  "tools": [{ "name": "nopub.get", "sideEffects": "external" }]
+}
