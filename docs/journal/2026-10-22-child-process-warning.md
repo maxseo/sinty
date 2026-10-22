@@ -26,15 +26,16 @@ The first Windows run of the PR (Node 24.12.0) failed both new tests: that Node 
 probes once per core process, `childProcessWarningFlag()`: it starts `node --permission --allow-child-process -e 0`
 and uses `--disable-warning=PERM0002` only when stderr shows the warning **with** `[PERM0002]`; otherwise, including
 a probe that fails or times out, it uses `CHILD_PROCESS_WARNING_OFF_LEGACY` (`--disable-warning=SecurityWarning`).
-The first version of the probe did it the other way round (code flag unless the warning still showed through it);
-it passed on Linux with 24.12.0 but on Max's Windows machine, inside the full parallel test run, it still picked the
-code flag, and both tests failed again. The probe alone succeeded there, so the likely cause is a failed or slow
-probe under load being read as "no warning". Choosing the code flag only on positive evidence makes every failure
-land on the flag that works on every Node 24. The fallback is still scoped to the
+The first version of the probe did it the other way round (code flag unless the warning still showed through
+it). Its Windows rerun looked red, but that run turned out to have tested a stale copy of the previous commit (the
+test script reused a worktree folder that `git worktree remove` had left behind), so it proved nothing either way.
+The probe was changed anyway to choose the code flag only on positive evidence, so a probe that fails or times out
+lands on the flag that works on every Node 24. The fallback is still scoped to the
 processes that get `--allow-child-process`; at startup Node prints SecurityWarnings only for permission flags, and
 the host passes no other such flag. The second test now checks that another SecurityWarning still prints with the
 code-based flag and is hidden only under the fallback; a DeprecationWarning prints in both cases. Checked with Node
-24.22.0 (code path) and 24.12.0 (fallback) on Linux, and with the full suite on Windows (24.12.0).
+24.22.0 (code path) and 24.12.0 (fallback) on Linux, and with the full suite on Windows (24.12.0, fresh worktree at
+10dc931: 195 pass, 0 fail).
 
 ## Files touched
 
