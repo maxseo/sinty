@@ -31,6 +31,8 @@ export const configSchema = z.object({
       routes: z.record(z.string(), z.string()).default({}),
       catalog: z.array(z.object({ route: z.string(), enabled: z.boolean() })).default([]),
       maxOutputTokens: z.number().int().positive().default(8192),
+      /** Context window per route ("provider/model": tokens) when the provider does not report it. */
+      contextWindows: z.record(z.string(), z.number().int().positive()).optional(),
       /** Input+output tokens each plugin may spend per UTC day through ctx.models. 0 = unlimited. Default 200000. */
       pluginTokensPerDay: z.number().int().nonnegative().optional(),
     })
@@ -120,8 +122,17 @@ export const configSchema = z.object({
     .prefault({}),
   memory: z
     .object({
-      /** Model context window used to decide when the dialogue is summarized. */
-      contextTokens: z.number().int().default(128000),
+      /**
+       * Model context window used to decide when the dialogue is summarized (folds at 65%). "auto" (default): the
+       * window of the chat's model (models.contextWindows, what the provider's model list reports, the bundled
+       * table in context-window.ts, else 128000). A number overrides it for every model.
+       */
+      contextTokens: z.union([z.literal("auto"), z.number().int().positive()]).default("auto"),
+      /**
+       * Fold the dialogue no later than this many (real) tokens, even when 65% of the window is more: the compaction
+       * point is min(0.65 × window, cap). Absent: 150000. 0 or null: no cap. Settings → Память и контекст.
+       */
+      compactCapTokens: z.number().int().nonnegative().nullable().optional(),
       /** sqlite-vec width. Fixed for the life of memory.db. */
       dimensions: z.number().int().default(1536),
       /** Plugin memory providers used for recall. Unset: every enabled one. See docs/spec/memory.md. */

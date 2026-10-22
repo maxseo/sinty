@@ -69,3 +69,12 @@ test("anthropic: input tokens add cache reads and writes; misses are what was no
   });
   assert.deepEqual(usageOf({ input_tokens: 40 }, 2), { inputTokens: 40, outputTokens: 2 });
 });
+
+test("anthropic: the Models API's max_input_tokens becomes contextWindow; null stays unknown", async () => {
+  const { anthropicModels } = await import("./index.js");
+  assert.deepEqual(
+    anthropicModels({ data: [{ id: "claude-a", max_input_tokens: 200000, max_tokens: 64000 }, { id: "claude-b", max_input_tokens: null }, { nope: 1 }] }),
+    [{ id: "claude-a", contextWindow: 200000, maxOutputTokens: 64000 }, { id: "claude-b" }],
+  );
+  assert.deepEqual(anthropicModels({}), []);
+});

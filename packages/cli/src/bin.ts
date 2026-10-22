@@ -371,6 +371,12 @@ async function doctor(): Promise<number> {
   const started = await sinty.start();
   for (const p of sinty.host.plugins.values()) check(true, `plugin ${p.name}: ${p.tools.length} tools, providers [${p.providers.join(", ")}]`);
   for (const f of started.failedPlugins) check(false, `plugin ${f.plugin}: ${f.error}`);
+  if (def) {
+    // Ask the provider's model list now instead of waiting for the background refresh.
+    await sinty.windows.refresh(def.split("/")[0]!);
+    const w = sinty.windows.resolve(def);
+    console.log(`info context window ${def}: ${w.tokens} tokens (${w.source}${w.source === "fallback" ? ": unknown model, set models.contextWindows or memory.contextTokens" : ""}), summary at ${Math.floor(w.tokens * 0.65)}`);
+  }
   await sinty.stop();
   console.log(problems ? `\n${problems} problem(s)` : "\nall good");
   return problems ? 1 : 0;

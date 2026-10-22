@@ -20,3 +20,4 @@ export { MemoryRouter, assignArms, memorySettings } from "./memory-router.js";
 export { ModelGateway, ModelError } from "./models.js";
 export { initHome, Sinty, type InitResult, type LogFn, type SintyOptions } from "./sinty.js";
 export { buildSnapshot, diffMessages, inspectStats, redactPatterns } from "./inspect.js";
+export { ContextWindows, FALLBACK_CONTEXT_WINDOW, KNOWN_CONTEXT_WINDOWS, knownContextWindow, type ContextWindow } from "./context-window.js";

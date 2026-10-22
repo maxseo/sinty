@@ -118,6 +118,7 @@ export class PluginProcess {
   subscriptions: (EventType | "*")[] = [];
   routes: RouteInfo[] = [];
   embedders: string[] = [];
+  listers: string[] = [];
   memoryProviders: string[] = [];
   memoryProcessors: { name: string; order: number; hooks: string[] }[] = [];
   /** Registered ctx.onContextSnapshot (see `inspector`). */
@@ -188,6 +189,7 @@ export class PluginProcess {
           this.subscriptions = msg.subscriptions;
           this.routes = msg.routes;
           this.embedders = msg.embedders ?? [];
+          this.listers = msg.listers ?? [];
           const memory = msg.memory ?? { providers: [], processors: [] };
           if ((memory.providers.length || memory.processors.length) && !m.kinds.includes("memory")) {
             this.events.log(this.name, "warn", 'registers memory providers or processors but "memory" is not in kinds; they are ignored');
@@ -447,6 +449,16 @@ export class PluginProcess {
       signal,
     );
     return value;
+  }
+
+  /** The provider's model list (ProviderDefinition.listModels), e.g. to learn context windows. */
+  async listModelsProvider(protocol: string, endpoint: ProviderWireRequest["endpoint"], timeoutMs = 15_000): Promise<{ id: string; contextWindow?: number; maxOutputTokens?: number }[]> {
+    return this.request(
+      (id) => ({ t: "provider.list", id, protocol, endpoint }),
+      (msg) => (msg.t === "provider.listed" ? msg : undefined),
+      timeoutMs,
+      `model list via ${protocol}`,
+    );
   }
 
   /** Calls a memory provider or processor method in the plugin process. */
@@ -895,6 +907,11 @@ export class PluginHost {
 
   providerFor(protocol: string): PluginProcess | undefined {
     for (const p of this.plugins.values()) if (!p.disabled && p.providers.includes(protocol)) return p;
+    return undefined;
+  }
+
+  listerFor(protocol: string): PluginProcess | undefined {
+    for (const p of this.plugins.values()) if (!p.disabled && p.listers.includes(protocol)) return p;
     return undefined;
   }
 

@@ -59,7 +59,7 @@ message.user ─▶ turn starts
    │     │     │     ├─ memory.updates: facts saved since the session snapshot and not announced by an earlier turn
    │     │     │     └─ processors.beforeContext(turn, blocks)  — once per turn, the result is frozen
    │     │     └─ time (minutes, zone) + blocks → <turn_context> message before the turn's first human message
-   │     ├─ maybeCompact (≥ 65% of memory.contextTokens and > 2 user turns; first step of a turn only; stepped, see below)
+   │     ├─ maybeCompact (≥ 65% of the model's context window and > 2 user turns; first step of a turn only; stepped, see below)
    │     │     ├─ processors.onCompaction → else builtin summary call through the model gateway
    │     │     ├─ facts → write path with source "summary" → memory.written
    │     │     ├─ journal memory.compacted
@@ -80,15 +80,38 @@ agent speaks (`reason: "agent"`). Facts saved later (by `memory.write`, summarie
 the next turn's `<memory_updates>` block, once. A forgotten fact stays in the snapshot until the next refresh; the
 `memory.forget` tool result tells the model in the same turn.
 
+**Context window.** Compaction measures the dialogue against the window of the chat's model (its agent's `model`,
+else `models.default`). `memory.contextTokens: auto` (the default) resolves it in `packages/core/src/context-window.ts`:
+`models.contextWindows["provider/model"]`, then what the provider's `listModels()` reports (Anthropic
+`max_input_tokens`; OpenRouter, Groq, vLLM and other OpenAI-compatible fields; cached in `data/context-windows.json`
+for 24 h, asked in the background on start and on the first miss, at most once per provider per process), then
+`KNOWN_CONTEXT_WINDOWS` (published numbers with their source; DeepSeek and OpenAI `/models` return ids only), then
+128000. A number in `memory.contextTokens` overrides all of it. Token counts are the chars/4 estimate scaled by the
+chat's ratio of the provider's real prompt size to the estimate of the previous step (`model.request.estTokens`
+against `usage.recorded.inputTokens`, used only within 0.5–3): chars/4 undercounts Cyrillic text by about a third.
+
+**Compaction point.** The dialogue is folded at min(65% of the window, `memory.compactCapTokens`). The cap defaults to
+150000 real tokens, so a 1M-token model does not carry 650k tokens of dialogue on every step; `0` or `null` turns it
+off (65% of the window only). Settings → **Память и контекст** edits it without a restart. The snapshot's
+`window.compactBy` says which threshold applies.
+
+**Fallback routes and their window.** The prompt is built for the primary route. Before a fallback route is tried,
+its own window is resolved; when the prompt (estimate × the chat's ratio, plus `models.maxOutputTokens`) does not fit,
+old tool results (before the last 2 human messages) are cut to 15 lines for that request only (`model.request`
+`trimmedForWindow: true`). The stored history, the primary request and its cache prefix do not change. When it still
+does not fit, the route is skipped: `model.fallback { from, to, reason: "window_too_small", window, need }`, or the
+turn fails with `window_too_small` if it was the last route. A route whose window is unknown (128000 fallback) is only
+trimmed, never skipped.
+
 **Stepped compaction.** Once the history was folded, the summary and everything after `coversUntil` are kept while
-they fit under 65% of `memory.contextTokens`; only then is it folded again to the last 12 user turns. When those 12
+they fit under the compaction point; only then is it folded again to the last 12 user turns. When those 12
 turns alone are over the limit (long tool output), fewer are kept, down to 2, until they take at most half of it, so
 the next turn does not fold again. The prompt prefix therefore changes once per fold, not on every turn.
 
 **One fold per turn, at its start.** A fold rewrites the summary and the memory snapshot, i.e. the start of the
 prompt. It runs only before the first model step of a turn. Later steps of the same turn keep exactly the dialogue
 the previous step was sent (everything after the last `memory.compacted` `coversUntil`) and fold again only when that
-estimate reaches the whole `memory.contextTokens`. A head that was already folded is never folded again: the old
+estimate reaches the whole context window. A head that was already folded is never folded again: the old
 code re-ran the summary on every step when the kept 12 turns alone were over the limit, and each new wording and
 its re-stored facts rebuilt the snapshot, so the prompt changed at message 2 on every step (fixed 2026-10-21).
 
@@ -278,7 +301,8 @@ models:
     embed: openai/text-embedding-3-small
   pluginTokensPerDay: 200000
 memory:
-  contextTokens: 128000
+  contextTokens: auto                # or a number: the window for every model (see "Context window" below)
+  compactCapTokens: 150000           # fold at min(65% of the window, this); 0 or null: no cap
   dimensions: 1536                   # fixed for the life of memory.db
   providers: []                      # restrict recall to these plugin providers (default: all enabled)
   writeTo: []                        # plugin providers that receive mirrored writes

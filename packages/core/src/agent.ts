@@ -17,6 +17,7 @@ import { MemoryError, parseSummaryPayload, trimOldToolResults } from "./memory.j
 import { hint, renderTurnContext, resolveTimezone, withoutHint } from "./prompt.js";
 import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
+import { compactCap, compactPoint, ContextWindows, ratioFromEvents, tokenRatio, type ContextWindow } from "./context-window.js";
 import { runShell } from "./shell.js";
 import { renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
@@ -117,6 +118,8 @@ export interface AgentDeps {
   supervisor?: SupervisorClient;
   memory: MemoryRouter;
   models?: ModelGateway;
+  /** Context window per model route. Absent (unit tests): one without provider lists. */
+  windows?: ContextWindows;
   log?: (level: string, msg: string, data?: unknown) => void;
 }
 
@@ -129,8 +132,45 @@ export class Agent {
   private readonly warnedContexts = new Set<string>();
   /** Last good text of each system section per session, for a section that fails or times out. */
   private readonly lastSections = new Map<string, string>();
+  /** Provider tokens per estimated token, per session (see tokenRatio); filled from the journal on first use. */
+  private readonly ratios = new Map<string, number | null>();
+  private readonly windows: ContextWindows;
 
-  constructor(private readonly d: AgentDeps) {}
+  constructor(private readonly d: AgentDeps) {
+    this.windows = d.windows ?? new ContextWindows({ dataDir: d.paths.data, config: d.config });
+  }
+
+  /** The context window of the model this chat talks to (its agent's model, else models.default). */
+  contextWindow(sessionId: string): ContextWindow {
+    return this.windows.resolve(this.speaker(sessionId)?.model || this.d.config.models.default);
+  }
+
+  /**
+   * Whether a fallback route's context window holds this prompt plus models.maxOutputTokens, using the chat's
+   * real-usage ratio. When not, old tool results (before the last 2 human messages) are cut to 15 lines for this
+   * request; when that is still too much, `ok: false`. A route whose window nobody knows (source "fallback") is never
+   * skipped: 128000 is a guess there, so it only gets the trim.
+   */
+  private fitWindow(sessionId: string, route: string, messages: ChatMessage[], tools: ToolSchema[], estTokens: number): { ok: true; messages: ChatMessage[]; estTokens: number } | { ok: false; window: number; need: number } {
+    const w = this.windows.resolve(route);
+    const ratio = this.tokenRatio(sessionId) ?? 1;
+    const reserve = this.d.config.models.maxOutputTokens;
+    const fits = (est: number): boolean => Math.ceil(est * ratio) + reserve <= w.tokens;
+    if (fits(estTokens)) return { ok: true, messages, estTokens };
+    const cut = trimOldToolResults(messages, 2, 1);
+    const trimmed = cut.some((m, i) => m !== messages[i]) ? cut : messages;
+    const est = trimmed === messages ? estTokens : Math.ceil((JSON.stringify(trimmed).length + JSON.stringify(tools).length) / 4);
+    if (fits(est) || w.source === "fallback") return { ok: true, messages: trimmed, estTokens: est };
+    return { ok: false, window: w.tokens, need: Math.ceil(est * ratio) };
+  }
+
+  private tokenRatio(sessionId: string): number | undefined {
+    if (!this.ratios.has(sessionId)) {
+      this.ratios.set(sessionId, ratioFromEvents(this.d.journal.events(sessionId, { types: ["model.request", "usage.recorded"] })) ?? null);
+      if (this.ratios.size > 500) this.ratios.delete(this.ratios.keys().next().value!);
+    }
+    return this.ratios.get(sessionId) ?? undefined;
+  }
 
   // ---- public API ----
 
@@ -479,6 +519,7 @@ export class Agent {
     if (trace) this.sendSnapshot(inspectors, trace, { sessionId, turnId, stepId, messages, tools, route: routes[0], speaker });
     else this.lastPrompt.clear();
     const messagesHash = createHash("sha256").update(JSON.stringify(messages)).digest("hex").slice(0, 16);
+    const estTokens = Math.ceil((JSON.stringify(messages).length + JSON.stringify(tools).length) / 4);
     let lastError: WireError | undefined;
 
     for (const [i, route] of routes.entries()) {
@@ -487,10 +528,25 @@ export class Agent {
       const model = slash > 0 ? route.slice(slash + 1) : "";
       const prov = this.d.config.providers[providerId];
       const plugin = prov ? this.d.host.providerFor(prov.protocol) : undefined;
+      // A fallback route may have a smaller window than the primary model the prompt was built for: trim old tool
+      // results for this request only, or skip the route. The primary request and the stored history are untouched.
+      let request = { messages, estTokens, messagesHash, trimmed: false };
+      if (i > 0 && prov && plugin && model) {
+        const fit = this.fitWindow(sessionId, route, messages, tools, estTokens);
+        if (!fit.ok) {
+          lastError = { code: "window_too_small", message: `route ${route}: the prompt (~${fit.need} tokens) does not fit its ${fit.window}-token context window, even with old tool results trimmed` };
+          const next = routes[i + 1];
+          if (next) this.record({ sessionId, turnId, stepId, type: "model.fallback", actor: SYSTEM, data: { from: route, to: next, reason: "window_too_small", window: fit.window, need: fit.need } });
+          continue;
+        }
+        if (fit.messages !== messages) {
+          request = { messages: fit.messages, estTokens: fit.estTokens, messagesHash: createHash("sha256").update(JSON.stringify(fit.messages)).digest("hex").slice(0, 16), trimmed: true };
+        }
+      }
       if (!prov || !plugin || !model) {
         lastError = { code: "provider_missing", message: `route ${route}: ${!prov ? "provider not in config" : !model ? "no model id" : `no plugin for protocol ${prov.protocol}`}` };
       } else {
-        this.record({ sessionId, turnId, stepId, type: "model.request", actor: SYSTEM, data: { route: i === 0 ? "default" : `fallback.${i - 1}`, provider: providerId, model, messagesHash } });
+        this.record({ sessionId, turnId, stepId, type: "model.request", actor: SYSTEM, data: { route: i === 0 ? "default" : `fallback.${i - 1}`, provider: providerId, model, messagesHash: request.messagesHash, estTokens: request.estTokens, ...(request.trimmed ? { trimmedForWindow: true } : {}) } });
         try {
           let text = "";
           const toolCalls: ToolCallRef[] = [];
@@ -503,7 +559,7 @@ export class Agent {
             {
               endpoint: strip({ baseUrl: prov.baseUrl, apiKey, headers: prov.headers, options: prov.options }),
               model,
-              messages,
+              messages: request.messages,
               tools,
               maxOutputTokens: this.d.config.models.maxOutputTokens,
               cacheKey: `sinty-${createHash("sha256").update(sessionId).digest("hex").slice(0, 24)}`,
@@ -525,6 +581,8 @@ export class Agent {
           }
           this.record({ sessionId, turnId, stepId, type: "model.response", actor: AGENT, data: strip({ text: text || undefined, toolCalls, stopReason, usage }) });
           this.record({ sessionId, turnId, stepId, type: "usage.recorded", actor: SYSTEM, data: usage });
+          const ratio = tokenRatio(request.estTokens, usage.inputTokens);
+          if (ratio) this.ratios.set(sessionId, ratio);
           for (const c of toolCalls) this.record({ sessionId, turnId, stepId, type: "tool.call.requested", actor: AGENT, data: c });
           return;
         } catch (e) {
@@ -716,7 +774,11 @@ export class Agent {
       const { route, speaker, ...rest } = s;
       const persona = speaker?.persona.trim() ? { source: "agent" as const, agentName: speaker.name } : { source: "global" as const, ...(speaker ? { agentName: speaker.name } : {}) };
       const previous = this.lastPrompt.get(s.sessionId);
-      const snapshot = buildSnapshot(trace, { ...rest, step, agentId: speaker?.id ?? this.d.config.agent.name, persona, ...(route ? { route } : {}), ...(previous ? { previous } : {}) }, redact);
+      const w = this.windows.resolve(route);
+      const ratio = this.tokenRatio(s.sessionId);
+      const point = compactPoint(w.tokens, compactCap(this.d.config));
+      const window = { tokens: w.tokens, source: w.source, compactAt: point.tokens, compactBy: point.by, ...(ratio ? { ratio } : {}) };
+      const snapshot = buildSnapshot(trace, { ...rest, step, agentId: speaker?.id ?? this.d.config.agent.name, persona, ...(route ? { route } : {}), ...(previous ? { previous } : {}), window }, redact);
       this.lastPrompt.delete(s.sessionId);
       this.lastPrompt.set(s.sessionId, { keys: s.messages.map((m) => JSON.stringify(withoutHint(m))), tools: JSON.stringify(s.tools), cached: s.messages.findLastIndex((m) => m.cacheHint) + 1 });
       if (this.lastPrompt.size > 200) this.lastPrompt.delete(this.lastPrompt.keys().next().value!);
@@ -854,6 +916,8 @@ export class Agent {
       signal,
       toMessages: (evs) => eventsToMessages(evs, this.d.paths.data),
       summarize: (previous, head, inner) => this.summarize(sessionId, previous, head, inner),
+      window: this.contextWindow(sessionId).tokens,
+      tokenRatio: this.tokenRatio(sessionId),
     });
   }
 

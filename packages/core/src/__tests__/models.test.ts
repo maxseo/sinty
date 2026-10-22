@@ -86,6 +86,12 @@ test("model gateway: routes resolve default, cheap and embed", async () => {
 test("provider-openai-compat: embed() posts to /embeddings and keeps input order", async () => {
   const bodies: Record<string, unknown>[] = [];
   const server: Server = createServer((req, res) => {
+    // The core asks GET /models once on start for context windows (context-window.ts); these servers list none.
+    if (req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"data":[]}');
+      return;
+    }
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {

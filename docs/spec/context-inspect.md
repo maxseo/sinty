@@ -49,7 +49,9 @@ plugin.
   2. After the step id is assigned, and before the provider is called, the agent builds a snapshot and sends it to
      each inspector over IPC.
   3. Delivery is fire-and-forget. A failing snapshot is logged and never fails the turn.
-  4. Model fallbacks within one step reuse the same snapshot, because the messages do not change.
+  4. Model fallbacks within one step reuse the same snapshot. The messages are the same, except when a fallback with
+     a smaller window got old tool results trimmed (`model.request.trimmedForWindow`); the snapshot shows the primary
+     prompt.
 
 ## Snapshot (`ContextSnapshot`, version 1)
 
@@ -69,6 +71,7 @@ plugin.
 | `memory.hooks[]` | processor hooks that ran: `onTurnStart` (queries), `afterRecall` (record ids before/after), `beforeContext` (block ids before/after); `ms`, `ok`, `changed` |
 | `contexts[]` | plugin context contributors (`ctx.context`): `ms`, `ok`, `error?`, tokens before/after, added and removed messages (content cut at 4000 chars), `reordered?` (the contributor changed earlier messages; the core kept the input and only its appended messages) |
 | `cache?` | prompt-cache view: `hints[]` (`index`, `hint`), `cacheable` (messages and estimated tokens up to the last hint, tools included) and `reused` (leading messages identical to the previous step of the session in this process, their tokens, `toolsSame`, `divergedAt?` when an earlier message changed). See "Prompt caching" in `protocol.md` |
+| `window?` | the step model's context window: `tokens`, `source` (`config` = `memory.contextTokens`, `route` = `models.contextWindows`, `provider` = the provider's model list, `table` = `KNOWN_CONTEXT_WINDOWS`, `fallback` = 128000), `compactAt` (the dialogue is folded from there: min(65% of the window, `memory.compactCapTokens`)), `compactBy?` (`window` or `cap`: which of the two applies) and `ratio?` (provider tokens per chars/4 estimate token in this chat, from the previous step). The tab draws it as a ring: fill = the step's real `usage.inputTokens` once known, else `tokens.total × ratio`; the tick marks `compactAt`, labelled «65% окна» or «потолок N» |
 | `redactions` | number of strings in which a secret was masked |
 
 Kinds of parts:

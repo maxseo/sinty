@@ -232,7 +232,8 @@ export function createApp(sinty: Sinty): Hono {
         ? [{ route: sinty.config.models.default, enabled: true }]
         : [];
     return c.json({
-      models: catalog,
+      // contextWindow: { tokens, source } as compaction sees it for that route (see context-window.ts).
+      models: catalog.map((m) => ({ ...m, contextWindow: sinty.windows.resolve(m.route) })),
       providers: Object.entries(sinty.config.providers).map(([id, p]) => ({
         id,
         protocol: p.protocol,
@@ -247,7 +248,8 @@ export function createApp(sinty: Sinty): Hono {
       models?: { route?: string; enabled?: boolean }[];
       providers?: { id?: string; baseUrl?: string; apiKey?: string; protocol?: string; remove?: boolean }[];
     };
-    const models = (body.models ?? []).filter((m): m is { route: string; enabled: boolean } => typeof m.route === "string" && typeof m.enabled === "boolean");
+    // Only route and enabled are stored: GET also sends contextWindow, which a client may hand back.
+    const models = (body.models ?? []).filter((m): m is { route: string; enabled: boolean } => typeof m.route === "string" && typeof m.enabled === "boolean").map((m) => ({ route: m.route, enabled: m.enabled }));
     const providers = (body.providers ?? []).filter((p): p is { id: string; baseUrl?: string; apiKey?: string; protocol?: string; remove?: boolean } => typeof p.id === "string");
     try {
       saveModelCatalog(sinty.paths, models, providers, sinty.config.providers);
@@ -260,6 +262,8 @@ export function createApp(sinty: Sinty): Hono {
     const next = loadConfig(sinty.paths);
     sinty.config.providers = next.providers;
     sinty.config.models = next.models;
+    // A provider that just got a key or a new base URL may now answer its model list.
+    sinty.windows.reset();
     return c.json({ ok: true });
   });
 
@@ -462,7 +466,12 @@ export function createApp(sinty: Sinty): Hono {
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
     }
-    if (c.req.param("id") === "supervisor") {
+    if (c.req.param("id") === "memory") {
+      // Live: the next compaction check and context snapshot read it.
+      const cap = saved.config.memory.compactCapTokens;
+      if (cap === undefined) delete sinty.config.memory.compactCapTokens;
+      else sinty.config.memory.compactCapTokens = cap;
+    } else if (c.req.param("id") === "supervisor") {
       // Live: the agent reads config.supervisor on every step; the supervisor process gets the new limits now.
       sinty.config.supervisor = saved.config.supervisor;
       sinty.supervisor?.setSettings(sinty.supervisorSettings());

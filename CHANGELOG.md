@@ -16,6 +16,22 @@ All notable changes to this project are documented here. The format follows
   streams with it end with `event: auth.revoked`. `sinty token` prints the current token (the Web UI sign-in screen
   already pointed to this command, which did not exist). Refused with `409` for a literal `server.token` or a
   `SINTY_SECRET_API_TOKEN` override.
+- Context window per model: `memory.contextTokens: auto` (new default) takes the chat model's window from
+  `models.contextWindows["provider/model"]`, the provider's model list (`listModels()`, new `provider.list` host
+  message; Anthropic `max_input_tokens`, OpenRouter/Groq/vLLM fields; cached in `data/context-windows.json`), or a
+  sourced table (DeepSeek V4 1M, OpenAI gpt-4.1/gpt-4o/gpt-5), else 128000. A number still overrides it. Compaction
+  scales its estimate by the provider's real prompt size of the previous step (`model.request.estTokens` vs
+  `usage.inputTokens`). `GET /v1/models` reports `contextWindow` per route; `sinty doctor` prints it.
+- Compaction cap: the dialogue is folded at min(65% of the window, `memory.compactCapTokens`), default 150000
+  (`0` or `null`: no cap). Settings section **Память и контекст** edits it live; the snapshot's `window.compactBy`
+  and the Контекст ring say which threshold applies.
+- Fallback window check: before a fallback route is tried, its context window is resolved; a prompt that does not
+  fit gets old tool results trimmed for that request only (`model.request.trimmedForWindow`), and a route that is
+  still too small is skipped with `model.fallback` reason `window_too_small` (`window`, `need`). The primary request
+  and the stored history are unchanged.
+- Контекст tab: a ring with the model's window, how full the step's prompt is (real usage once known) and a tick
+  where the dialogue is folded. Snapshot field `window`.
+- SDK: `ModelInfo`, `openAIModelList()`; provider-anthropic implements `listModels()`.
 - Plugin `skills` with the skills catalog and `skill.read`, `skill.files`, `skill.read_file`, `skill.write_file`,
   `skill.edit`, `skill.write` (moved out of the core; same names, descriptions, input schemas, error codes and
   hints; `skill.*` names reserved for it). On by default: `plugins.disabled: [skills]` or unticking it in Settings
@@ -116,6 +132,8 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- Compaction folds at 65% of the chat model's context window (was always `memory.contextTokens`, default 128000).
+  For a 1M-window model long chats keep far more history; set `memory.contextTokens: 128000` for the old behaviour.
 - The skills catalog is now a system section of the `skills` plugin. The prompt is byte-identical (same text, place
   and `static` hint); context snapshots label it `source: skills`, `id: skills/catalog`. With the plugin off, or
   excluded for an agent, there is no catalog and the system prompt carries the `static` hint.

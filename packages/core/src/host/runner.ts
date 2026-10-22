@@ -309,6 +309,7 @@ async function init(msg: InitMessage): Promise<void> {
     tools: toolInfos,
     providers: [...providers.keys()],
     embedders: [...providers.values()].filter((p) => typeof p.embed === "function").map((p) => p.protocol),
+    listers: [...providers.values()].filter((p) => typeof p.listModels === "function").map((p) => p.protocol),
     memory: {
       providers: [...memoryProviders.keys()],
       processors: [...memoryProcessors.values()].map((p) => ({
@@ -480,6 +481,17 @@ process.on("message", (raw: ToChild) => {
         .finally(() => running.delete(raw.id));
       break;
     }
+    case "provider.list": {
+      const p = providers.get(raw.protocol);
+      if (!p?.listModels) {
+        send({ t: "provider.listed", id: raw.id, ok: false, error: { code: "list_unsupported", message: `protocol ${raw.protocol} has no listModels()` } });
+        break;
+      }
+      p.listModels(raw.endpoint)
+        .then((value) => send({ t: "provider.listed", id: raw.id, ok: true, value: (Array.isArray(value) ? value : []).map(cleanModel).filter((m) => m.id) }))
+        .catch((e: unknown) => send({ t: "provider.listed", id: raw.id, ok: false, error: toWire(e) }));
+      break;
+    }
     case "memory.call":
       void callMemory(raw.id, raw.kind, raw.name, raw.method, raw.args);
       break;
@@ -497,3 +509,11 @@ process.on("message", (raw: ToChild) => {
       process.exit(0);
   }
 });
+
+/** Only the fields the host reads, with positive integer windows. */
+function cleanModel(m: { id?: unknown; contextWindow?: unknown; maxOutputTokens?: unknown }): { id: string; contextWindow?: number; maxOutputTokens?: number } {
+  const n = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
+  const contextWindow = n(m?.contextWindow);
+  const maxOutputTokens = n(m?.maxOutputTokens);
+  return { id: typeof m?.id === "string" ? m.id : "", ...(contextWindow ? { contextWindow } : {}), ...(maxOutputTokens ? { maxOutputTokens } : {}) };
+}

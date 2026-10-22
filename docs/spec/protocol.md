@@ -114,6 +114,7 @@ literal value or `SINTY_SECRET_API_TOKEN` overrides it.
 | GET | `/v1/registry` | catalog of shipped plugins and which are enabled |
 | GET | `/v1/agent` | name, default model, tools, plugins, supervisor flag |
 | GET | `/v1/plugins` | installed plugins, their tools, HTTP routes and UI path |
+| GET | `/v1/models` | model catalog (`route`, `enabled`, `contextWindow { tokens, source, route? }` as compaction sees it) and providers (`hasKey`, never the key) |
 | POST | `/v1/sessions` | create `{ title?, projectId?, metadata? }` |
 | GET | `/v1/sessions` | list with `activeTurn` |
 | GET | `/v1/sessions/:id` | session plus `pending` (approvals / ask_human / supervisor / budget) |

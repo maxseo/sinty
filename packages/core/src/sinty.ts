@@ -10,6 +10,7 @@ import { newId } from "./ids.js";
 import { Journal } from "./journal.js";
 import { MemoryRouter } from "./memory-router.js";
 import { ModelGateway } from "./models.js";
+import { ContextWindows } from "./context-window.js";
 import { PatchManager } from "./patches.js";
 import { createAgentBridge } from "./plugin-bridge.js";
 import { checkIntegrity, installLooksStrictUnsafe } from "./integrity.js";
@@ -77,6 +78,7 @@ export class Sinty {
   readonly agent: Agent;
   readonly memory: MemoryRouter;
   readonly models: ModelGateway;
+  readonly windows: ContextWindows;
   private readonly log: LogFn;
 
   constructor(opts: SintyOptions = {}) {
@@ -138,6 +140,7 @@ export class Sinty {
         )
       : undefined;
 
+    this.windows = new ContextWindows({ dataDir: this.paths.data, config: this.config, host: this.host, secrets: this.secrets, log: this.log });
     this.memory = new MemoryRouter({
       dataDir: this.paths.data,
       config: this.config,
@@ -163,6 +166,7 @@ export class Sinty {
       bus: this.bus,
       patches: this.patches,
       ...(this.supervisor ? { supervisor: this.supervisor } : {}),
+      windows: this.windows,
       log: this.log,
     });
   }
@@ -204,6 +208,7 @@ export class Sinty {
       await this.supervisor.start();
     }
     this.memory.kick();
+    this.windows.warm();
     const resumedTurns = this.agent.resumeAll();
     return { failedPlugins: failed, resumedTurns };
   }

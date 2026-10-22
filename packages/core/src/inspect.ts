@@ -161,6 +161,7 @@ export interface SnapshotInput {
   tools: ToolSchema[];
   /** The previous step's prompt of this session (this process only), for `cache.reused`. */
   previous?: PreviousPrompt;
+  window?: ContextSnapshot["window"];
 }
 
 /** What the agent keeps of the last prompt per session while an inspector runs. */
@@ -239,6 +240,7 @@ export function buildSnapshot(trace: ContextTrace, input: SnapshotInput, redact:
     },
     contexts: trace.contexts,
     cache: cacheInfo(input.messages, input.tools, input.previous),
+    ...(input.window ? { window: input.window } : {}),
     redactions: 0,
   };
   // Inline images are replaced by their size: they are not text the inspector can show, and can be megabytes per step.

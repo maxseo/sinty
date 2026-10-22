@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseDocument } from "yaml";
 import type { SettingsField, SettingsSection, SettingsSectionManifest } from "@sinty/sdk";
 import { effectiveBudget, loadConfig, type SintyConfig, type SintyPolicy } from "./config.js";
+import { DEFAULT_COMPACT_CAP } from "./context-window.js";
 import type { SintyPaths } from "./paths.js";
 
 const BUDGET = "Бюджет хода";
@@ -56,6 +57,26 @@ export const SUPERVISOR_SECTION: SettingsSectionManifest = {
   ],
 };
 
+/** The core's memory section over config.yaml `memory:` (only the keys listed here). */
+export const MEMORY_SECTION: SettingsSectionManifest = {
+  title: "Память и контекст",
+  description: "Когда длинный диалог сворачивается в сводку. Значения хранятся в config.yaml в разделе memory и действуют сразу.",
+  fields: [
+    {
+      key: "compactCapTokens",
+      label: "Потолок сводки, токенов",
+      type: "number",
+      min: 0,
+      step: 10000,
+      integer: true,
+      optional: true,
+      unit: "ток.",
+      help:
+        "Диалог сворачивается в сводку при 65% окна модели или при этом числе токенов — что наступит раньше. У моделей с окном 1M без потолка сводка была бы только на 650 тыс. токенов, и каждый шаг заново отправлял бы весь этот контекст. Пусто — 150000, 0 — без потолка (только 65% окна). Какой порог действует, видно на кольце во вкладке «Контекст».",
+    },
+  ],
+};
+
 interface SectionDef {
   manifest: SettingsSectionManifest;
   owner: "core" | "plugin";
@@ -102,6 +123,14 @@ function defs(src: SectionSources): Map<string, SectionDef> {
       loopBlockAfter: src.config.supervisor.loopThreshold + 2,
       "budget.count": budget.count,
     },
+    restart: false,
+  });
+  out.set("memory", {
+    manifest: MEMORY_SECTION,
+    owner: "core",
+    path: ["memory"],
+    current: src.config.memory as unknown as Record<string, unknown>,
+    defaults: { compactCapTokens: DEFAULT_COMPACT_CAP },
     restart: false,
   });
   for (const p of src.plugins) {
