@@ -143,7 +143,7 @@ test("context window: the inspector snapshot carries the window, its source and 
     await talk(sinty, 2);
     const file = join(home, "data", "inspect-test", "snapshots.jsonl");
     const snaps = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l) as ContextSnapshot);
-    assert.deepEqual(snaps[0]!.window, { tokens: 200000, source: "provider", compactAt: 130000 });
+    assert.deepEqual(snaps[0]!.window, { tokens: 200000, source: "provider", compactAt: 130000, compactBy: "window" });
     assert.equal(snaps.at(-1)!.window!.ratio, 1.3, "from the second step on, the ratio of the previous step");
   } finally {
     await sinty.stop();

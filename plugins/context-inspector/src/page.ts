@@ -299,7 +299,9 @@ tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:1
     var NS = "http://www.w3.org/2000/svg", R = 24, C = 2 * Math.PI * R;
     function svg(tag, attrs) { var n = document.createElementNS(NS, tag); for (var k in attrs) n.setAttribute(k, String(attrs[k])); return n; }
     var g = svg("svg", { width: 60, height: 60, viewBox: "0 0 60 60", role: "img" });
-    g.appendChild(svg("title", {})).textContent = "заполнено " + pct(used, w.tokens) + ", сводка с " + pct(w.compactAt, w.tokens);
+    var byCap = w.compactBy === "cap";
+    var markLabel = byCap ? "потолок " + fmt(w.compactAt) : "65% окна";
+    g.appendChild(svg("title", {})).textContent = "заполнено " + pct(used, w.tokens) + ", сводка с " + pct(w.compactAt, w.tokens) + " (" + markLabel + ")";
     g.appendChild(svg("circle", { cx: 30, cy: 30, r: R, fill: "none", stroke: "var(--line)", "stroke-width": 7 }));
     if (frac > 0) g.appendChild(svg("circle", { cx: 30, cy: 30, r: R, fill: "none", stroke: frac >= mark ? "var(--warn)" : "var(--accent)", "stroke-width": 7, "stroke-dasharray": (Math.max(0.005, frac) * C).toFixed(2) + " " + C.toFixed(2), transform: "rotate(-90 30 30)", "stroke-linecap": frac < 1 ? "round" : "butt" }));
     var a = 2 * Math.PI * mark - Math.PI / 2;
@@ -307,12 +309,12 @@ tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:1
     var t = svg("text", { x: 30, y: 34, "text-anchor": "middle", class: "pct" });
     t.textContent = used / w.tokens < 0.01 && used > 0 ? "<1%" : pct(used, w.tokens);
     g.appendChild(t);
-    return el("div", { class: "card win", title: "Окно модели " + w.tokens + " ток. (" + (SOURCES[w.source] || w.source) + "). Сводка диалога — при " + w.compactAt + " ток. диалога (65%)." }, [
+    return el("div", { class: "card win", title: "Окно модели " + w.tokens + " ток. (" + (SOURCES[w.source] || w.source) + "). Сводка диалога — при " + w.compactAt + " ток. диалога (" + (byCap ? "потолок memory.compactCapTokens, он меньше 65% окна" : "65% окна") + ")." }, [
       g,
       el("div", {}, [
         el("b", { text: fmt(w.tokens) }),
         el("span", { text: "окно модели · " + (SOURCES[w.source] || w.source) }),
-        el("div", { class: "muted", style: "font-size:11px", text: (fact ? "факт " : "оценка ") + fmt(used) + (!fact && w.ratio ? " (×" + w.ratio + ")" : "") + " · сводка с " + fmt(w.compactAt) }),
+        el("div", { class: "muted", style: "font-size:11px", text: (fact ? "факт " : "оценка ") + fmt(used) + (!fact && w.ratio ? " (×" + w.ratio + ")" : "") + " · сводка с " + fmt(w.compactAt) + " (" + markLabel + ")" }),
       ]),
     ]);
   }

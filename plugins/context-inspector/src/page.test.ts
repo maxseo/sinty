@@ -219,6 +219,7 @@ test("session tab page: the model's context window with a fill ring and the fold
   let text = p.els.main!.textContent;
   assert.match(text, /1Mокно модели · по таблице Sinty/);
   assert.match(text, /оценка 130\.0k \(×1\.3\) · сводка с 650\.0k/);
+  assert.match(text, /сводка с 650\.0k \(65% окна\)/, "which threshold applies");
   const pct = p.els.main!.find((e) => e.tag === "text")[0]!;
   assert.equal(pct.textContent, "13%");
   const arcs = p.els.main!.find((e) => e.tag === "circle");
@@ -237,6 +238,17 @@ test("session tab page: the model's context window with a fill ring and the fold
   assert.match(text, /факт 96\.0k · сводка с 83\.2k/);
   assert.equal(p.els.main!.find((e) => e.tag === "text")[0]!.textContent, "75%");
   assert.equal(p.els.main!.find((e) => e.tag === "circle")[1]!.attrs.stroke, "var(--warn)");
+
+  // memory.compactCapTokens below 65% of the window: the mark moves to the cap and says so.
+  p.els.steps!.find((e) => e.tag === "button")[0]!.click();
+  p.answer(/^\/snapshots\/w1$/, { ...base, window: { tokens: 1000000, source: "table", compactAt: 150000, compactBy: "cap", ratio: 1.3 } });
+  await p.flush();
+  text = p.els.main!.textContent;
+  assert.match(text, /сводка с 150\.0k \(потолок 150\.0k\)/);
+  assert.equal(p.els.main!.find((e) => e.tag === "circle")[1]!.attrs.stroke, "var(--accent)", "13% is under the 15% cap mark");
+  const capMark = p.els.main!.find((e) => e.tag === "line")[0]!;
+  assert.ok(Number(capMark.attrs.x1) > 30 && Number(capMark.attrs.y1) < 30, "15% of the circle: upper right");
+  assert.match(p.els.main!.find((e) => e.tag === "title")[0]!.textContent, /\(потолок 150\.0k\)/);
 
   // Older cores send no window: no ring.
   p.els.steps!.find((e) => e.tag === "button")[0]!.click();

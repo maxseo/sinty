@@ -10,6 +10,7 @@ import { definePlugin } from "@sinty/sdk";
  * options.inputScale: usage.inputTokens = the core's chars/4 estimate × this (default: always 10).
  * options.models: the listModels() answer (context windows); without it listModels() fails.
  * options.embed: when true the provider also answers embeddings with a tiny bag-of-letters vector.
+ * options.fail: every chat request fails (a primary route that is down), after it is recorded.
  */
 export default definePlugin({
   name: "recording-provider",
@@ -37,6 +38,7 @@ export default definePlugin({
       async *stream(req) {
         record({ model: req.model, messages: req.messages, tools: req.tools.map((t) => t.name), maxOutputTokens: req.maxOutputTokens });
         const opts = req.endpoint.options ?? {};
+        if (opts.fail) throw new Error("provider is down");
         const only = req.messages.length === 1 ? req.messages[0] : undefined;
         if (only && only.role === "user" && only.content.includes("Reply with JSON only")) {
           // options.varySummary: each fold words its summary a little differently, like a real model does.

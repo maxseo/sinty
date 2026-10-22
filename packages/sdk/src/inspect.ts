@@ -88,6 +88,8 @@ export interface ContextWindowInfo {
   tokens: number;
   source: "config" | "route" | "provider" | "table" | "fallback";
   compactAt: number;
+  /** Which threshold sets compactAt: 65% of the window or memory.compactCapTokens. Absent from older cores. */
+  compactBy?: "window" | "cap";
   ratio?: number;
 }
 

@@ -10,6 +10,32 @@ import type { SecretStore } from "./secrets.js";
 export const FALLBACK_CONTEXT_WINDOW = 128_000;
 /** The dialogue is folded into a summary at this share of the window (memory-router.ts compact). */
 export const COMPACT_AT = 0.65;
+/**
+ * memory.compactCapTokens default: fold no later than this many real tokens of dialogue, whatever the window. A 1M
+ * window would otherwise fold at 650k, and every step of a long chat re-sends (and pays for) all of it.
+ */
+export const DEFAULT_COMPACT_CAP = 150_000;
+
+/** Where the dialogue is folded: 65% of the window or the cap, whichever comes first (real tokens). */
+export interface CompactPoint {
+  tokens: number;
+  by: "window" | "cap";
+  /** The cap in effect, when there is one. */
+  cap?: number;
+}
+
+/** memory.compactCapTokens: absent → DEFAULT_COMPACT_CAP; 0 or null → no cap. */
+export function compactCap(config: SintyConfig): number | undefined {
+  const v = config.memory.compactCapTokens;
+  if (v === undefined) return DEFAULT_COMPACT_CAP;
+  return v && v > 0 ? v : undefined;
+}
+
+export function compactPoint(window: number, cap: number | undefined): CompactPoint {
+  const atWindow = Math.floor(window * COMPACT_AT);
+  if (cap && cap < atWindow) return { tokens: cap, by: "cap", cap };
+  return { tokens: atWindow, by: "window", ...(cap ? { cap } : {}) };
+}
 
 /**
  * Input windows of models whose provider API does not report one (DeepSeek and OpenAI `/models` return ids only).

@@ -1,4 +1,4 @@
-import { COMPACT_AT, FALLBACK_CONTEXT_WINDOW } from "./context-window.js";
+import { compactCap, compactPoint, FALLBACK_CONTEXT_WINDOW } from "./context-window.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type {
@@ -593,7 +593,8 @@ export class MemoryRouter {
   // ---- compaction ----
 
   /**
-   * When history passes 65% of the window, fold the older part into a summary and keep the last 12 user turns.
+   * When history passes 65% of the window or memory.compactCapTokens, whichever is lower, fold the older part into a
+   * summary and keep the last 12 user turns.
    * onCompaction processors may produce the summary; otherwise the builtin summary call does. If both fail the
    * dialogue is trimmed to the last 12 user turns anyway, so the window is never blown.
    */
@@ -602,8 +603,10 @@ export class MemoryRouter {
     // Limits in chars/4 units: the real window divided by how much the provider's count exceeds the estimate.
     const fixed = this.d.config.memory.contextTokens;
     const ratio = input.tokenRatio && input.tokenRatio > 0 ? input.tokenRatio : 1;
-    const window = Math.floor((input.window ?? (typeof fixed === "number" ? fixed : FALLBACK_CONTEXT_WINDOW)) / ratio);
-    const limit = Math.floor(window * COMPACT_AT);
+    const real = input.window ?? (typeof fixed === "number" ? fixed : FALLBACK_CONTEXT_WINDOW);
+    const window = Math.floor(real / ratio);
+    // min(65% of the window, memory.compactCapTokens), in the same chars/4 units.
+    const limit = Math.floor(compactPoint(real, compactCap(this.d.config)).tokens / ratio);
     if (estimateTokens(dialogue) < limit) return dialogue;
     const userIdx = events.map((e, i) => (e.type === "message.user" ? i : -1)).filter((i) => i >= 0);
     if (userIdx.length <= MIN_KEEP_USER_TURNS) return dialogue;

@@ -466,7 +466,12 @@ export function createApp(sinty: Sinty): Hono {
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
     }
-    if (c.req.param("id") === "supervisor") {
+    if (c.req.param("id") === "memory") {
+      // Live: the next compaction check and context snapshot read it.
+      const cap = saved.config.memory.compactCapTokens;
+      if (cap === undefined) delete sinty.config.memory.compactCapTokens;
+      else sinty.config.memory.compactCapTokens = cap;
+    } else if (c.req.param("id") === "supervisor") {
       // Live: the agent reads config.supervisor on every step; the supervisor process gets the new limits now.
       sinty.config.supervisor = saved.config.supervisor;
       sinty.supervisor?.setSettings(sinty.supervisorSettings());

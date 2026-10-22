@@ -50,10 +50,16 @@ export interface EventDataMap {
   "message.channel": { channel: string; direction: "in" | "out"; externalId?: string; text: string };
 
   /** `estTokens`: the core's chars/4 estimate of this prompt (messages + tool schemas), compared with usage.inputTokens. */
-  "model.request": { route: string; provider: string; model: string; messagesHash: string; estTokens?: number };
+  /** `trimmedForWindow`: a fallback route with a smaller window got this request with old tool results cut. */
+  "model.request": { route: string; provider: string; model: string; messagesHash: string; estTokens?: number; trimmedForWindow?: boolean };
   "model.delta": { text?: string; reasoning?: string };
   "model.response": { text?: string; toolCalls: ToolCallRef[]; stopReason: string; usage: Usage };
-  "model.fallback": { from: string; to: string; reason: string };
+  /**
+   * The next route is tried. `reason` is the error of `from`, or `window_too_small` when `from` (a fallback) was
+   * skipped because the prompt (`need` tokens, real-usage scaled) does not fit its `window` even with old tool
+   * results trimmed.
+   */
+  "model.fallback": { from: string; to: string; reason: string; window?: number; need?: number };
 
   "tool.call.requested": ToolCallRef;
   "tool.call.approval_requested": { callId: string; tool: string; args: unknown; reason: string };

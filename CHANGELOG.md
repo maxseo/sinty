@@ -22,6 +22,13 @@ All notable changes to this project are documented here. The format follows
   sourced table (DeepSeek V4 1M, OpenAI gpt-4.1/gpt-4o/gpt-5), else 128000. A number still overrides it. Compaction
   scales its estimate by the provider's real prompt size of the previous step (`model.request.estTokens` vs
   `usage.inputTokens`). `GET /v1/models` reports `contextWindow` per route; `sinty doctor` prints it.
+- Compaction cap: the dialogue is folded at min(65% of the window, `memory.compactCapTokens`), default 150000
+  (`0` or `null`: no cap). Settings section **Память и контекст** edits it live; the snapshot's `window.compactBy`
+  and the Контекст ring say which threshold applies.
+- Fallback window check: before a fallback route is tried, its context window is resolved; a prompt that does not
+  fit gets old tool results trimmed for that request only (`model.request.trimmedForWindow`), and a route that is
+  still too small is skipped with `model.fallback` reason `window_too_small` (`window`, `need`). The primary request
+  and the stored history are unchanged.
 - Контекст tab: a ring with the model's window, how full the step's prompt is (real usage once known) and a tick
   where the dialogue is folded. Snapshot field `window`.
 - SDK: `ModelInfo`, `openAIModelList()`; provider-anthropic implements `listModels()`.
