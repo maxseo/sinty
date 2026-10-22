@@ -101,6 +101,13 @@ to the cache (Anthropic). Tests: `packages/core/src/__tests__/prompt-cache.test.
 
 Base path `/v1`. Auth: `Authorization: Bearer <token>` (or `?token=` on GET, stripped before a plugin sees the request). One token today; finer scopes are in the [backlog](../backlog.md).
 
+The token is the secret `api.token` (`server.token: secret://api.token`) and is checked on every request, so a
+rotation applies without a restart. `POST /v1/auth/rotate`, `sinty token rotate` or Settings → Основные → «Сменить
+токен входа» replace it: the old token gets `401` at once, an open core SSE stream (`/v1/stream`,
+`/v1/sessions/:id/stream`) sends `event: auth.revoked` and ends (at the latest on its next 15 s ping when the
+rotation came from another process). Rotation answers `409` (`token_literal`, `token_env`) when `server.token` is a
+literal value or `SINTY_SECRET_API_TOKEN` overrides it.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/v1/health` | liveness and protocol version |
@@ -121,6 +128,7 @@ Base path `/v1`. Auth: `Authorization: Bearer <token>` (or `?token=` on GET, str
 | GET | `/v1/settings/sections` | settings sections: the core's `supervisor` and plugins' manifest `settings` (`plugin.<name>`), with fields, values and defaults |
 | PUT | `/v1/settings/sections/:id` | `{ values: { "<field key>": value \| null } }`: validates, writes `config.yaml` (comments kept); the supervisor section applies live, plugin sections after a restart |
 | GET | `/v1/stream` | SSE of lifecycle events of all sessions (lists, badges, boards) |
+| POST | `/v1/auth/rotate` | new login token `{ token }` (`cache-control: no-store`); the old one stops working at once |
 | GET | `/` | redirect to `/ui/<server.ui>/` |
 | GET | `/ui/:plugin/*` | static UI of a **non-editable** plugin |
 | * | `/p/:plugin/*` | HTTP routes the plugin registered; public routes skip the token |

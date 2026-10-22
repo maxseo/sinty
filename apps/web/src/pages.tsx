@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { api } from "./api.js";
+import { api, rotateToken, token } from "./api.js";
 import { go } from "./route.js";
 import { SectionPane } from "./supervisor-ui.js";
 
@@ -277,6 +277,48 @@ function GeneralPane() {
       <label class="set-row">Enter, пока агент занят
         <select value={prefs.enter} onChange={(e) => set({ enter: e.currentTarget.value })}><option value="queue">В очередь</option><option value="interrupt">Прервать</option></select>
       </label>
+      <TokenRow />
+    </div>
+  );
+}
+
+/** Login token rotation. The token itself is never shown: this tab keeps the new one, the link can be copied. */
+function TokenRow() {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [rotated, setRotated] = useState(false);
+  const rotate = async (): Promise<void> => {
+    if (!confirm("Сменить токен входа? Старый перестанет работать сразу: другие вкладки, устройства и скрипты попросят войти заново.")) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await rotateToken();
+      setRotated(true);
+      setNotice("Токен сменён. Эта вкладка уже использует новый.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copyLink = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(`${location.origin}${location.pathname}#token=${encodeURIComponent(token.get())}`);
+      setNotice("Ссылка для входа скопирована. В ней токен: не отправляйте её посторонним.");
+    } catch {
+      setError("Не удалось скопировать. Новую ссылку покажет `sinty web`.");
+    }
+  };
+  return (
+    <div class="set-row">Токен входа<span class="small muted">Если ссылка или токен могли попасть к посторонним</span>
+      <div class="row">
+        <button type="button" class="secondary" disabled={busy} onClick={() => void rotate()}>{busy ? "Меняю…" : "Сменить токен входа"}</button>
+        {rotated && <button type="button" class="ghost" onClick={() => void copyLink()}>Скопировать ссылку входа</button>}
+      </div>
+      {notice && <p class="small">{notice}</p>}
+      {error && <p class="error">{error}</p>}
     </div>
   );
 }

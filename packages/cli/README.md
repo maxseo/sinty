@@ -11,6 +11,7 @@ Milestone M1.
 | `sinty connect <url> --token <t>` | register this agent with an external system |
 | `sinty mcp` | run as an MCP server over stdio |
 | `sinty secret set\|list\|rm <name>` | manage the encrypted secret store |
+| `sinty token [rotate [--print]]` | print the login token, or replace it (the old one stops working at once) |
 | `sinty plugin add\|list\|disable <name>` | manage plugins |
 | `sinty service install` | systemd / launchd / Windows service |
 | `sinty upgrade` | update the core, verify integrity |

@@ -1,5 +1,6 @@
 export { Agent, AgentError, eventsToMessages, fromWire, toWire } from "./agent.js";
 export { createApp, startServer } from "./api/server.js";
+export { apiTokenSecretName, newApiToken, rotateApiToken, TokenRotationError } from "./api-token.js";
 export { Bus, type BusMessage, type StreamOnlyEvent } from "./bus.js";
 export { loadConfig, loadPolicy, type SintyConfig, type SintyPolicy } from "./config.js";
 export { PluginHost, PluginProcess } from "./host/host.js";

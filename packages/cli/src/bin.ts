@@ -9,7 +9,7 @@ process.removeAllListeners("warning");
 process.on("warning", (w) => {
   if (!(w.name === "ExperimentalWarning" && /SQLite/.test(w.message))) console.warn(w);
 });
-const { evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, SecretStore, Sinty, startServer } = await import("@sinty/core");
+const { evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadConfig, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, rotateApiToken, SecretStore, Sinty, startServer, TokenRotationError } = await import("@sinty/core");
 
 const HELP = `sinty — thin-core AI agent
 
@@ -21,6 +21,9 @@ Usage:
                                    HTTP API and Web UI; prints a login URL with #token=
   sinty secret set <name> [value]  value from stdin when omitted
   sinty secret list | rm <name>
+  sinty token                      print the login token (for scripts: Authorization: Bearer …)
+  sinty token rotate [--print]     new login token; the old one stops working at once, also in a
+                                   running server; --print writes the new token to stdout
   sinty doctor                     check config, secrets, plugins and install integrity
   sinty upgrade --from <dir>      replace this install with a tree whose integrity.json matches
   sinty version
@@ -51,6 +54,7 @@ const { values, positionals } = parseArgs({
     limit: { type: "string" },
     json: { type: "boolean" },
     "dry-run": { type: "boolean" },
+    print: { type: "boolean" },
     batch: { type: "string" },
   },
 });
@@ -76,6 +80,8 @@ async function main(): Promise<number> {
       return serveCmd();
     case "secret":
       return secret(rest);
+    case "token":
+      return tokenCmd(rest);
     case "doctor":
       return doctor();
     case "upgrade":
@@ -241,6 +247,41 @@ async function secret(args: string[]): Promise<number> {
     return 0;
   }
   console.error("usage: sinty secret set <name> [value] | list | rm <name>");
+  return 2;
+}
+
+function tokenCmd(args: string[]): number {
+  const paths = resolvePaths(values.home);
+  const config = loadConfig(paths);
+  const store = new SecretStore(paths);
+  const [sub] = args;
+  if (sub === undefined) {
+    const t = store.resolve(config.server.token);
+    if (!t) {
+      console.error("no login token: run sinty init");
+      return 1;
+    }
+    console.log(t);
+    return 0;
+  }
+  if (sub === "rotate") {
+    try {
+      const t = rotateApiToken(store, config);
+      if (values.print) console.log(t);
+      console.error(
+        "login token rotated: the old one no longer works; open Sinty again with the link from `sinty web`" +
+          (values.print ? "" : " (or print the new token with `sinty token`)"),
+      );
+      return 0;
+    } catch (e) {
+      if (e instanceof TokenRotationError) {
+        console.error(`cannot rotate: ${e.message}. ${e.hint}`);
+        return 1;
+      }
+      throw e;
+    }
+  }
+  console.error("usage: sinty token [rotate [--print]]");
   return 2;
 }
 
