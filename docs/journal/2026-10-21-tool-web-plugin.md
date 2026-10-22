@@ -2,8 +2,9 @@
 
 - Date: 2026-10-21
 - Area: packages/core (netguard, host, runner, protocol, config, coretools, agent), packages/sdk, schemas, plugins/tool-web, registry
-- Plan step: 7, part 1 (`/workspace/sinty-memory-plan.md` section 10: "Web — вынести в плагин tool-web")
+- Plan step: 7, part 1 ([plan](../plan.md) section 4, from the original plan's section 10: "Web — вынести в плагин tool-web")
 - Commits: `feat(tool-web): move web tools into a plugin, SSRF guard as a core service`
+- PR: [#8](https://github.com/maxseo/sinty/pull/8) (merge `06dd3da`)
 
 ## What and why
 

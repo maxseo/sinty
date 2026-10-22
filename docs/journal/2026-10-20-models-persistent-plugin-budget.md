@@ -4,6 +4,7 @@
 - Area: packages/core (models.ts, journal.ts, sinty.ts)
 - Plan step: follow-up to memory plan step 3 (ModelGateway); known limitation "plugin token budget resets on restart"
 - Commits: `feat(models): keep plugin token usage per UTC day in journal.db`
+- PR: [#3](https://github.com/maxseo/sinty/pull/3) (merge `6d65de2`)
 
 ## What and why
 
@@ -43,6 +44,10 @@ store keeps the old behaviour.
   without a `sessionId` are only logged, not journaled.
 - The check is the same as before: refuse when today's usage has already reached the limit. One call can still go
   past the limit by its own size.
+
+## Rejected alternatives
+
+Not recorded when the change was made (noted in the 2026-10-22 docs audit, [#19](https://github.com/maxseo/sinty/pull/19)).
 
 ## Migration notes
 

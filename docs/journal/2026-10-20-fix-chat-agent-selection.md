@@ -2,8 +2,9 @@
 
 - Date: 2026-10-20
 - Area: packages/core (`Agent.speaker`, context snapshot), packages/sdk (`ContextSnapshot.persona`), apps/web (chat header), plugins/context-inspector
-- Plan step: Part 1 of the prompt-cache report (`sinty-prompt-cache-report.md`, 20.10.2026), approved by Max
+- Plan step: Part 1 of the prompt-cache report (20.10.2026; outcome in [plan](../plan.md#6-отчёт-о-кэше-промпта-2026-10-20-итог)), approved by Max
 - Commits: `fix(core): pick the chat's agent from session agentIds before the project`
+- PR: [#5](https://github.com/maxseo/sinty/pull/5) (merge `d6a4142`)
 
 ## What and why
 

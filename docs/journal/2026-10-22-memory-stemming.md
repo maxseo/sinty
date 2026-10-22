@@ -2,8 +2,9 @@
 
 - Date: 2026-10-22
 - Area: packages/core (stem.ts, memory.ts), docs
-- Plan step: queue after step 7 (`/workspace/sinty-memory-plan.md` section 12: "стемминг для recall")
+- Plan step: queue after step 7 ([plan](../plan.md) section 5: "стемминг для recall")
 - Commits: `feat(memory): stemmed full-text recall for Russian and English word forms`
+- PR: [#13](https://github.com/maxseo/sinty/pull/13) (merge `7480c7d`)
 
 ## What and why
 

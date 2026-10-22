@@ -4,6 +4,7 @@
 - Area: plugins/memory-obsidian, plugins/fact-extractor, packages/core (sinty.ts, memory-router.ts, host/manifest.ts)
 - Plan step: memory plan, step 5
 - Commits: `feat: memory step 5…`
+- PR: [#1](https://github.com/maxseo/sinty/pull/1) (merge `bb47710`)
 
 ## What and why
 

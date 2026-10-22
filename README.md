@@ -198,7 +198,8 @@ docs/           architecture, specs, integrations, roadmap
 - Specs: [events & API protocol](docs/spec/protocol.md) · [journal & recovery](docs/spec/journal.md) · [plugin manifest & patch pipeline](docs/spec/plugin-manifest.md) · [policy](docs/spec/policy.md) · [supervisor](docs/spec/supervisor.md)
 - [Integrations](docs/integrations.md)
 - [Migrating from n8n](docs/migration-from-n8n.md)
-- [Roadmap](docs/roadmap.md)
+- [Roadmap](docs/roadmap.md) · [Backlog](docs/backlog.md) · [Plan](docs/plan.md) · [Change journal](docs/journal/README.md)
+- [Project handoff: what to read first and the working rules](docs/README.md#как-подхватить-проект)
 - [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Rules for coding agents](AGENTS.md)
 
 ## Inspired by

@@ -4,6 +4,7 @@
 - Area: packages/core (memory-router.ts, memory-eval.ts, config.ts, sinty.ts), packages/cli
 - Plan step: memory plan, step 6
 - Commits: `feat: memory step 6…`
+- PR: [#1](https://github.com/maxseo/sinty/pull/1) (merge `bb47710`)
 
 ## What and why
 

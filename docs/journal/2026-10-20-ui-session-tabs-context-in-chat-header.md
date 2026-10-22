@@ -4,6 +4,7 @@
 - Area: packages/sdk (UiTab), packages/core (manifest, /v1/plugins), schemas, apps/web (chat header, bridge), plugins/context-inspector
 - Plan step: context-inspector follow-up, from Max's feedback on PR #4
 - Commits: `feat(ui): session tabs; context-inspector in the chat header`
+- PR: [#4](https://github.com/maxseo/sinty/pull/4) (merge `24ba03f`)
 - Revises: [`2026-10-20-plugin-context-inspector.md`](2026-10-20-plugin-context-inspector.md) (sidebar page with a session picker) and the `ui.tabs` part of [`2026-10-20-core-context-snapshots-ui-tabs.md`](2026-10-20-core-context-snapshots-ui-tabs.md)
 
 ## What and why

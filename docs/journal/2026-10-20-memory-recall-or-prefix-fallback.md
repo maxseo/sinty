@@ -4,6 +4,7 @@
 - Area: packages/core (memory.ts)
 - Plan step: follow-up to memory plan step 2 (builtin store behind MemoryRouter); known limitation "FTS recall is AND-only"
 - Commits: `feat(memory): recall OR/prefix fallback, journaled tool writes, sinty memory reindex` (one commit for the three memory changes, docs/spec/memory.md and CHANGELOG)
+- PR: [#3](https://github.com/maxseo/sinty/pull/3) (merge `6d65de2`)
 
 ## What and why
 

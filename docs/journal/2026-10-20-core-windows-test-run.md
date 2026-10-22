@@ -4,6 +4,7 @@
 - Area: packages/core (shell.ts, __tests__/golden.test.ts)
 - Plan step: release check before merging PR #1 (memory plan steps 0–6) and PR #2 (afterTurn drain)
 - Commits: `a807ee9 fix(core): Windows test fixes — golden path normalization and ShellBox.exe lookup in a source checkout`; this entry: `docs(journal): Windows test run of PR #1 and #2`
+- PR: [#3](https://github.com/maxseo/sinty/pull/3) (merge `6d65de2`)
 
 ## What and why
 

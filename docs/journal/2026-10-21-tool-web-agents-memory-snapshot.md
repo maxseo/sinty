@@ -3,7 +3,8 @@
 - Date: 2026-10-21
 - Area: packages/core (agent.ts, roster.ts, memory-router.ts, api/server.ts), apps/web (agent editor, plugin list)
 - Plan step: follow-up to step 7 part 1 (`2026-10-21-tool-web-plugin.md`), two regressions found on installed main 06dd3da
-- Commits: this commit
+- Commits: `6a1fcd7 fix: tool-web on every agent card, agent.task child tools, one memory fold per turn`, `654ff47 test(prompt-cache): next-turn check no longer depends on the time zone name`
+- PR: [#9](https://github.com/maxseo/sinty/pull/9) (merge `f3b5533`)
 
 ## What and why
 

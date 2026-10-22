@@ -141,6 +141,11 @@ All notable changes to this project are documented here. The format follows
 - `Sinty.start({ background: false })` for offline tools.
 
 ### Changed
+- Docs: project state for handoff. New `docs/plan.md` (the memory / minimal-core plan with the final status of every
+  step and PR), `docs/README.md` (docs index and «Как подхватить проект»: what to read first, working rules), a
+  "Done after 1.0" table in `docs/roadmap.md`, a refreshed `docs/backlog.md` (done items removed; new open items such
+  as embeddings being off by default and how to enable them), an index of `docs/journal/` and PR numbers in every
+  journal entry.
 - Compaction folds at 65% of the chat model's context window (was always `memory.contextTokens`, default 128000).
   For a 1M-window model long chats keep far more history; set `memory.contextTokens: 128000` for the old behaviour.
 - The skills catalog is now a system section of the `skills` plugin. The prompt is byte-identical (same text, place

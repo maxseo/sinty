@@ -4,6 +4,7 @@
 - Area: packages/core (models.ts, host, runner, agent, sinty, config), plugins/provider-openai-compat
 - Plan step: memory plan, step 3
 - Commits: `feat(core): memory step 3…`
+- PR: [#1](https://github.com/maxseo/sinty/pull/1) (merge `bb47710`)
 
 ## What and why
 

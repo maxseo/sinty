@@ -3,7 +3,8 @@
 - Date: 2026-10-21
 - Area: plugins/tool-web, packages/supervisor, packages/core (netguard, host runner/protocol, journal, sinty, config, settings-sections), packages/sdk
 - Plan step: follow-up to step 7 part 1 (`2026-10-21-tool-web-plugin.md`) and to the supervisor settings (`2026-10-20-supervisor-settings-ui.md`); found on installed main f3b5533
-- Commits: this commit
+- Commits: `f53f0db fix(tool-web, supervisor): web errors keep their codes, site refusals never stop the turn`
+- PR: [#10](https://github.com/maxseo/sinty/pull/10) (merge `150f018`)
 
 ## What and why
 

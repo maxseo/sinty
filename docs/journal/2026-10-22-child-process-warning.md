@@ -2,8 +2,9 @@
 
 - Date: 2026-10-22
 - Area: `packages/core/src/host/host.ts`
-- Plan step: overnight item 5
-- Commits: this commit
+- Plan step: queue after step 7 ([plan](../plan.md) section 5: SecurityWarning)
+- Commits: `fbd5269`, `30cd215`, `10dc931 fix(host): pick --disable-warning=PERM0002 only when Node prints that code`, `e605fba docs(journal): correct the Windows rerun note`
+- PR: [#16](https://github.com/maxseo/sinty/pull/16) (merge `bb4e1b9`)
 
 ## What and why
 

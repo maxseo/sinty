@@ -2,8 +2,9 @@
 
 - Date: 2026-10-22
 - Area: `packages/core` (secrets, HTTP API), `packages/cli`, `apps/web`
-- Plan step: overnight item 4 (login token rotation)
-- Commits: this commit
+- Plan step: queue after step 7 ([plan](../plan.md) section 5: login token rotation)
+- Commits: `14fb68b feat(auth): login token rotation (CLI, Settings, POST /v1/auth/rotate)`
+- PR: [#15](https://github.com/maxseo/sinty/pull/15) (merge `674376e`)
 
 ## What and why
 
@@ -74,6 +75,8 @@ MCP clients, Herdr) needs the new one after a rotation.
   overwrote any outside change on every write.
 - Windows not tested (the box run is Linux only); `statSync` with `bigint` works there, but the file stamp has not
   been checked on NTFS.
+  Update (2026-10-22): the full test suite, including this change's tests, passed on Windows on main `277db15`
+  (Node 24.12.0); a rotation by hand on Windows is not recorded.
 
 ## How to test
 
