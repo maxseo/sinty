@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { CHILD_PROCESS_WARNING_OFF } from "../host/host.js";
+import { CHILD_PROCESS_WARNING_OFF, CHILD_PROCESS_WARNING_OFF_LEGACY, childProcessWarningFlag } from "../host/host.js";
 import { Sinty } from "../sinty.js";
 import { tempHome, testConfig } from "./helpers.js";
 
@@ -22,20 +22,27 @@ test("tool-web starts without Node's --allow-child-process SecurityWarning; the 
 
     const args = web.permissionArgs();
     assert.ok(args.includes("--allow-child-process"));
-    assert.ok(args.includes(CHILD_PROCESS_WARNING_OFF));
+    assert.ok(args.includes(childProcessWarningFlag()));
     const plain = sinty.host.plugins.get("fake-provider")!.permissionArgs();
     assert.ok(!plain.includes("--allow-child-process"));
-    assert.ok(!plain.includes(CHILD_PROCESS_WARNING_OFF), "no warning is switched off for plugins without child processes");
+    assert.ok(!plain.some((a) => a.startsWith("--disable-warning=") && a !== "--disable-warning=ExperimentalWarning"), "no warning is switched off for plugins without child processes");
   } finally {
     await sinty.stop();
     cleanup();
   }
 });
 
-test("only PERM0002 is switched off: other SecurityWarnings still print", () => {
+test("only the --allow-child-process warning is switched off; other warnings still print", () => {
+  const flag = childProcessWarningFlag();
   const run = (code: string) =>
-    spawnSync(process.execPath, ["--permission", "--allow-child-process", CHILD_PROCESS_WARNING_OFF, "-e", code], { encoding: "utf8" }).stderr;
+    spawnSync(process.execPath, ["--permission", "--allow-child-process", flag, "-e", code], { encoding: "utf8" }).stderr;
   assert.doesNotMatch(run("1"), /PERM0002|SecurityWarning/);
-  assert.match(run("process.emitWarning('other', { type: 'SecurityWarning', code: 'TEST0001' })"), /\[TEST0001\] SecurityWarning: other/);
   assert.match(run("process.emitWarning('dep', { type: 'DeprecationWarning', code: 'DEP9999' })"), /DEP9999/);
+  const other = run("process.emitWarning('other', { type: 'SecurityWarning', code: 'TEST0001' })");
+  if (flag === CHILD_PROCESS_WARNING_OFF) assert.match(other, /\[TEST0001\] SecurityWarning: other/);
+  else {
+    // This Node prints the warning without a code: the type is switched off in this process only.
+    assert.equal(flag, CHILD_PROCESS_WARNING_OFF_LEGACY);
+    assert.doesNotMatch(other, /TEST0001/);
+  }
 });

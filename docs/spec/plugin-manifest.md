@@ -59,7 +59,9 @@ Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-mani
 
 A process that gets `--allow-child-process` (`permissions.shell`, `permissions.browser` or runtime `mcp-stdio`) also
 gets `--disable-warning=PERM0002`: Node's "The flag --allow-child-process must be used with extreme caution"
-SecurityWarning is switched off by its code in that process only, and the host logs one info line
+SecurityWarning is switched off by its code in that process only. Older Node 24 releases (24.12) print it without a
+code; there the host passes `--disable-warning=SecurityWarning` instead, still only to that process (probed once per
+core process with `childProcessWarningFlag()`). The host logs one info line
 `may start child processes (<reason>); the Node permission model does not confine them` instead. Every other
 warning, including other SecurityWarnings, still reaches the log as `warn`.
 

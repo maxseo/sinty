@@ -19,6 +19,18 @@ and the human enabled, and it trains people to ignore warn lines.
 `may start child processes (permissions.browser); the Node permission model does not confine them`. The new getter
 `childProcesses` holds the condition that used to be inline.
 
+### Follow-up: Node releases without the warning code
+
+The first Windows run of the PR (Node 24.12.0) failed both new tests: that Node prints the same warning **without**
+`[PERM0002]`, so `--disable-warning=PERM0002` did nothing (Linux had Node 24.22.0, which has the code). The host now
+probes once per core process, `childProcessWarningFlag()`: it starts `node --permission --allow-child-process
+--disable-warning=PERM0002 -e ""` and, if `SecurityWarning` still shows on stderr, uses
+`CHILD_PROCESS_WARNING_OFF_LEGACY` (`--disable-warning=SecurityWarning`) instead. The fallback is still scoped to the
+processes that get `--allow-child-process`; at startup Node prints SecurityWarnings only for permission flags, and
+the host passes no other such flag. The second test now checks that another SecurityWarning still prints with the
+code-based flag and is hidden only under the fallback; a DeprecationWarning prints in both cases. Checked with Node
+24.22.0 (code path) and 24.12.0 (fallback) on Linux, and on Windows with 24.12.0.
+
 ## Files touched
 
 - `packages/core/src/host/host.ts`: `CHILD_PROCESS_WARNING_OFF`, `childProcesses`, `childProcessReason()`, the info line.
@@ -47,8 +59,8 @@ None.
 
 ## Known limitations
 
-- On a Node 24 release where this warning has no code, the flag is a no-op and the warning shows as before
-  (harmless). Not checked on Windows; the flag is platform-independent.
+- On Node releases without the code the fallback hides every SecurityWarning of that plugin process (see the
+  follow-up above). The probe costs one short Node start per core process.
 
 ## How to test
 

@@ -1,4 +1,4 @@
-import { fork, type ChildProcess } from "node:child_process";
+import { fork, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -81,6 +81,23 @@ export interface RegisteredTool extends ToolInfo {
  * other warning, including other SecurityWarnings, still reaches the log. The host logs one info line instead.
  */
 export const CHILD_PROCESS_WARNING_OFF = "--disable-warning=PERM0002";
+/** Older Node 24 releases (24.12 on Windows, for one) print the same warning without a code; see childProcessWarningFlag. */
+export const CHILD_PROCESS_WARNING_OFF_LEGACY = "--disable-warning=SecurityWarning";
+
+let warningFlag: string | undefined;
+
+/**
+ * The flag that silences the --allow-child-process warning on this Node, probed once per process: the code
+ * PERM0002 where Node attaches it, otherwise the warning type SecurityWarning. The fallback hides every
+ * SecurityWarning, but only in a process started with --allow-child-process, and the only SecurityWarnings Node
+ * prints at startup are the ones for permission flags, which the host does not pass otherwise.
+ */
+export function childProcessWarningFlag(): string {
+  if (warningFlag) return warningFlag;
+  const probe = spawnSync(process.execPath, ["--permission", "--allow-child-process", CHILD_PROCESS_WARNING_OFF, "-e", ""], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+  warningFlag = /SecurityWarning/.test(probe.stderr ?? "") ? CHILD_PROCESS_WARNING_OFF_LEGACY : CHILD_PROCESS_WARNING_OFF;
+  return warningFlag;
+}
 
 /** One plugin = one OS process under the Node.js permission model. */
 export class PluginProcess {
@@ -226,7 +243,7 @@ export class PluginProcess {
       `--allow-fs-read=${join(this.paths.plugins, "node_modules")}`,
       ...grants.read.map((p) => `--allow-fs-read=${p}`),
       ...grants.write.flatMap((p) => [`--allow-fs-read=${p}`, `--allow-fs-write=${p}`]),
-      ...(this.childProcesses ? ["--allow-child-process", CHILD_PROCESS_WARNING_OFF] : []),
+      ...(this.childProcesses ? ["--allow-child-process", childProcessWarningFlag()] : []),
       ...(this.loaded.manifest.permissions.browser ? this.browserArgs() : []),
       "--disable-warning=ExperimentalWarning",
     ];
