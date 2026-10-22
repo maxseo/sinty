@@ -32,6 +32,10 @@ All notable changes to this project are documented here. The format follows
 - Контекст tab: a ring with the model's window, how full the step's prompt is (real usage once known) and a tick
   where the dialogue is folded. Snapshot field `window`.
 - SDK: `ModelInfo`, `openAIModelList()`; provider-anthropic implements `listModels()`.
+- Memory vectors remember their embedding model and width (`facts_vec_meta`). Vector search ignores vectors of
+  another `models.routes.embed` route (FTS still finds those facts); `sinty memory reembed` (old name `reindex`)
+  replaces them and, after a `memory.dimensions` change, rebuilds `facts_vec`. `memory.reembed: auto` does it in the
+  background on start. `sinty doctor` and a one-time `memory.degraded` report stale vectors.
 - Plugin `skills` with the skills catalog and `skill.read`, `skill.files`, `skill.read_file`, `skill.write_file`,
   `skill.edit`, `skill.write` (moved out of the core; same names, descriptions, input schemas, error codes and
   hints; `skill.*` names reserved for it). On by default: `plugins.disabled: [skills]` or unticking it in Settings
@@ -205,6 +209,8 @@ All notable changes to this project are documented here. The format follows
 - The API read its login token once at start, and a running server kept the secrets it started with: a
   `sinty secret set` next to it had no effect until a restart, and the server's next secret write put the old values
   back. `SecretStore` now re-reads `secrets.json` when it changes.
+- A `facts_vec` table of another width than `memory.dimensions` made every memory write with an embedding fail;
+  vectors are now off (FTS only) until `sinty memory reembed`.
 - A turn that read a few shops was stopped with "supervisor notices did not help (tool_error: 3, total 3)": site
   refusals (401, 404, a 1.5 MB page) counted as tool misuse toward `maxNoticesPerDetector`, every notice repeated the
   whole tool-web README, said "Private hosts are blocked" and offered an unrelated incident (another site's url as the

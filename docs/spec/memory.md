@@ -196,19 +196,33 @@ ctx.models.embed({ route: "embed", input: ["…"] })
 When `models.routes.embed` is set, the router embeds the text on every builtin write and the query on every
 builtin recall, and the store fuses FTS5 and sqlite-vec results. The vector width must equal `memory.dimensions`;
 a mismatch or an embed failure degrades to FTS only (journaled once per process as `memory.degraded`). Facts written
-before the embed route existed have no vector; they are still found by FTS, and `sinty memory reindex` embeds them:
+before the embed route existed have no vector; they are still found by FTS, and `sinty memory reembed` embeds them.
+
+**Model and width per vector.** `facts_vec_meta (fact_id, model, dims, created_at)` records which embed route
+(`models.routes.embed`, e.g. `openai/text-embedding-3-small`) and width made each vector. Vectors of another model
+live in another space, so vector search only compares the query with vectors of the current route and width
+(`MemoryStore.vecIds` asks sqlite-vec for `50 + stale` neighbours, at most 4096, and drops the stale ones); stale
+facts are still found by FTS. Vectors stored before this table existed are credited once to the embed route the
+store first sees (`memory_meta` key `vec.legacy_adopted`). When `facts_vec` was created with another width than
+`memory.dimensions` (it is fixed at creation), vectors are off: writes store no vector instead of failing, and
+recall is FTS only, until `sinty memory reembed` rebuilds the table. The first recall of a process journals
+`memory.degraded` (hook `embed`) once when stale vectors or a width mismatch exist; `sinty doctor` prints a `warn`
+line. `memory.reembed: auto` re-embeds in the background on start (default `manual`).
 
 ```
-sinty memory reindex [--dry-run] [--batch 64] [--json]
+sinty memory reembed [--dry-run] [--batch 64] [--json]     # `reindex` is the older name of the same command
 ```
 
-- Picks live (not expired) facts that have no row in `facts_vec`, oldest first, `--batch` texts per embed call
+- With a width mismatch: probes the embed route's width, refuses when it is not `memory.dimensions`, otherwise drops
+  and recreates `facts_vec` at the new width (the old vectors could not be searched anyway) and embeds every fact.
+- Picks live (not expired) facts that have no vector or a stale one, oldest first, `--batch` texts per embed call
   (1–512, default 64), through the same embed route (`models.routes.embed`, core `ModelGateway`).
 - Idempotent: a second run, or a run after an interruption, only sends what is still missing.
 - `--dry-run` counts and calls no model. Errors (no embed route, wrong width, provider failure) stop the run with
   exit code 1; vectors stored before the error stay.
 - API: `MemoryRouter.reindexVectors({ dryRun, batchSize, signal, onProgress })` →
-  `{ total, embedded, dryRun }`; store helpers `countMissingVectors()`, `missingVectors(limit)`, `setVector(id, v)`.
+  `{ total, embedded, dryRun, stale, rebuilt }`; store helpers `vectorStatus()`, `countMissingVectors()`,
+  `missingVectors(limit)`, `setVector(id, v)`, `rebuildVectors()`, `vecReady`.
 
 ## Full-text recall
 
@@ -303,7 +317,8 @@ models:
 memory:
   contextTokens: auto                # or a number: the window for every model (see "Context window" below)
   compactCapTokens: 150000           # fold at min(65% of the window, this); 0 or null: no cap
-  dimensions: 1536                   # fixed for the life of memory.db
+  dimensions: 1536                   # the embedding model's width; after a change: sinty memory reembed
+  reembed: manual                    # auto: re-embed missing and stale vectors in the background on start
   providers: []                      # restrict recall to these plugin providers (default: all enabled)
   writeTo: []                        # plugin providers that receive mirrored writes
   recall: { auto: false, limit: 8, budgetTokens: 1200, timeoutMs: 3000 }

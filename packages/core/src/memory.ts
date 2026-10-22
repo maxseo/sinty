@@ -71,7 +71,13 @@ export class MemoryStore {
 
   constructor(
     file: string,
-    private readonly opts: { userId: string; agentId?: string; dimensions: number },
+    private readonly opts: {
+      userId: string;
+      agentId?: string;
+      dimensions: number;
+      /** The embedding model new vectors come from (the models.routes.embed route); "" or absent: none. */
+      embedModel?: () => string | undefined;
+    },
   ) {
     mkdirSync(dirname(file), { recursive: true });
     const opened = openDatabase(file);
@@ -111,6 +117,67 @@ export class MemoryStore {
     if (this.vec && !this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facts_vec'").get()) {
       this.db.exec(`CREATE VIRTUAL TABLE facts_vec USING vec0(embedding float[${this.opts.dimensions}], fact_id text)`);
     }
+    // Which model and width made each vector. Vectors of another model are not comparable with the query's.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS facts_vec_meta (fact_id TEXT PRIMARY KEY, model TEXT NOT NULL, dims INTEGER NOT NULL, created_at TEXT NOT NULL)`);
+    this.vecWidth = this.vec ? readVecWidth(this.db) : 0;
+  }
+
+  /** Width of the facts_vec table (fixed when it was created); 0 without sqlite-vec. */
+  private vecWidth: number;
+
+  /** sqlite-vec is loaded and facts_vec has the width of memory.dimensions, so vectors can be stored and searched. */
+  get vecReady(): boolean {
+    return this.vec && this.vecWidth === this.opts.dimensions;
+  }
+
+  /** The current embedding model; undefined when the store does not track models (no embedModel option). */
+  private model(): string | undefined {
+    if (!this.opts.embedModel) return undefined;
+    const m = this.opts.embedModel() ?? "";
+    if (m) this.adoptLegacy(m);
+    return m;
+  }
+
+  /**
+   * Vectors stored before facts_vec_meta existed carry no model. The first time the store knows the embed route it
+   * credits them to that route, once (memory_meta "vec.legacy_adopted"): they were made by the route configured then,
+   * and Sinty had no way to change it without editing config.yaml.
+   */
+  private adoptLegacy(model: string): void {
+    if (this.legacyAdopted || !this.vecReady) return;
+    this.legacyAdopted = true;
+    if (this.db.prepare("SELECT 1 FROM memory_meta WHERE key = 'vec.legacy_adopted'").get()) return;
+    const now = new Date().toISOString();
+    this.db
+      .prepare("INSERT OR IGNORE INTO facts_vec_meta (fact_id, model, dims, created_at) SELECT fact_id, ?, ?, ? FROM facts_vec WHERE fact_id NOT IN (SELECT fact_id FROM facts_vec_meta)")
+      .run(model, this.opts.dimensions, now);
+    this.db.prepare("INSERT OR REPLACE INTO memory_meta (key, value) VALUES ('vec.legacy_adopted', ?)").run(`${model} ${now}`);
+  }
+  private legacyAdopted = false;
+
+  /**
+   * Vector health for doctor and the reembed command: `stale` = live facts whose vector came from another model or
+   * width, `missing` = live facts without a vector (stale ones not counted). `widthMismatch`: facts_vec was created
+   * with another width than memory.dimensions; nothing can be stored until `sinty memory reembed` rebuilds it.
+   */
+  vectorStatus(): { vec: boolean; width: number; dimensions: number; widthMismatch: boolean; model: string; facts: number; current: number; stale: number; missing: number } {
+    const now = new Date().toISOString();
+    const model = this.model() ?? "";
+    const facts = Number((this.db.prepare("SELECT count(*) AS n FROM memory_facts WHERE expires_at IS NULL OR expires_at > ?").get(now) as { n: number }).n);
+    const base = { vec: this.vec, width: this.vecWidth, dimensions: this.opts.dimensions, widthMismatch: this.vec && this.vecWidth !== this.opts.dimensions, model };
+    if (!this.vec) return { ...base, facts, current: 0, stale: 0, missing: 0 };
+    const withVec = Number((this.db.prepare("SELECT count(*) AS n FROM memory_facts WHERE (expires_at IS NULL OR expires_at > ?) AND id IN (SELECT fact_id FROM facts_vec)").get(now) as { n: number }).n);
+    const current = this.vecReady && model ? Number((this.db.prepare("SELECT count(*) AS n FROM memory_facts f JOIN facts_vec_meta m ON m.fact_id = f.id WHERE (f.expires_at IS NULL OR f.expires_at > ?) AND m.model = ? AND m.dims = ? AND f.id IN (SELECT fact_id FROM facts_vec)").get(now, model, this.opts.dimensions) as { n: number }).n) : 0;
+    return { ...base, facts, current, stale: model ? withVec - current : 0, missing: facts - withVec };
+  }
+
+  /** Drops every vector and recreates facts_vec with the width of memory.dimensions (reembed after a width change). */
+  rebuildVectors(): void {
+    if (!this.vec) return;
+    this.db.exec("DROP TABLE IF EXISTS facts_vec");
+    this.db.exec(`CREATE VIRTUAL TABLE facts_vec USING vec0(embedding float[${this.opts.dimensions}], fact_id text)`);
+    this.db.exec("DELETE FROM facts_vec_meta");
+    this.vecWidth = this.opts.dimensions;
   }
 
   /**
@@ -366,39 +433,61 @@ export class MemoryStore {
     return out.slice(0, 50);
   }
 
-  /** How many live facts have no vector yet. 0 when sqlite-vec is not loaded. */
+  /**
+   * Live facts that need a vector: none yet, or one from another embedding model or width (stale). 0 when vectors
+   * cannot be stored (no sqlite-vec, facts_vec of another width, no embed route known for stale ones).
+   */
   countMissingVectors(): number {
-    if (!this.vec) return 0;
-    const row = this.db
-      .prepare("SELECT count(*) AS n FROM memory_facts WHERE (expires_at IS NULL OR expires_at > ?) AND id NOT IN (SELECT fact_id FROM facts_vec)")
-      .get(new Date().toISOString()) as { n: number };
+    if (!this.vecReady) return 0;
+    const row = this.db.prepare(`SELECT count(*) AS n FROM memory_facts WHERE (expires_at IS NULL OR expires_at > ?) AND ${this.needsVector()}`).get(new Date().toISOString(), ...this.needsArgs()) as { n: number };
     return Number(row.n);
   }
 
-  /** The oldest live facts without a vector. */
+  /** The oldest live facts that need a vector (see countMissingVectors). */
   missingVectors(limit: number): { id: string; text: string }[] {
-    if (!this.vec) return [];
+    if (!this.vecReady) return [];
     return rows<{ id: string; text: string }>(
-      this.db
-        .prepare("SELECT id, text FROM memory_facts WHERE (expires_at IS NULL OR expires_at > ?) AND id NOT IN (SELECT fact_id FROM facts_vec) ORDER BY created_at, id LIMIT ?")
-        .all(new Date().toISOString(), limit),
+      this.db.prepare(`SELECT id, text FROM memory_facts WHERE (expires_at IS NULL OR expires_at > ?) AND ${this.needsVector()} ORDER BY created_at, id LIMIT ?`).all(new Date().toISOString(), ...this.needsArgs(), limit),
     );
+  }
+
+  /** SQL condition on memory_facts.id: no vector, or (with a known model) a vector of another model or width. */
+  private needsVector(): string {
+    return this.model()
+      ? "(id NOT IN (SELECT fact_id FROM facts_vec) OR id NOT IN (SELECT fact_id FROM facts_vec_meta WHERE model = ? AND dims = ?))"
+      : "id NOT IN (SELECT fact_id FROM facts_vec)";
+  }
+
+  private needsArgs(): (string | number)[] {
+    const m = this.model();
+    return m ? [m, this.opts.dimensions] : [];
   }
 
   /** Stores the vector of an existing fact (replacing an old one). Returns false when the fact is gone. */
   setVector(id: string, embedding: Float32Array): boolean {
-    if (!this.vec) return false;
+    if (!this.vecReady) return false;
     if (embedding.length !== this.opts.dimensions) throw new MemoryError("embedding", `embedding length ${embedding.length} does not match ${this.opts.dimensions}`);
     if (!this.db.prepare("SELECT 1 FROM memory_facts WHERE id = ?").get(id)) return false;
     this.syncVec(id, embedding);
     return true;
   }
 
+  /**
+   * Nearest facts to the query vector, only among vectors of the current model and width: a vector of another model
+   * lives in another space, and its distance to the query means nothing. Stale rows are skipped by asking for more
+   * neighbours (k = 50 + stale count, at most 4096, sqlite-vec's limit).
+   */
   private vecIds(embedding?: Float32Array): string[] {
-    if (!this.vec || !embedding) return [];
+    if (!this.vecReady || !embedding || embedding.length !== this.opts.dimensions) return [];
+    const model = this.model();
+    if (model === "") return [];
     try {
-      const rows = this.db.prepare("SELECT fact_id FROM facts_vec WHERE embedding MATCH ? AND k = 50").all(embedding) as { fact_id: string }[];
-      return rows.map((r) => r.fact_id);
+      if (model === undefined) return (this.db.prepare("SELECT fact_id FROM facts_vec WHERE embedding MATCH ? AND k = 50").all(embedding) as { fact_id: string }[]).map((r) => r.fact_id);
+      const ok = new Set((this.db.prepare("SELECT fact_id FROM facts_vec_meta WHERE model = ? AND dims = ?").all(model, this.opts.dimensions) as { fact_id: string }[]).map((r) => r.fact_id));
+      const total = Number((this.db.prepare("SELECT count(*) AS n FROM facts_vec_meta").get() as { n: number }).n);
+      const k = Math.min(4096, 50 + Math.max(0, total - ok.size));
+      const rows = this.db.prepare(`SELECT fact_id FROM facts_vec WHERE embedding MATCH ? AND k = ${k}`).all(embedding) as { fact_id: string }[];
+      return rows.map((r) => r.fact_id).filter((id) => ok.has(id)).slice(0, 50);
     } catch {
       return [];
     }
@@ -418,9 +507,12 @@ export class MemoryStore {
   }
 
   private syncVec(id: string, embedding?: Float32Array): void {
-    if (!this.vec || !embedding) return;
+    if (!this.vecReady || !embedding) return;
     this.db.prepare("DELETE FROM facts_vec WHERE fact_id = ?").run(id);
     this.db.prepare("INSERT INTO facts_vec (embedding, fact_id) VALUES (?, ?)").run(embedding, id);
+    this.db
+      .prepare("INSERT OR REPLACE INTO facts_vec_meta (fact_id, model, dims, created_at) VALUES (?, ?, ?, ?)")
+      .run(id, this.model() ?? "", embedding.length, new Date().toISOString());
   }
 
   private deleteId(id: string): void {
@@ -428,6 +520,7 @@ export class MemoryStore {
     this.db.prepare("DELETE FROM facts_fts WHERE fact_id = ?").run(id);
     this.db.prepare("DELETE FROM facts_stem WHERE fact_id = ?").run(id);
     if (this.vec) this.db.prepare("DELETE FROM facts_vec WHERE fact_id = ?").run(id);
+    this.db.prepare("DELETE FROM facts_vec_meta WHERE fact_id = ?").run(id);
   }
 
   private toFact(r: FactRow): MemoryFact {
@@ -435,6 +528,13 @@ export class MemoryStore {
     return { id: r.id, tier: r.tier, text: r.text, source: r.source, about: r.about, scope, createdAt: r.created_at, lastUsedAt: r.last_used_at };
   }
 
+}
+
+/** `float[N]` from the facts_vec CREATE statement. */
+function readVecWidth(db: DatabaseSync): number {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'facts_vec'").get() as { sql?: string } | undefined;
+  const m = row?.sql ? /float\[(\d+)\]/.exec(row.sql) : null;
+  return m ? Number(m[1]) : 0;
 }
 
 function openDatabase(file: string): { db: DatabaseSync; vec: boolean } {

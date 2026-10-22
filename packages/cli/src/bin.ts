@@ -31,7 +31,7 @@ Usage:
   sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]
                                    offline recall replay: hit rate on labeled queries, memory-block
                                    tokens and recall latency per arm (no chat model calls)
-  sinty memory reindex [--dry-run] [--batch 64] [--json]
+  sinty memory reembed [--dry-run] [--batch 64] [--json]
                                    embed facts that have no vector yet (models.routes.embed);
                                    idempotent, safe to rerun after an interruption
 
@@ -377,6 +377,16 @@ async function doctor(): Promise<number> {
     const w = sinty.windows.resolve(def);
     console.log(`info context window ${def}: ${w.tokens} tokens (${w.source}${w.source === "fallback" ? ": unknown model, set models.contextWindows or memory.contextTokens" : ""}), summary at ${Math.floor(w.tokens * 0.65)}`);
   }
+  try {
+    const v = sinty.memory.builtin.store.vectorStatus();
+    if (!v.vec) console.log("warn memory vectors: sqlite-vec is not loaded, recall uses full-text search only");
+    else if (v.widthMismatch) console.log(`warn memory vectors: facts_vec has width ${v.width}, memory.dimensions is ${v.dimensions}; vector search is off until: sinty memory reembed`);
+    else if (v.stale) console.log(`warn memory vectors: ${v.stale} of ${v.facts} fact(s) have vectors of another embedding model than ${v.model}; they are skipped by vector search until: sinty memory reembed`);
+    else if (v.model && v.missing) console.log(`info memory vectors: ${v.missing} fact(s) without a vector (found by full-text search); sinty memory reembed embeds them`);
+    else if (v.model) console.log(`ok   memory vectors: ${v.current} fact(s), model ${v.model}, width ${v.dimensions}`);
+  } catch (e) {
+    console.log(`warn memory vectors: ${e instanceof Error ? e.message : String(e)}`);
+  }
   await sinty.stop();
   console.log(problems ? `\n${problems} problem(s)` : "\nall good");
   return problems ? 1 : 0;
@@ -412,8 +422,8 @@ async function memoryReindex(): Promise<number> {
     });
     if (tty && r.embedded) process.stderr.write("\n");
     if (values.json) console.log(JSON.stringify(r));
-    else if (r.dryRun) console.log(`${r.total} fact(s) have no vector; run without --dry-run to embed them`);
-    else console.log(r.total ? `embedded ${r.embedded} of ${r.total} fact(s)` : "every fact already has a vector");
+    else if (r.dryRun) console.log(`${r.total} fact(s) need a vector (${r.stale} of them from another embedding model or width); run without --dry-run to embed them`);
+    else console.log(`${r.rebuilt ? "facts_vec rebuilt for the new width; " : ""}${r.total ? `embedded ${r.embedded} of ${r.total} fact(s)` : "every fact already has a vector of the current model"}`);
     return r.embedded < r.total && !r.dryRun ? 1 : 0;
   } catch (e) {
     const err = e as { message?: string; hint?: string };
@@ -425,9 +435,10 @@ async function memoryReindex(): Promise<number> {
 }
 
 async function memoryCmd(args: string[]): Promise<number> {
-  if (args[0] === "reindex") return memoryReindex();
+  // reindex is the older name: it now also replaces vectors of another embedding model.
+  if (args[0] === "reembed" || args[0] === "reindex") return memoryReindex();
   if (args[0] !== "eval") {
-    console.error("usage: sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]\n       sinty memory reindex [--dry-run] [--batch 64] [--json]");
+    console.error("usage: sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]\n       sinty memory reembed [--dry-run] [--batch 64] [--json]");
     return 2;
   }
   const labels = values.labels
