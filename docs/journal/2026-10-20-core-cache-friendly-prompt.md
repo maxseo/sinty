@@ -4,10 +4,11 @@
 - Area: packages/core (agent, memory router, inspect, host), packages/sdk (events, plugin, inspect, memory),
   plugins/provider-anthropic, plugins/provider-openai-compat, plugins/provider-openai-responses,
   plugins/context-inspector
-- Plan step: Part 2 of the prompt-cache report (`sinty-prompt-cache-report.md`, 20.10.2026), approved by Max
+- Plan step: Part 2 of the prompt-cache report (20.10.2026; outcome in [plan](../plan.md#6-отчёт-о-кэше-промпта-2026-10-20-итог)), approved by Max
   ("Делай всё: выбор агента и полную новую схему промпта с кешем"). Stacked on Part 1
   (`2026-10-20-fix-chat-agent-selection.md`).
 - Commits: `feat(core): cache-friendly prompt layout with provider cache hints`
+- PR: [#6](https://github.com/maxseo/sinty/pull/6) (merge `df22dbc`)
 
 ## What and why
 

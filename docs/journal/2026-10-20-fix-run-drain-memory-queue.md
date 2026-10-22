@@ -4,6 +4,7 @@
 - Area: packages/core (sinty.ts, memory-router.ts, agent.ts, config.ts)
 - Plan step: follow-up to memory plan step 4 (durable afterTurn queue)
 - Commits: `fix(core): drain the memory afterTurn queue before plugins stop`
+- PR: [#2](https://github.com/maxseo/sinty/pull/2) (merge `83dc002`)
 
 ## What and why
 
@@ -49,6 +50,10 @@ because the queue had time to drain.
 
 - Waiting only in `sinty run`: other callers (serve, embedders, tests) would keep the race.
 - Waiting with `afterTurnTimeoutMs` (60 s) on every shutdown: too long for Ctrl+C.
+
+## Migration notes
+
+None. `memory.hooks.closeTimeoutMs` is new and optional; pending jobs from older versions are picked up as before.
 
 ## Known limitations
 

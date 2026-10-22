@@ -4,6 +4,7 @@
 - Area: packages/core (memory-router.ts, agent.ts, sinty.ts, host, runner, config), packages/sdk
 - Plan step: memory plan, step 4
 - Commits: `feat(core): memory step 4…`
+- PR: [#1](https://github.com/maxseo/sinty/pull/1) (merge `bb47710`)
 
 ## What and why
 

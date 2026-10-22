@@ -2,8 +2,9 @@
 
 - Date: 2026-10-22
 - Area: `packages/core` (`shell.ts`, new `shell-sandbox.ts`, `agent.ts`, `config.ts`), `packages/cli` (`doctor`)
-- Plan step: overnight item 6; plan section "Shell — пока оставить в ядре, сначала закрыть песочницу на Linux"
-- Commits: this commit
+- Plan step: step 7 / queue after step 7 ([plan](../plan.md) sections 4–5); original plan section "Shell — пока оставить в ядре, сначала закрыть песочницу на Linux"
+- Commits: `9db5fba feat(shell): Linux sandbox for shell.run with bubblewrap`
+- PR: [#17](https://github.com/maxseo/sinty/pull/17) (merge `1ffa739`)
 
 ## What and why
 
@@ -75,6 +76,7 @@ environment beyond the list above. Restore the old behaviour with `shell.sandbox
 - `/etc` is visible read-only (needed for users, certificates, resolver); it is world-readable on the host anyway.
 - Not run on Windows in this change (the Windows branch is untouched); the unsandboxed fallback is covered by a test
   that hides `bwrap` with `SINTY_BWRAP=`.
+  Update (2026-10-22): the full suite passed on Windows on main `277db15` after the merge.
 
 ## How to test
 

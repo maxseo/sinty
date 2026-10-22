@@ -1,4 +1,10 @@
-# 2026-10-22 — `sinty doctor` reports the capped compaction point
+# `sinty doctor` reports the capped compaction point
+
+- Date: 2026-10-22
+- Area: packages/core (context-window.ts), packages/cli (bin.ts doctor), docs
+- Plan step: follow-up to the compaction cap ([plan](../plan.md) section 5; PR #14)
+- Commits: `277db15 fix(doctor): print the compaction point compaction uses (cap or 65% of the window)`
+- PR: [#18](https://github.com/maxseo/sinty/pull/18) (merge `68fb472`)
 
 ## What and why
 
@@ -24,6 +30,19 @@ wrong, not compaction.
   for `0` / `null`.
 - A third test reads `bin.ts` and checks that the doctor calls `describeCompaction` and does no `0.65` math, so the
   wiring cannot silently drift again.
+
+## Rejected alternatives
+
+- Fixing the arithmetic in `bin.ts` (apply the cap there too): it would keep a second copy of the rule that already
+  drifted once.
+
+## Migration notes
+
+None. Only the doctor's text changes; compaction itself was already capped.
+
+## Known limitations
+
+- The line describes the first (primary) route only; fallback routes are checked per request, not in the doctor.
 
 ## How to test
 

@@ -4,6 +4,7 @@
 - Area: packages/supervisor, packages/core (config, agent, journal, API, manifest), packages/sdk, schemas, apps/web, plugins/context-inspector
 - Plan step: Max's feedback while testing main df22dbc
 - Commits: `feat(supervisor): configurable limits, chat tab, settings sections, masked incidents`
+- PR: [#7](https://github.com/maxseo/sinty/pull/7) (merge `646031f`)
 
 ## What and why
 

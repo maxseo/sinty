@@ -4,6 +4,7 @@
 - Area: packages/core (memory-router.ts, memory-builtin.ts, agent.ts, sinty.ts)
 - Plan step: memory plan, step 2
 - Commits: `refactor(core): memory step 2…`
+- PR: [#1](https://github.com/maxseo/sinty/pull/1) (merge `bb47710`)
 
 ## What and why
 

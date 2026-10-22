@@ -4,6 +4,7 @@
 - Area: packages/core (memory.ts, memory-router.ts), packages/cli
 - Plan step: follow-up to memory plan step 5 (vector search); known limitation "no vector backfill command"
 - Commits: `feat(memory): recall OR/prefix fallback, journaled tool writes, sinty memory reindex` (one commit for the three memory changes, docs/spec/memory.md and CHANGELOG)
+- PR: [#3](https://github.com/maxseo/sinty/pull/3) (merge `6d65de2`)
 
 ## What and why
 
@@ -64,6 +65,10 @@ unaffected: its turn starts the drain.
 - Errors are thrown, not turned into `memory.degraded`. A command must say why it did not finish; vectors stored
   before the error remain.
 - Batch size is capped at 512 to stay under typical provider input limits.
+
+## Rejected alternatives
+
+Not recorded when the change was made (noted in the 2026-10-22 docs audit, [#19](https://github.com/maxseo/sinty/pull/19)).
 
 ## Migration notes
 

@@ -2,8 +2,9 @@
 
 - Date: 2026-10-22
 - Area: packages/sdk (plugin.ts, models.ts, inspect.ts, events.ts), packages/core (context-window.ts, agent, memory-router, config, host, runner, protocol, sinty, api/server), packages/cli (doctor), plugins/provider-openai-compat, plugins/provider-openai-responses, plugins/provider-anthropic, plugins/context-inspector, docs
-- Plan step: queue after step 7 (`/workspace/sinty-memory-plan.md` section 12: "окно контекста + кольцо во вкладке Контекст")
+- Plan step: queue after step 7 ([plan](../plan.md) section 5: "окно контекста + кольцо во вкладке Контекст")
 - Commits: `feat(context): per-model context window for compaction, ring in the Контекст tab`
+- PR: [#14](https://github.com/maxseo/sinty/pull/14) (merge `a9218fd`)
 
 ## What and why
 
@@ -103,7 +104,7 @@ provider really counted, and the Контекст tab shows the window, how full
 
 - `corepack pnpm -r run test` (also with `TZ=UTC`); the new tests are in `context-window.test.ts`.
 - `sinty doctor` prints the window of `models.default`.
-- Контекст tab: the first card shows the ring; screenshot of a rendered sample: `/workspace/context-window-ring.png`.
+- Контекст tab: the first card shows the ring; a rendered sample was checked by hand (screenshot not committed).
 
 ## Follow-up (2026-10-22): compaction cap and the fallback window check
 

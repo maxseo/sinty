@@ -13,8 +13,34 @@ Milestones in order. Smaller items without a milestone are in the [backlog](back
 | **M6 — 1.0** | protocol `sinty/1.0` frozen; `registry/plugins.json` and `sinty plugins`; docs page `site/index.html` | done |
 | **M7 — Switch from n8n** | shadow mode next to n8n (both answer, n8n's answer is returned, Sinty's is journaled and compared), switch one workflow at a time with n8n as fallback, then remove the n8n workflows. See [migration](migration-from-n8n.md) | planned, last |
 
+## Done after 1.0 (October 2026)
+
+Work done on top of M6, outside the milestones. The plan behind it is [plan.md](plan.md); every change has a
+[journal](journal/README.md) entry and a `CHANGELOG.md` entry.
+
+| Change | PR | Journal |
+|---|---|---|
+| Pluggable memory: `MemoryRouter`, `ModelGateway` (`ctx.models`), memory providers and processors over IPC, `memory-obsidian`, `fact-extractor`, builtin vectors, experiments and `sinty memory eval` (plan steps 0–6) | [#1](https://github.com/maxseo/sinty/pull/1) | `2026-10-19-memory-step-*` |
+| Drain the memory `afterTurn` queue before `sinty run` exits | [#2](https://github.com/maxseo/sinty/pull/2) | `2026-10-20-fix-run-drain-memory-queue` |
+| Memory limitations: OR/prefix recall, `sinty memory reindex`, journaled tool writes, persistent plugin token budget | [#3](https://github.com/maxseo/sinty/pull/3) | `2026-10-20-memory-*`, `2026-10-20-models-persistent-plugin-budget` |
+| Context snapshots, `context-inspector` plugin, plugin UI tabs, «Контекст» in the chat header | [#4](https://github.com/maxseo/sinty/pull/4) | `2026-10-20-plugin-context-inspector` and related |
+| Chat agent selection uses the session's agents | [#5](https://github.com/maxseo/sinty/pull/5) | `2026-10-20-fix-chat-agent-selection` |
+| Cache-friendly prompt (append-only requests, frozen turn context, provider cache hints) | [#6](https://github.com/maxseo/sinty/pull/6) | `2026-10-20-core-cache-friendly-prompt` |
+| Supervisor settings in the Web UI | [#7](https://github.com/maxseo/sinty/pull/7) | `2026-10-20-supervisor-settings-ui` |
+| `tool-web` plugin (search, read, screenshot through the core network guard) and follow-ups | [#8](https://github.com/maxseo/sinty/pull/8), [#9](https://github.com/maxseo/sinty/pull/9), [#10](https://github.com/maxseo/sinty/pull/10) | `2026-10-21-tool-web-*`, `2026-10-21-web-errors-supervisor-notices` |
+| `skills` loader as a plugin (`ctx.systemSection`) | [#11](https://github.com/maxseo/sinty/pull/11) | `2026-10-21-skills-plugin` |
+| Re-embed vectors after an embedding model change (`sinty memory reembed`, `memory.reembed: auto`) | [#12](https://github.com/maxseo/sinty/pull/12) | `2026-10-22-reembed` |
+| Stemmed recall (Russian Snowball, English porter) | [#13](https://github.com/maxseo/sinty/pull/13) | `2026-10-22-memory-stemming` |
+| Context window from the model list (`memory.contextTokens: auto`), compaction cap `memory.compactCapTokens`, fallback window check | [#14](https://github.com/maxseo/sinty/pull/14) | `2026-10-22-context-window` |
+| Login token rotation (`sinty token rotate`, Settings button, `POST /v1/auth/rotate`) | [#15](https://github.com/maxseo/sinty/pull/15) | `2026-10-22-login-token-rotation` |
+| No `--allow-child-process` SecurityWarning in plugin logs | [#16](https://github.com/maxseo/sinty/pull/16) | `2026-10-22-child-process-warning` |
+| Linux shell sandbox (bubblewrap, `shell.sandbox`) | [#17](https://github.com/maxseo/sinty/pull/17) | `2026-10-22-linux-shell-sandbox` |
+| `sinty doctor` reports the capped compaction point | [#18](https://github.com/maxseo/sinty/pull/18) | `2026-10-22-doctor-compaction-cap` |
+
 ## Known gaps
 
 - In `standard` mode the network allowlist is enforced by the plugin runtime (`fetch` is replaced), not by the OS. A malicious plugin could use `node:net` directly. OS-level control comes with `strict` mode (M5).
-- Budgets in USD are not enforced yet (no price table).
+- Budgets in USD are not enforced yet (no price table). The compaction point is capped in tokens (`memory.compactCapTokens`), not in money.
 - One active turn per session: a second message returns `409 turn_active`.
+- Vector recall is off until an embedding route is configured (`models.routes.embed` is empty by default); recall is full-text only. See [backlog](backlog.md#embeddings-are-not-configured-by-default).
+- The shell sandbox covers Linux (bubblewrap) and Windows; macOS runs shell commands without a sandbox.

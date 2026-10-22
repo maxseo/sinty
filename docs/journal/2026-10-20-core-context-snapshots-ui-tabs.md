@@ -4,6 +4,7 @@
 - Area: packages/sdk, packages/core (agent, memory-router, host, api, inspect), schemas, apps/web
 - Plan step: context-inspector, approved by Max after the design-only review
 - Commits: `feat(core): context snapshots for inspector plugins and plugin UI tabs`
+- PR: [#4](https://github.com/maxseo/sinty/pull/4) (merge `24ba03f`)
 
 ## What and why
 

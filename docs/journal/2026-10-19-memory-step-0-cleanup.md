@@ -4,6 +4,7 @@
 - Area: packages/core (memory, agent, host), plugins, registry
 - Plan step: memory plan, step 0 ("hygiene before the contract")
 - Commits: golden baseline `test(core): golden-prompt baseline…`, then `feat(core): memory step 0…`
+- PR: [#1](https://github.com/maxseo/sinty/pull/1) (merge `bb47710`)
 
 ## What and why
 
@@ -79,7 +80,7 @@
 ## How to test
 
 ```bash
-source /workspace/tools/env.sh   # or any Node 24 + pnpm 10
+# Node 24 + pnpm 10 on PATH
 pnpm build
 cd packages/core && node --test --test-concurrency=1 "dist/**/*.test.js"
 # regenerate goldens only on purpose and explain the diff in a journal entry:

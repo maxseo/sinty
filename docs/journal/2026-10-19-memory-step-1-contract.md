@@ -4,6 +4,7 @@
 - Area: packages/sdk, docs/spec, plugin manifest
 - Plan step: memory plan, step 1
 - Commits: `feat(sdk): memory step 1…`
+- PR: [#1](https://github.com/maxseo/sinty/pull/1) (merge `bb47710`)
 
 ## What and why
 

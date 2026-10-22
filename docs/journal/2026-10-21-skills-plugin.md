@@ -2,8 +2,9 @@
 
 - Date: 2026-10-21
 - Area: packages/sdk (plugin.ts), packages/core (agent, host, runner, protocol, coretools, config, inspect, api/server), plugins/skills, apps/web (agent card), registry, docs
-- Plan step: 7, part 2 (`/workspace/sinty-memory-plan.md` section 10: "Скилы — перенести в плагин `skills`")
+- Plan step: 7, part 2 ([plan](../plan.md) section 4, from the original plan's section 10: "Скилы — перенести в плагин `skills`")
 - Commits: `feat(skills): move skills into a default-on plugin, ctx.systemSection for the catalog`
+- PR: [#11](https://github.com/maxseo/sinty/pull/11) (merge `0986d8f`)
 
 ## What and why
 

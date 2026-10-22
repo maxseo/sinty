@@ -4,6 +4,7 @@
 - Area: plugins/context-inspector, registry
 - Plan step: context-inspector, MVP: snapshot + tab with parts, tokens, per-step history
 - Commits: `feat(plugins): context-inspector tab`
+- PR: [#4](https://github.com/maxseo/sinty/pull/4) (merge `24ba03f`)
 
 ## What and why
 
@@ -60,6 +61,10 @@ step, keeps the newest ones in memory, and serves a Web UI tab, **Контекс
 - **Server-sent updates to the tab.** The bridge is request/response. Polling summaries is cheap and needs no
   streaming support in the bridge.
 
+## Migration notes
+
+Not recorded when the change was made (noted in the 2026-10-22 docs audit, [#19](https://github.com/maxseo/sinty/pull/19)).
+
 ## Known limitations / follow-ups
 
 - No search or filter inside a step, and no side-by-side diff of two steps beyond the token delta.
@@ -72,4 +77,4 @@ step, keeps the newest ones in memory, and serves a Web UI tab, **Контекс
 
 - `pnpm --filter @sinty/plugin-context-inspector test`.
 - Core: `packages/core/src/__tests__/context-inspector-plugin.test.ts` boots the bundled plugin, checks `/v1/plugins` tabs, the public page and its CSP, the token on data routes, and that the stored snapshot equals the provider request.
-- Screenshot from a headless run with a fake model: `/workspace/context-inspector.png` (not committed).
+- A screenshot from a headless run with a fake model was checked by hand (not committed).

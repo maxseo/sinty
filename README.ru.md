@@ -116,7 +116,8 @@ models:
 - Спецификации: [события и API](docs/spec/protocol.md) · [журнал и восстановление](docs/spec/journal.md) · [манифест плагина и конвейер патчей](docs/spec/plugin-manifest.md) · [политики](docs/spec/policy.md) · [супервизор](docs/spec/supervisor.md)
 - [Интеграции](docs/integrations.md)
 - [Переезд с n8n](docs/migration-from-n8n.md)
-- [Дорожная карта](docs/roadmap.md)
+- [Дорожная карта](docs/roadmap.md) · [Бэклог](docs/backlog.md) · [План](docs/plan.md) · [Журнал изменений](docs/journal/README.md)
+- [Как подхватить проект: что читать и рабочие правила](docs/README.md#как-подхватить-проект)
 - [Безопасность](SECURITY.md) · [Как участвовать](CONTRIBUTING.md) · [Правила для кодовых агентов](AGENTS.md)
 
 ## Лицензия

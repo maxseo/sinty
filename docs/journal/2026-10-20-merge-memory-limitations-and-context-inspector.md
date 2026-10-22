@@ -3,7 +3,8 @@
 - Date: 2026-10-20
 - Area: repository, CHANGELOG, packages/core (memory-router)
 - Plan step: release of the memory fixes and the context inspector
-- Commits: PR #3 merge `6d65de2`; this commit (main merged into `feat/context-inspector`); the PR #4 merge commit
+- Commits: PR #3 merge `6d65de2`; `42d8378` (main merged into `feat/context-inspector`); the PR #4 merge `24ba03f`
+- PR: [#4](https://github.com/maxseo/sinty/pull/4) (merge `24ba03f`)
 
 ## What and why
 

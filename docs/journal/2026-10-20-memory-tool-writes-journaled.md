@@ -4,6 +4,7 @@
 - Area: packages/core (memory-router.ts)
 - Plan step: follow-up to memory plan step 4; known deviation "tool writes do not emit memory.written"
 - Commits: `feat(memory): recall OR/prefix fallback, journaled tool writes, sinty memory reindex` (one commit for the three memory changes, docs/spec/memory.md and CHANGELOG)
+- PR: [#3](https://github.com/maxseo/sinty/pull/3) (merge `6d65de2`)
 
 ## What and why
 
@@ -32,6 +33,10 @@ only that one event.
 - `by` is omitted for tool writes; it names a plugin that changed or dropped the write. `source` stays as given by
   the tool (`agent` by default).
 - The event carries no `turnId`, like other memory events today (`MemoryRouter` records by session).
+
+## Rejected alternatives
+
+Not recorded when the change was made (noted in the 2026-10-22 docs audit, [#19](https://github.com/maxseo/sinty/pull/19)).
 
 ## Migration notes
 
