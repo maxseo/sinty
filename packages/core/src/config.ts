@@ -62,6 +62,14 @@ export const configSchema = z.object({
       inspect: z.array(z.string()).optional(),
     })
     .prefault({}),
+  /** shell.run on Linux: bubblewrap sandbox (see shell-sandbox.ts and docs/spec/policy.md). Windows always uses its cage. */
+  shell: z
+    .object({
+      sandbox: z.enum(["auto", "bwrap", "off"]).optional(),
+      network: z.boolean().optional(),
+      passEnv: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).optional(),
+    })
+    .optional(),
   server: z
     .object({
       host: z.string().default("127.0.0.1"),

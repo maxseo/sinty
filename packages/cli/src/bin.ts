@@ -9,7 +9,7 @@ process.removeAllListeners("warning");
 process.on("warning", (w) => {
   if (!(w.name === "ExperimentalWarning" && /SQLite/.test(w.message))) console.warn(w);
 });
-const { evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadConfig, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, rotateApiToken, SecretStore, Sinty, startServer, TokenRotationError } = await import("@sinty/core");
+const { decideSandbox, evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadConfig, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, rotateApiToken, SecretStore, Sinty, startServer, TokenRotationError } = await import("@sinty/core");
 
 const HELP = `sinty — thin-core AI agent
 
@@ -368,6 +368,12 @@ async function doctor(): Promise<number> {
     if (p?.apiKey) check(Boolean(sinty.secrets.resolve(p.apiKey)), `secret for ${pid} (${p.apiKey})`);
   }
   check(Boolean(sinty.secrets.resolve(sinty.config.server.token)), "API token");
+  if (process.platform === "linux") {
+    const box = decideSandbox(sinty.config.shell ?? {}, sinty.policy.mode === "strict");
+    if (box.kind === "bwrap") check(true, `shell sandbox: bubblewrap (${box.bin})`);
+    else if (box.kind === "refuse") check(false, `shell sandbox: ${box.message}`);
+    else console.log(`warn shell sandbox: none (${box.reason}); shell.run sees the whole user account`);
+  }
   const started = await sinty.start();
   for (const p of sinty.host.plugins.values()) check(true, `plugin ${p.name}: ${p.tools.length} tools, providers [${p.providers.join(", ")}]`);
   for (const f of started.failedPlugins) check(false, `plugin ${f.plugin}: ${f.error}`);

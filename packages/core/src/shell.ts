@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isInside } from "./paths.js";
+import { bwrapArgs, decideSandbox, type ShellSandboxConfig } from "./shell-sandbox.js";
 
 const MAX_OUT = 20_000;
 
@@ -15,8 +16,22 @@ export interface ShellResult {
   timedOut: boolean;
 }
 
-/** Runs one command. The working directory stays inside the workspace. Output is capped. */
-export function runShell(workspace: string, command: string, cwd = ".", timeoutMs = 30_000): Promise<ShellResult> {
+export interface ShellOptions extends ShellSandboxConfig {
+  /** policy mode strict: on Linux the command runs only inside bubblewrap. */
+  strict?: boolean;
+  /** $SINTY_HOME, kept out of the Linux sandbox. */
+  home?: string;
+  log?: (level: string, msg: string) => void;
+}
+
+/** One warning per process when Linux commands run without the sandbox. */
+let warnedUnsandboxed = false;
+
+/**
+ * Runs one command. The working directory stays inside the workspace. Output is capped. On Windows the command runs in
+ * the AppContainer cage (ShellBox.exe); on Linux inside bubblewrap when available (see shell-sandbox.ts).
+ */
+export function runShell(workspace: string, command: string, cwd = ".", timeoutMs = 30_000, opts: ShellOptions = {}): Promise<ShellResult> {
   const line = command.trim();
   if (!line) return Promise.reject(new Error("command is empty"));
   if (line.length > 4_000) return Promise.reject(new Error("command is longer than 4000 characters"));
@@ -28,11 +43,20 @@ export function runShell(workspace: string, command: string, cwd = ".", timeoutM
 
   const box = process.platform === "win32" ? shellBoxExe() : undefined;
   if (process.platform === "win32" && !box) return Promise.reject(new Error("command cage is missing"));
+  const linux = process.platform === "linux" ? decideSandbox(opts, opts.strict) : undefined;
+  if (linux?.kind === "refuse") return Promise.reject(new ShellSandboxError(linux.message));
+  if (linux?.kind === "none" && opts.sandbox !== "off" && !warnedUnsandboxed) {
+    warnedUnsandboxed = true;
+    opts.log?.("warn", `shell.run runs without a sandbox (${linux.reason}); install bubblewrap or set shell.sandbox: off to silence this`);
+  }
+  const ws = resolve(workspace);
   return new Promise((done) => {
     const tools = box ? cageNode() : undefined;
     const child = box
       ? spawn(box, ["--cwd", dir, ...(tools ? ["--tools", tools] : []), "--command", line], { cwd: dir, windowsHide: true })
-      : spawn(line, { cwd: dir, shell: true, windowsHide: true });
+      : linux?.kind === "bwrap"
+        ? spawn(linux.bin, bwrapArgs({ workspace: ws, cwd: dir, command: line, ...(opts.home ? { home: opts.home } : {}), ...(opts.network !== undefined ? { network: opts.network } : {}), ...(opts.passEnv ? { passEnv: opts.passEnv } : {}) }), { cwd: dir })
+        : spawn(line, { cwd: dir, shell: true, windowsHide: true });
     let stdout = "";
     let stderr = "";
     let truncated = false;
@@ -63,6 +87,8 @@ export function runShell(workspace: string, command: string, cwd = ".", timeoutM
     });
   });
 }
+
+export class ShellSandboxError extends Error {}
 
 /** A copy of Node the cage can execute. Program Files is not readable by the container, and granting it needs an administrator. */
 function cageNode(): string | undefined {

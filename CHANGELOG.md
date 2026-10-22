@@ -36,6 +36,11 @@ All notable changes to this project are documented here. The format follows
   another `models.routes.embed` route (FTS still finds those facts); `sinty memory reembed` (old name `reindex`)
   replaces them and, after a `memory.dimensions` change, rebuilds `facts_vec`. `memory.reembed: auto` does it in the
   background on start. `sinty doctor` and a one-time `memory.degraded` report stale vectors.
+- Linux sandbox for `shell.run` with bubblewrap: system folders and tool folders on `PATH` read-only, the workspace
+  read-write, no home folder or Sinty secrets, no network and a cleared environment (`SINTY_SECRET_*` never passed).
+  `config.yaml` `shell.sandbox: auto | bwrap | off` (default `auto`), `shell.network`, `shell.passEnv`. Without a
+  usable `bwrap`, `auto` runs commands as before with one warning; `bwrap` and policy `mode: strict` refuse with
+  `sandbox_unavailable`. `sinty doctor` shows the state. Windows keeps its AppContainer cage unchanged.
 - Plugin `skills` with the skills catalog and `skill.read`, `skill.files`, `skill.read_file`, `skill.write_file`,
   `skill.edit`, `skill.write` (moved out of the core; same names, descriptions, input schemas, error codes and
   hints; `skill.*` names reserved for it). On by default: `plugins.disabled: [skills]` or unticking it in Settings

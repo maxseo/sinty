@@ -18,7 +18,7 @@ import { hint, renderTurnContext, resolveTimezone, withoutHint } from "./prompt.
 import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
 import { compactCap, compactPoint, ContextWindows, ratioFromEvents, tokenRatio, type ContextWindow } from "./context-window.js";
-import { runShell } from "./shell.js";
+import { runShell, ShellSandboxError } from "./shell.js";
 import { renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
@@ -727,8 +727,14 @@ export class Agent {
     if (name === "shell.run") {
       const a = args as { command: string; cwd?: string; timeoutMs?: number };
       try {
-        return await runShell(this.d.paths.workspace, a.command, a.cwd ?? ".", a.timeoutMs ?? 30_000);
+        return await runShell(this.d.paths.workspace, a.command, a.cwd ?? ".", a.timeoutMs ?? 30_000, {
+          ...(this.d.config.shell ?? {}),
+          strict: this.d.policy.mode === "strict",
+          home: this.d.paths.home,
+          ...(this.d.log ? { log: this.d.log } : {}),
+        });
       } catch (e) {
+        if (e instanceof ShellSandboxError) throw new CoreToolError("sandbox_unavailable", e.message, "Do not retry: a human has to install bubblewrap or change shell.sandbox in config.yaml.");
         throw new CoreToolError("invalid_args", e instanceof Error ? e.message : String(e), "cwd stays inside the workspace.");
       }
     }
