@@ -9,7 +9,7 @@ process.removeAllListeners("warning");
 process.on("warning", (w) => {
   if (!(w.name === "ExperimentalWarning" && /SQLite/.test(w.message))) console.warn(w);
 });
-const { decideSandbox, evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadConfig, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, rotateApiToken, SecretStore, Sinty, startServer, TokenRotationError } = await import("@sinty/core");
+const { decideSandbox, describeCompaction, evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadConfig, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, rotateApiToken, SecretStore, Sinty, startServer, TokenRotationError } = await import("@sinty/core");
 
 const HELP = `sinty — thin-core AI agent
 
@@ -381,7 +381,7 @@ async function doctor(): Promise<number> {
     // Ask the provider's model list now instead of waiting for the background refresh.
     await sinty.windows.refresh(def.split("/")[0]!);
     const w = sinty.windows.resolve(def);
-    console.log(`info context window ${def}: ${w.tokens} tokens (${w.source}${w.source === "fallback" ? ": unknown model, set models.contextWindows or memory.contextTokens" : ""}), summary at ${Math.floor(w.tokens * 0.65)}`);
+    console.log(`info ${describeCompaction(def, w, sinty.config)}`);
   }
   try {
     const v = sinty.memory.builtin.store.vectorStatus();

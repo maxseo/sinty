@@ -38,6 +38,21 @@ export function compactPoint(window: number, cap: number | undefined): CompactPo
 }
 
 /**
+ * The `sinty doctor` line for a route's window and where its dialogue is folded, from the same compactPoint() the
+ * memory router uses, saying whether memory.compactCapTokens or 65% of the window applies.
+ */
+export function describeCompaction(route: string, w: ContextWindow, config: SintyConfig): string {
+  const point = compactPoint(w.tokens, compactCap(config));
+  const atWindow = Math.floor(w.tokens * COMPACT_AT);
+  const source = `${w.source}${w.source === "fallback" ? ": unknown model, set models.contextWindows or memory.contextTokens" : ""}`;
+  const why =
+    point.by === "cap"
+      ? `memory.compactCapTokens; 65% of the window would be ${atWindow}`
+      : `65% of the window; ${point.cap ? `memory.compactCapTokens ${point.cap} is higher` : "no memory.compactCapTokens cap"}`;
+  return `context window ${route}: ${w.tokens} tokens (${source}), summary at ${point.tokens} (${why})`;
+}
+
+/**
  * Input windows of models whose provider API does not report one (DeepSeek and OpenAI `/models` return ids only).
  * Every row names its source; checked 2026-10-22. Ids match exactly or with a dated snapshot suffix
  * (`gpt-4o-2024-08-06`). Anthropic's model list reports `max_input_tokens`, so Claude models need no row here.
