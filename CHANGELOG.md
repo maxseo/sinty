@@ -206,6 +206,10 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- `sinty doctor` printed the compaction point as 65% of the window ("summary at 681574" for DeepSeek's 1M window)
+  although compaction folds at `memory.compactCapTokens` (150000 by default) when that is lower. It now prints the
+  point from the core's `compactPoint()` and says whether the cap or 65% of the window applies (`describeCompaction`,
+  exported from `@sinty/core` with `compactCap`, `compactPoint` and `DEFAULT_COMPACT_CAP`).
 - `tool-web` (and any plugin with `permissions.shell`, `permissions.browser` or runtime `mcp-stdio`) no longer logs
   Node's `[PERM0002] SecurityWarning: The flag --allow-child-process must be used with extreme caution` as a warning
   on every start. Only that warning code is switched off, only in those processes (`--disable-warning=PERM0002`;
