@@ -57,6 +57,14 @@ Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-mani
 | `tools[].docs` | markdown the supervisor shows when this tool fails |
 | `editable` | whether the agent may patch this plugin; `false` for security-critical plugins and for any UI the core serves |
 
+A process that gets `--allow-child-process` (`permissions.shell`, `permissions.browser` or runtime `mcp-stdio`) also
+gets `--disable-warning=PERM0002`: Node's "The flag --allow-child-process must be used with extreme caution"
+SecurityWarning is switched off by its code in that process only. Older Node 24 releases (24.12) print it without a
+code; there the host passes `--disable-warning=SecurityWarning` instead, still only to that process (probed once per
+core process with `childProcessWarningFlag()`). The host logs one info line
+`may start child processes (<reason>); the Node permission model does not confine them` instead. Every other
+warning, including other SecurityWarnings, still reaches the log as `warn`.
+
 Input schemas are declared in code (zod) and exported by the plugin at load time; the host converts them to JSON Schema and stores them in the registry.
 
 ## `$DATA`, HTTP routes and agent access
