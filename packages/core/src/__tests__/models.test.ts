@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
+import { loadConfig, saveSettings } from "../config.js";
+import { resolvePaths } from "../paths.js";
 import { Sinty } from "../sinty.js";
 import { boot, tempHome } from "./helpers.js";
 
@@ -75,6 +77,7 @@ test("model gateway: routes resolve default, cheap and embed", async () => {
     assert.deepEqual(sinty.models.resolve("default"), ["rec/main-model"]);
     assert.deepEqual(sinty.models.resolve("cheap"), ["rec/cheap-model"]);
     assert.deepEqual(sinty.models.resolve("embed"), ["rec/embed-model"]);
+    assert.deepEqual(sinty.models.resolve("decision"), []);
     assert.deepEqual(sinty.models.resolve("other/model"), ["other/model"]);
     assert.deepEqual(sinty.models.resolve("nope"), []);
   } finally {
@@ -152,6 +155,25 @@ test("ctx.models: the plugin token budget survives a restart", async () => {
     } finally {
       await second.stop();
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test("settings store the embed and decision routes", () => {
+  const { home, cleanup } = tempHome();
+  try {
+    const paths = resolvePaths(home);
+    const before = loadConfig(paths);
+    saveSettings(paths, { model: "deepseek/deepseek-chat", fallback: [], enabled: before.plugins.enabled, embed: "openai/text-embedding-3-small", decision: "openai/gpt-4.1", dimensions: 1536 }, before.providers);
+    const after = loadConfig(paths);
+    assert.equal(after.models.routes.embed, "openai/text-embedding-3-small");
+    assert.equal(after.models.routes.decision, "openai/gpt-4.1");
+    assert.equal(after.memory.dimensions, 1536);
+    saveSettings(paths, { model: "deepseek/deepseek-chat", fallback: [], enabled: before.plugins.enabled, embed: "", decision: "" }, before.providers);
+    const cleared = loadConfig(paths);
+    assert.equal(cleared.models.routes.embed, undefined);
+    assert.equal(cleared.models.routes.decision, undefined);
   } finally {
     cleanup();
   }

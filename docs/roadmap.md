@@ -17,4 +17,4 @@ Milestones in order. Smaller items without a milestone are in the [backlog](back
 
 - In `standard` mode the network allowlist is enforced by the plugin runtime (`fetch` is replaced), not by the OS. A malicious plugin could use `node:net` directly. OS-level control comes with `strict` mode (M5).
 - Budgets in USD are not enforced yet (no price table).
-- One active turn per session: a second message returns `409 turn_active`.
+- A second message during a running turn joins that turn. A turn waiting for approval still returns `409 turn_active`.

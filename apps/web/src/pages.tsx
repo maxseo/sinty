@@ -51,6 +51,9 @@ interface SettingsData {
   compress: string;
   facts: string;
   stallSeconds: number;
+  embed: string;
+  decision: string;
+  dimensions: number;
   plugins: SettingsPlugin[];
 }
 
@@ -150,7 +153,7 @@ function ProviderCard({ p, models, setProviders, setModels }: {
   );
 }
 
-function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel: (v: string) => void; saveInstall: () => Promise<void> }) {
+function ModelsPane({ model, setModel, embed, setEmbed, decision, setDecision, dimensions, setDimensions, saveInstall }: { model: string; setModel: (v: string) => void; embed: string; setEmbed: (v: string) => void; decision: string; setDecision: (v: string) => void; dimensions: number; setDimensions: (v: number) => void; saveInstall: () => Promise<void> }) {
   const { data, error, reload } = useLoad<{ models: { route: string; enabled: boolean }[]; providers: { id: string; protocol: string; baseUrl: string; hasKey: boolean }[] }>("/v1/models", []);
   const [models, setModels] = useState<{ route: string; enabled: boolean }[]>([]);
   const [providers, setProviders] = useState<{ id: string; protocol: string; baseUrl: string; apiKey: string; hasKey: boolean; remove?: boolean }[]>([]);
@@ -190,6 +193,9 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
       <h3>Модели</h3>
       <p class="small muted">Сверху модель установки. Ниже провайдеры и их ключи. Пустой ключ не затирает уже записанный.</p>
       <label class="field">Модель по умолчанию<input value={model} onInput={(e) => setModel(e.currentTarget.value)} placeholder="deepseek/deepseek-v4-pro" /></label>
+      <RoutePick label="Эмбеддинги" hint="Векторная память. Пусто — поиск только по словам. Ширина должна совпадать с моделью, затем sinty memory reembed." value={embed} onChange={setEmbed} />
+      <label class="field">Ширина вектора<input type="number" min={1} max={8192} value={dimensions} onInput={(e) => setDimensions(Number(e.currentTarget.value))} /></label>
+      <RoutePick label="Модель решений" hint="Пока только сохраняется. Позже ею будут пользоваться короткие решения, не основной ход." value={decision} onChange={setDecision} />
       <h3>Включённые маршруты</h3>
       <p class="small muted">Снятие галочки убирает модель из этого списка. В карточке провайдера её снова можно выбрать.</p>
       {models.filter((m) => providers.some((p) => !p.remove && m.route.startsWith(`${p.id}/`))).map((m) => (
@@ -237,6 +243,19 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
       {notice && <p class="small">{notice}</p>}
       {saveError && <p class="error">{saveError}</p>}
     </div>
+  );
+}
+
+function RoutePick({ label, hint, value, onChange }: { label: string; hint: string; value: string; onChange: (v: string) => void }) {
+  const routes = useEnabledModels();
+  const options = value && !routes.includes(value) ? [value, ...routes] : routes;
+  return (
+    <label class="field">{label}<span class="small muted">{hint}</span>
+      <select value={value} onChange={(e) => onChange(e.currentTarget.value)}>
+        <option value="">не задана</option>
+        {options.map((r) => <option key={r} value={r}>{r}</option>)}
+      </select>
+    </label>
   );
 }
 
@@ -380,12 +399,18 @@ function PluginsSettings({ enabled, setEnabled }: { enabled: string[]; setEnable
 export function SettingsPage({ onSaved, section }: { onSaved: () => void; section: string }) {
   const { data, error, reload } = useLoad<SettingsData>("/v1/settings", []);
   const [model, setModel] = useState("");
+  const [embed, setEmbed] = useState("");
+  const [decision, setDecision] = useState("");
+  const [dimensions, setDimensions] = useState(1536);
   const [enabled, setEnabled] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [saveError, setSaveError] = useState("");
   useEffect(() => {
     if (!data) return;
     setModel(data.model);
+    setEmbed(data.embed ?? "");
+    setDecision(data.decision ?? "");
+    setDimensions(data.dimensions || 1536);
     setEnabled(data.plugins.filter((p) => p.enabled).map((p) => p.name));
   }, [data]);
   const save = async (): Promise<void> => {
@@ -394,7 +419,7 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
     try {
       await api("/v1/settings", {
         method: "PUT",
-        body: { model, fallback: [], enabled },
+        body: { model, fallback: [], enabled, embed, decision, dimensions },
       });
       setNotice("Сохранено. Модель, персона и служебные задания действуют со следующего хода. Плагины подхватятся после перезапуска sinty web.");
       onSaved();
@@ -409,7 +434,7 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       {error && <p class="error">{error}</p>}
       {section === "general" && <GeneralPane />}
       {section !== "general" && section !== "models" && section !== "plugins" && <SectionPane key={section} id={section} />}
-      {section === "models" && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
+      {section === "models" && <ModelsPane model={model} setModel={setModel} embed={embed} setEmbed={setEmbed} decision={decision} setDecision={setDecision} dimensions={dimensions} setDimensions={setDimensions} saveInstall={save} />}
       {section === "plugins" && data && (
         <>
           <PluginsSettings enabled={enabled} setEnabled={setEnabled} />

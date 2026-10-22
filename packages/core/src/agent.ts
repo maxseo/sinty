@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z, type TurnInfo, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
 import { budgetTokens, type CheckpointPhase, type SupervisedTool } from "@sinty/supervisor";
@@ -19,7 +19,7 @@ import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
 import { compactCap, compactPoint, ContextWindows, ratioFromEvents, tokenRatio, type ContextWindow } from "./context-window.js";
 import { runShell, ShellSandboxError } from "./shell.js";
-import { renderAttachment } from "./blobs.js";
+import { renderAttachment, storeUploads } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
 import { watchStall } from "./stall.js";
@@ -191,7 +191,7 @@ export class Agent {
     const active = j.activeTurn(sessionId);
     if (active) {
       if (active.status !== "blocked") {
-        this.record({ sessionId, turnId: active.id, type: "message.user", actor, data: strip({ text, channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
+        this.record({ sessionId, turnId: active.id, type: "message.user", actor, data: strip({ text: this.withUploads(sessionId, text, opts.attachments), channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
         if (opts.idempotencyKey) j.rememberIdempotency(opts.idempotencyKey, sessionId, active.id);
         return { turnId: active.id };
       }
@@ -200,7 +200,7 @@ export class Agent {
       if (pendingAsk) {
         this.record({ sessionId, turnId: active.id, type: "tool.call.completed", actor, data: { callId: pendingAsk, result: { answer: text }, durationMs: 0 } });
       } else if (reason === "supervisor" || reason === "budget") {
-        this.record({ sessionId, turnId: active.id, type: "message.user", actor, data: strip({ text, channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
+        this.record({ sessionId, turnId: active.id, type: "message.user", actor, data: strip({ text: this.withUploads(sessionId, text, opts.attachments), channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
       } else {
         throw new AgentError("turn_active", `turn ${active.id} is blocked on an approval; approve, deny or interrupt it`, 409);
       }
@@ -211,7 +211,7 @@ export class Agent {
     const turnId = newId("trn");
     j.startTurn(turnId, sessionId);
     this.record({ sessionId, turnId, type: "turn.started", actor: SYSTEM, data: { trigger: "message" } });
-    this.record({ sessionId, turnId, type: "message.user", actor, data: strip({ text, channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
+    this.record({ sessionId, turnId, type: "message.user", actor, data: strip({ text: this.withUploads(sessionId, text, opts.attachments), channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
     if (opts.idempotencyKey) j.rememberIdempotency(opts.idempotencyKey, sessionId, turnId);
     this.launch(sessionId, turnId);
     return { turnId };
@@ -1027,6 +1027,16 @@ export class Agent {
     );
     if (this.d.patches) parts.push("You may fix your own plugins with plugin.read, plugin.propose_patch and plugin.apply_patch. The core itself cannot be changed.");
     return parts.filter((part) => part.trim()).join("\n\n");
+  }
+
+  private withUploads(sessionId: string, text: string, attachments: BlobRef[] | undefined): string {
+    if (!attachments?.length) return text;
+    const session = this.d.journal.getSession(sessionId);
+    const project = session?.projectId ? listProjects(this.d.paths).find((p) => p.id === session.projectId) : undefined;
+    const dir = project ? projectDir(this.d.paths, project) : this.d.paths.workspace;
+    mkdirSync(join(dir, "_inbox"), { recursive: true });
+    const saved = storeUploads(this.d.paths.data, join(dir, "_inbox"), attachments);
+    return saved.length ? `${text}\n\nФайлы лежат в _inbox: ${saved.join(", ")}` : text;
   }
 
   private recall(sessionId: string, args: unknown): unknown {

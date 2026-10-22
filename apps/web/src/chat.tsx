@@ -241,6 +241,11 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
     setSending(true);
     setError("");
     try {
+      let enter = "queue";
+      try { enter = JSON.parse(localStorage.getItem("sinty.prefs") || "{}").enter ?? "queue"; } catch { /* keep queue */ }
+      if (enter === "interrupt" && info?.activeTurn?.status === "running") {
+        await api(`/v1/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: "POST" });
+      }
       await api(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
         body: { text, channel: "web", ...(replyAgent ? { agentId: replyAgent } : {}), ...(files.length ? { attachments: files.map(({ name, blob, mime, bytes }) => ({ name, blob, mime, bytes })) } : {}) },
         headers: { "idempotency-key": crypto.randomUUID() },
@@ -271,10 +276,12 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
 
   const placeholder =
     pending?.reason === "ask_human"
-      ? `Агент спрашивает: ${pending.detail ?? ""}`
+      ? "Ответьте агенту…"
       : pending?.reason === "supervisor" || pending?.reason === "budget"
         ? "Ответьте, чтобы продолжить работу"
-        : "Сообщение агенту… (Enter — отправить, Shift+Enter — перенос)";
+        : running
+          ? "Агент работает. Сообщение добавится в этот ход."
+          : "Сообщение агенту… (Enter — отправить, Shift+Enter — перенос)";
 
   return (
     <section class="chat">
@@ -369,6 +376,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
         </div>
       )}
 
+      {pending?.reason === "ask_human" && pending.detail && <div class="note ask">Агент спрашивает: {pending.detail}</div>}
       {pending?.reason === "approval" && pending.approvals.length > 1 && (
         <div class="approvals">
           Ждут решения: {pending.approvals.length}
@@ -403,7 +411,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
           <div class="composer-bar">
             <label class="icon composer-plus" title="Файл">
               <IconPlus />
-              <input type="file" multiple accept="image/*,.pdf,.xlsx,.csv,.txt,.md,.json" onChange={(e) => void addFiles(e.currentTarget.files)} />
+              <input type="file" multiple accept="image/*,.pdf,.xlsx,.xls,.docx,.csv,.txt,.md,.json" onChange={(e) => void addFiles(e.currentTarget.files)} />
             </label>
             {members.length > 0 && (
               <span class="composer-model"><IconBrain /> {members.find((m) => m.id === replyAgent)?.name}</span>

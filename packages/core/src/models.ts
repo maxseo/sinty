@@ -68,7 +68,7 @@ export class ModelGateway {
     this.usage = d.usage ?? new MemoryUsage();
   }
 
-  /** "default" | "cheap" | "embed" | a models.routes key | "provider/model" → candidate routes in order. */
+  /** "default" | "cheap" | "embed" | "decision" | a models.routes key | "provider/model" → candidate routes in order. */
   resolve(route = "default"): string[] {
     const m = this.d.config.models;
     const routes = m.routes ?? {};
@@ -76,6 +76,7 @@ export class ModelGateway {
     if (route === "default") out = [m.default, ...m.fallback];
     else if (route === "cheap") out = [routes.cheap || this.d.config.service.model || m.default];
     else if (route === "embed") out = [routes.embed];
+    else if (route === "decision") out = [routes.decision];
     else if (routes[route]) out = [routes[route]];
     else if (route.includes("/")) out = [route];
     else out = [];

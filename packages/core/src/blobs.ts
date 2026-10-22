@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BlobRef } from "@sinty/sdk";
 
@@ -41,6 +41,27 @@ export function readBlob(dataDir: string, ref: BlobRef): { bytes: Buffer; mime: 
   }
 }
 
+/** Copies attached files into the project `_inbox` (or the workspace `_inbox`) under their own names. */
+export function storeUploads(dataDir: string, inbox: string, refs: BlobRef[]): string[] {
+  const saved: string[] = [];
+  mkdirSync(inbox, { recursive: true });
+  for (const ref of refs) {
+    const file = readBlob(dataDir, ref);
+    if (!file) continue;
+    const base = (file.name || "file").replace(/[\\/:*?"<>|]/g, "_").slice(0, 180) || "file";
+    let name = base;
+    let n = 2;
+    while (existsSync(join(inbox, name))) {
+      const dot = base.lastIndexOf(".");
+      name = dot > 0 ? `${base.slice(0, dot)}-${n}${base.slice(dot)}` : `${base}-${n}`;
+      n += 1;
+    }
+    writeFileSync(join(inbox, name), file.bytes);
+    saved.push(name);
+  }
+  return saved;
+}
+
 /** Text the model can read, or an image payload. Other bytes become a one-line note. */
 export function renderAttachment(dataDir: string, ref: BlobRef): { text: string; image?: { mime: string; data: string } } {
   const file = readBlob(dataDir, ref);
@@ -59,6 +80,7 @@ function extractText(bytes: Buffer, mime: string, name: string): string {
   if (mime.startsWith("text/") || /\.(csv|tsv|md|json|txt|log)$/.test(name.toLowerCase())) return bytes.toString("utf8");
   if (lower.includes("pdf") || name.toLowerCase().endsWith(".pdf")) return pdfText(bytes);
   if (lower.includes("spreadsheet") || lower.includes("excel") || /\.xlsx$/.test(name.toLowerCase())) return xlsxText(bytes);
+  if (lower.includes("wordprocessingml") || name.toLowerCase().endsWith(".docx")) return docxText(bytes);
   return "";
 }
 
@@ -95,15 +117,30 @@ function xlsxText(bytes: Buffer): string {
   for (const [name, body] of files) {
     if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) continue;
     const xml = body.toString("utf8");
-    const row: string[] = [];
-    for (const cell of xml.matchAll(/<c[^>]*?(?:t="([^"]+)")?[^>]*>[\s\S]*?<v>([^<]*)<\/v>/g)) {
-      const kind = cell[1];
-      const value = cell[2] ?? "";
-      row.push(kind === "s" ? (shared[Number(value)] ?? "") : value);
+    for (const rowXml of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+      const row: string[] = [];
+      for (const cell of rowXml[1]!.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+        const kind = /t="([^"]+)"/.exec(cell[1] ?? "")?.[1];
+        const value = /<v>([^<]*)<\/v>/.exec(cell[2] ?? "")?.[1] ?? "";
+        const inline = [...(cell[2] ?? "").matchAll(/<t[^>]*>([^<]*)<\/t>/g)].map((m) => m[1] ?? "").join("");
+        row.push(kind === "s" ? (shared[Number(value)] ?? "") : inline || value);
+      }
+      if (row.length) lines.push(row.join("\t"));
     }
-    if (row.length) lines.push(row.join("\t"));
   }
   return lines.join("\n");
+}
+
+function docxText(bytes: Buffer): string {
+  const xml = unzip(bytes).get("word/document.xml")?.toString("utf8") ?? "";
+  return xml
+    .replace(/<w:p\b[^>]*>/g, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function unzip(buf: Buffer): Map<string, Buffer> {

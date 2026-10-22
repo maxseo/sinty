@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { eventsToMessages } from "../agent.js";
-import { saveBlob } from "../blobs.js";
+import { saveBlob, storeUploads } from "../blobs.js";
 import type { SintyEvent } from "@sinty/sdk";
 
 test("a text attachment is inlined and an image is passed beside the text", () => {
@@ -22,6 +22,8 @@ test("a text attachment is inlined and an image is passed beside the text", () =
     assert.match(messages[0]!.content, /alpha,beta/);
     assert.match(messages[0]!.content, /Hello PDF/);
     assert.equal(messages[0]!.images?.[0]?.mime, "image/png");
+    const inbox = join(dir, "_inbox");
+    assert.deepEqual(storeUploads(dir, inbox, [note]), ["t.csv"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

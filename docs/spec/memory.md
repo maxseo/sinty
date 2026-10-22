@@ -179,7 +179,8 @@ ctx.models.embed({ route: "embed", input: ["…"] })
 ```
 
 - Routes: `default` → `models.default`; `cheap` → `models.routes.cheap`, else `service.model`, else `models.default`;
-  `embed` → `models.routes.embed` (no fallback: embeddings are model-specific); any other key of `models.routes`;
+  `embed` → `models.routes.embed` (no fallback: embeddings are model-specific); `decision` → `models.routes.decision`
+  (saved for later side decisions, not used by the turn loop yet); any other key of `models.routes`;
   or an explicit `provider/model`.
 - The manifest must list the allowed routes: `"permissions": { "models": ["cheap"] }` (`"*"` = any). Explicit
   `provider/model` routes need `"*"`.

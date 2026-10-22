@@ -1,6 +1,6 @@
 import { definePlugin, ToolError, z, type SystemSectionInput } from "@sinty/sdk";
 import { readSettings } from "./settings.ts";
-import { editSkillFile, listSkillFiles, listSkills, readSkill, readSkillFile, skillCatalog, writeSkill, writeSkillFile, type SkillInfo } from "./skills.ts";
+import { editSkillFile, importSkill, listSkillFiles, listSkills, readSkill, readSkillFile, skillCatalog, writeSkill, writeSkillFile, type SkillInfo } from "./skills.ts";
 
 /**
  * Skills, moved out of the core (plan step 7). The skill.* tools keep the names, descriptions, input schemas, error
@@ -35,6 +35,52 @@ export default definePlugin({
       method: "GET",
       path: "/list",
       handler: () => Response.json({ skills: listSkills(root).map((x) => ({ name: x.name, description: x.description })) }),
+    });
+
+    ctx.http({
+      method: "GET",
+      path: "/item",
+      handler: (req) => {
+        const name = new URL(req.url).searchParams.get("name") ?? "";
+        try {
+          const skill = readSkill(root, name);
+          const files = listSkillFiles(root, name).files;
+          return Response.json({ ...skill, description: listSkills(root).find((s) => s.name === name)?.description ?? "", files });
+        } catch (e) {
+          return Response.json({ error: { message: message(e) } }, { status: 404 });
+        }
+      },
+    });
+
+    ctx.http({
+      method: "GET",
+      path: "/file",
+      handler: (req) => {
+        const url = new URL(req.url);
+        try {
+          return Response.json(readSkillFile(root, url.searchParams.get("name") ?? "", url.searchParams.get("path") ?? ""));
+        } catch (e) {
+          return Response.json({ error: { message: message(e) } }, { status: 404 });
+        }
+      },
+    });
+
+    ctx.http({
+      method: "POST",
+      path: "/import",
+      async handler(req) {
+        const body = (await req.json().catch(() => null)) as { name?: unknown; text?: unknown; files?: { path?: unknown; text?: unknown }[] } | null;
+        const name = typeof body?.name === "string" ? body.name.trim() : "";
+        const files = Array.isArray(body?.files)
+          ? body.files.flatMap((f) => (typeof f.path === "string" && typeof f.text === "string" ? [{ path: f.path, text: f.text }] : []))
+          : [];
+        if (typeof body?.text === "string" && body.text.trim()) files.unshift({ path: "SKILL.md", text: body.text });
+        try {
+          return Response.json(importSkill(root, name, files), { status: 201 });
+        } catch (e) {
+          return Response.json({ error: { message: message(e) } }, { status: 400 });
+        }
+      },
     });
 
     ctx.tool({

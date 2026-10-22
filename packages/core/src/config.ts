@@ -268,7 +268,7 @@ export const DEFAULT_FACTS_PROMPT = "List durable facts that should outlive the 
 
 export function saveSettings(
   paths: SintyPaths,
-  patch: { model: string; fallback: string[]; enabled: string[]; agentsMd?: string; serviceModel?: string; compress?: string; facts?: string; stallSeconds?: number },
+  patch: { model: string; fallback: string[]; enabled: string[]; agentsMd?: string; serviceModel?: string; compress?: string; facts?: string; stallSeconds?: number; embed?: string; decision?: string; dimensions?: number },
   providers: Record<string, unknown>,
 ): void {
   const model = patch.model.trim();
@@ -313,6 +313,22 @@ export function saveSettings(
   if (patch.serviceModel !== undefined) doc.setIn(["service", "model"], serviceModel);
   if (patch.compress !== undefined) doc.setIn(["service", "compress"], patch.compress);
   if (patch.facts !== undefined) doc.setIn(["service", "facts"], patch.facts);
+  for (const key of ["embed", "decision"] as const) {
+    if (patch[key] === undefined) continue;
+    const route = patch[key].trim();
+    if (!route) {
+      if (doc.hasIn(["models", "routes", key])) doc.deleteIn(["models", "routes", key]);
+      continue;
+    }
+    if (!MODEL_ROUTE.test(route)) throw new Error(`model must look like provider/model-id, got ${route}`);
+    const provider = route.slice(0, route.indexOf("/"));
+    if (!providers[provider]) throw new Error(`provider ${provider} is not in config.yaml`);
+    doc.setIn(["models", "routes", key], route);
+  }
+  if (patch.dimensions !== undefined) {
+    if (!Number.isInteger(patch.dimensions) || patch.dimensions < 1 || patch.dimensions > 8192) throw new Error("embedding width must be a whole number from 1 to 8192");
+    doc.setIn(["memory", "dimensions"], patch.dimensions);
+  }
   writeFileSync(paths.config, String(doc));
   if (patch.agentsMd !== undefined) writeFileSync(paths.agents, patch.agentsMd);
 }

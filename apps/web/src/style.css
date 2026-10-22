@@ -686,6 +686,17 @@ nav a:hover,
 .appear { display: flex; gap: 8px; }
 .plugin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .plugin-tile { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.skill-card { display: grid; gap: 4px; width: 100%; height: auto; min-height: 64px; padding: 12px; border-radius: 12px; background: var(--panel); color: var(--text); text-align: left; font-weight: 400; box-shadow: none; }
+.skill-card b { font-weight: 650; }
+.cmd-line { display: flex; gap: 8px; align-items: center; }
+.cmd-line input { flex: 1; }
+.file-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.skill-form { width: min(640px, 94vw); }
+.skill-view { width: min(920px, 94vw); }
+.skill-split { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 12px; min-height: 280px; }
+.skill-split pre { margin: 0; white-space: pre-wrap; max-height: 60vh; overflow: auto; }
+.skill-files { display: grid; align-content: start; gap: 6px; }
+.skill-files button { height: auto; min-height: 36px; white-space: normal; text-align: left; }
 .tile-actions { display: flex; gap: 6px; flex: none; }
 .provider-card .grow, .row .grow { flex: 1; }
 .provider-models { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; margin-top: 8px; }
@@ -909,6 +920,8 @@ nav a:hover,
   content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--accent);
 }
 .dialog { display: grid; gap: 12px; width: min(420px, 92vw); padding: 16px; border-radius: var(--radius); }
+.dialog.skill-view { width: min(960px, 94vw); }
+.dialog.skill-view .skill-split { width: 100%; }
 .dialog-head, .dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dialog-actions { justify-content: flex-end; }
 .field input, .field select, .field textarea {

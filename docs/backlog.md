@@ -36,11 +36,10 @@ Cross-session memory is built (core `MemoryRouter` + builtin SQLite store, see [
 - **Effect on the agent:** messages and tool results can carry files stored in `blobs/`. Models that support images get them as input.
 
 ### Message queue per session
-- **Why:** today a second message while a turn runs returns `409 turn_active`.
-- **Effect on the agent:** messages sent while it works are queued and added to the running turn at the next step. The user can correct the agent mid-task without interrupting it.
+- **Status:** a message during a running turn is appended to that turn and the next model step sees it. A turn blocked on an approval still returns `409 turn_active`. Settings → Основные → «Enter, пока агент занят» chooses queue or interrupt.
 
 ### Model routes (`cheap`, per-task)
-- **Status:** partly built. `models.routes.cheap` and `models.routes.embed` are used by plugins through `ctx.models` (core `ModelGateway`). Still open: route the core's own summaries and incident notes through `cheap` by default (today they use `service.model` or the speaker's model).
+- **Status:** partly built. `models.routes.cheap` and `models.routes.embed` are used by plugins through `ctx.models`. Settings → Модели saves `embed`, vector width and `decision` (`decision` is not called by the turn yet). Still open: route the core's own summaries and incident notes through `cheap` by default.
 
 ### Checkpoints
 - **Why:** resume rebuilds a turn from all of its events; very long turns get slow to resume.

@@ -7,7 +7,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Chat attachments are copied into the project `_inbox` (or the workspace `_inbox`) and named in the message. `.docx` text is extracted. An `ask_human` question is shown above the composer, not inside it.
+
 ### Added
+- Settings → Навыки → Добавить навык is one card: a command with a run button, «Загрузить из папки», «Загрузить из zip», and «Добавить скилл» (name, description, when to use, instructions).
+- Settings → Навыки: tabs «Доступные навыки» and «Добавить навык». A skill card opens its files. A skill can be pasted as SKILL.md, imported as files, or written in a form. `POST /p/skills/import`, `GET /p/skills/item`, `GET /p/skills/file`.
+- Settings → Модели: embedding route (`models.routes.embed`), vector width (`memory.dimensions`) and a decision route (`models.routes.decision`, stored only; the turn loop does not call it yet).
+- While a turn is running, the composer says the next message joins that turn. Settings → Основные → «Enter, пока агент занят» = «Прервать» stops the turn before sending. Approval-blocked turns still answer `409`.
 - Memory recall by word form: facts are also indexed as stems (`facts_stem`; Snowball Russian in `stem.ts`, English
   through SQLite's porter tokenizer), with stemmed AND and OR stages after the exact AND. "столы новые" finds "новый
   стол", "cats runs" finds "cat ... running". Existing databases build the index on first open.
