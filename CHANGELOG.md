@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Memory recall by word form: facts are also indexed as stems (`facts_stem`; Snowball Russian in `stem.ts`, English
+  through SQLite's porter tokenizer), with stemmed AND and OR stages after the exact AND. "столы новые" finds "новый
+  стол", "cats runs" finds "cat ... running". Existing databases build the index on first open.
 - Plugin `skills` with the skills catalog and `skill.read`, `skill.files`, `skill.read_file`, `skill.write_file`,
   `skill.edit`, `skill.write` (moved out of the core; same names, descriptions, input schemas, error codes and
   hints; `skill.*` names reserved for it). On by default: `plugins.disabled: [skills]` or unticking it in Settings
