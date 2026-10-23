@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Background `agent.task` approvals surface in the parent chat (`childPending` on
+  `GET /v1/sessions/:id`); «Ждут ответа» opens the parent when the waiter is a child.
 - Responsive turns UX: sidebar no longer lists `agent.task` child sessions as chats; children inherit the parent's
   `projectId`. After a human «Стоп всё» / interrupt, `task.completed` with `status: interrupted` is still journaled
   but the parent is not woken with `trigger: "task"` (so the model does not restart cancelled work). Plugin
