@@ -79,6 +79,18 @@ export interface EventDataMap {
   /** A background agent.task finished; written on the parent session (often without an active turn). */
   "task.completed": { taskId: string; childSessionId: string; status: "completed" | "failed" | "interrupted"; text: string };
 
+  /**
+   * Live progress of a background agent.task child, mirrored onto the parent so the chat is not silent
+   * while the child works. Not included in the model dialogue (UI / journal only).
+   */
+  "task.progress": {
+    taskId: string;
+    childSessionId: string;
+    phase: "tool.started" | "tool.completed" | "tool.denied" | "tool.failed" | "approval";
+    tool?: string;
+    detail?: string;
+  };
+
 
   "plugin.loaded": { plugin: string; version: string; commit?: string };
   "plugin.crashed": { plugin: string; exitCode: number | null; restarts: number };

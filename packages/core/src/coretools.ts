@@ -101,7 +101,7 @@ export const CORE_TOOLS: CoreToolDef[] = [
       "Run a short child turn with only the listed tools. Omit tools to allow web search, web read, memory recall and skill read. The child cannot start another child or use tools outside the list. With background: true return {taskId,sessionId} immediately; when the child finishes the parent gets a task.completed event and a turn with trigger task if idle.",
     input: z.object({
       task: z.string().min(1),
-      tools: z.array(z.string()).max(12).optional().describe("tool names the child may call"),
+      tools: z.array(z.string()).max(12).optional().describe("tool names the child may call (canonical web.search or wire web__search)"),
       background: z.boolean().optional().describe("return immediately; result arrives as task.completed on the parent"),
     }),
     sideEffects: "none",

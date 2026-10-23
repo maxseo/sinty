@@ -33,7 +33,7 @@ type Item =
   | { kind: "tool"; key: string; call: ToolCall }
   | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
 
-const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "task.completed"]);
+const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "task.completed", "task.progress"]);
 
 function build(events: SintyEvent[]): Item[] {
   const items: Item[] = [];
@@ -107,6 +107,29 @@ function build(events: SintyEvent[]): Item[] {
       case "plugin.patch.rolled_back":
         items.push({ kind: "note", key, tone: "warn", text: `Патч ${d.patchId} откатан: ${d.reason}` });
         break;
+      case "task.progress": {
+        const label =
+          d.phase === "tool.started"
+            ? "работает"
+            : d.phase === "tool.completed"
+              ? "готово"
+              : d.phase === "tool.denied"
+                ? "отказано"
+                : d.phase === "tool.failed"
+                  ? "ошибка"
+                  : d.phase === "approval"
+                    ? "ждёт апрув"
+                    : d.phase;
+        const tool = d.tool ? ` ${d.tool}` : "";
+        const detail = d.detail ? ` — ${d.detail}` : "";
+        items.push({ kind: "note", key, tone: d.phase === "tool.failed" || d.phase === "tool.denied" ? "warn" : "info", text: `Фон · ${label}${tool}${detail}` });
+        break;
+      }
+      case "task.completed": {
+        const status = d.status === "completed" ? "готово" : d.status === "failed" ? "ошибка" : "прервано";
+        items.push({ kind: "note", key, tone: d.status === "completed" ? "info" : "warn", text: `Фоновая задача ${status}` });
+        break;
+      }
     }
   }
   return items;

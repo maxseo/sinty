@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- `agent.task` tool lists accept wire names (`web__search`) as well as canonical (`web.search`);
+  wire-only lists no longer auto-deny every child web call with `not in this child turn's tool list`.
 - Background `agent.task` approvals surface in the parent chat (`childPending` on
   `GET /v1/sessions/:id`); «Ждут ответа» opens the parent when the waiter is a child.
 - Responsive turns UX: sidebar no longer lists `agent.task` child sessions as chats; children inherit the parent's
@@ -16,6 +18,8 @@ All notable changes to this project are documented here. The format follows
   `responsive-turn` prompt updated accordingly.
 
 ### Added
+- Background `agent.task` children emit `task.progress` on the parent (tool start/complete/deny/fail/approval)
+  so the parent chat is not silent while the child works; Web UI shows short «Фон · …» notes.
 - Responsive turns: `agent.task` accepts `background: true` and returns `{taskId,sessionId}` immediately; when the
   child ends the parent gets a `task.completed` journal event and, if idle, a turn with `trigger: "task"`. New core
   tool `agent.task_steer` appends into a running child by `sessionId` or `taskId`. `POST /v1/sessions/:id/stop-all`
