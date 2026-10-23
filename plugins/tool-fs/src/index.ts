@@ -1,27 +1,11 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
+import { resolveFsPath } from "./resolve.ts";
 
 const MAX_READ_BYTES = 2_000_000;
 
 const pathArg = z.string().min(1).describe('Relative to the workspace, or "skills:<path>" for the skills folder');
-
-/** Resolve a tool path against the effective workspace (session project dir or global). Exported for tests. */
-export function resolveFsPath(
-  p: string,
-  roots: { workspace: string; skills: string },
-): { abs: string; shown: string } {
-  const [root, rel] = p.startsWith("skills:") ? [roots.skills, p.slice(7)] : [roots.workspace, p];
-  const abs = isAbsolute(rel) ? resolve(rel) : resolve(root, rel);
-  const inside = [roots.workspace, roots.skills].some((r) => abs === r || abs.startsWith(r.endsWith(sep) ? r : r + sep));
-  if (!inside) {
-    throw new ToolError("outside_workspace", `${p} is outside the workspace and skills folders`, {
-      hint: "Use a path relative to the workspace, or skills:<name>/SKILL.md.",
-    });
-  }
-  const base = abs === roots.skills || abs.startsWith(roots.skills.endsWith(sep) ? roots.skills : roots.skills + sep) ? roots.skills : roots.workspace;
-  return { abs, shown: (base === roots.skills ? "skills:" : "") + (relative(base, abs).split(sep).join("/") || ".") };
-}
 
 export default definePlugin({
   name: "tool-fs",
