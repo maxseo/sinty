@@ -33,7 +33,7 @@ type Item =
   | { kind: "tool"; key: string; call: ToolCall }
   | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
 
-const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated"]);
+const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "task.completed"]);
 
 function build(events: SintyEvent[]): Item[] {
   const items: Item[] = [];
@@ -265,7 +265,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   };
 
   const interrupt = async (): Promise<void> => {
-    await api(`/v1/sessions/${encodeURIComponent(sessionId)}/interrupt`, { method: "POST" });
+    await api(`/v1/sessions/${encodeURIComponent(sessionId)}/stop-all`, { method: "POST" });
     await loadInfo();
   };
 
@@ -305,8 +305,8 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
           ))}
         </div>
         {running && (
-          <button class="danger" onClick={() => void interrupt()}>
-            Стоп
+          <button class="danger" title="Прервать этот ход и все дочерние agent.task" onClick={() => void interrupt()}>
+            Стоп всё
           </button>
         )}
       </header>
