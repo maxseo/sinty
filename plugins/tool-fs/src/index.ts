@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
+import { resolveFsPath } from "./resolve.ts";
 
 const MAX_READ_BYTES = 2_000_000;
 
@@ -9,20 +10,10 @@ const pathArg = z.string().min(1).describe('Relative to the workspace, or "skill
 export default definePlugin({
   name: "tool-fs",
   setup(ctx) {
-    const roots = { workspace: ctx.paths.workspace, skills: ctx.paths.skills };
+    const skills = ctx.paths.skills;
+    const globalWorkspace = ctx.paths.workspace;
 
-    const resolvePath = (p: string): { abs: string; shown: string } => {
-      const [root, rel] = p.startsWith("skills:") ? [roots.skills, p.slice(7)] : [roots.workspace, p];
-      const abs = isAbsolute(rel) ? resolve(rel) : resolve(root, rel);
-      const inside = [roots.workspace, roots.skills].some((r) => abs === r || abs.startsWith(r.endsWith(sep) ? r : r + sep));
-      if (!inside) {
-        throw new ToolError("outside_workspace", `${p} is outside the workspace and skills folders`, {
-          hint: "Use a path relative to the workspace, or skills:<name>/SKILL.md.",
-        });
-      }
-      const base = abs.startsWith(roots.skills) ? roots.skills : roots.workspace;
-      return { abs, shown: (base === roots.skills ? "skills:" : "") + (relative(base, abs).split(sep).join("/") || ".") };
-    };
+    const resolvePath = (p: string, workspace = globalWorkspace) => resolveFsPath(p, { workspace, skills });
 
     ctx.tool({
       name: "fs.read",
@@ -34,8 +25,8 @@ export default definePlugin({
       }),
       sideEffects: "read",
       idempotent: true,
-      async run({ path, offset, limit }) {
-        const { abs, shown } = resolvePath(path);
+      async run({ path, offset, limit }, run) {
+        const { abs, shown } = resolvePath(path, run.workspace ?? globalWorkspace);
         const info = await stat(abs).catch(() => undefined);
         if (!info) throw new ToolError("not_found", `${shown} does not exist`, { hint: "Use fs.list to see what is there." });
         if (info.isDirectory()) throw new ToolError("is_directory", `${shown} is a directory`, { hint: "Use fs.list for directories." });
@@ -57,8 +48,8 @@ export default definePlugin({
       input: z.object({ path: pathArg.optional(), depth: z.number().int().min(1).max(5).optional() }),
       sideEffects: "read",
       idempotent: true,
-      async run({ path, depth }) {
-        const { abs, shown } = resolvePath(path ?? ".");
+      async run({ path, depth }, run) {
+        const { abs, shown } = resolvePath(path ?? ".", run.workspace ?? globalWorkspace);
         const out: string[] = [];
         const walk = async (dir: string, level: number): Promise<void> => {
           const entries = await readdir(dir, { withFileTypes: true }).catch(() => {
@@ -82,8 +73,8 @@ export default definePlugin({
       input: z.object({ path: pathArg, content: z.string() }),
       sideEffects: "write",
       idempotent: true,
-      async run({ path, content }) {
-        const { abs, shown } = resolvePath(path);
+      async run({ path, content }, run) {
+        const { abs, shown } = resolvePath(path, run.workspace ?? globalWorkspace);
         await mkdir(dirname(abs), { recursive: true });
         const tmp = `${abs}.sinty-tmp`;
         await writeFile(tmp, content, "utf8");
@@ -98,8 +89,8 @@ export default definePlugin({
       input: z.object({ path: pathArg, old: z.string().min(1), new: z.string(), replaceAll: z.boolean().optional() }),
       sideEffects: "write",
       idempotent: false,
-      async run(args) {
-        const { abs, shown } = resolvePath(args.path);
+      async run(args, run) {
+        const { abs, shown } = resolvePath(args.path, run.workspace ?? globalWorkspace);
         const text = await readFile(abs, "utf8").catch(() => {
           throw new ToolError("not_found", `${shown} does not exist`);
         });

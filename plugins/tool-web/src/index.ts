@@ -59,8 +59,8 @@ export async function searchWeb(ctx: PluginContext, s: WebSettings, query: strin
   return { query: q, results, untrusted: true };
 }
 
-function shotPath(ctx: PluginContext, s: WebSettings): string {
-  const dir = join(ctx.paths.workspace, s.screenshotDir);
+function shotPath(ctx: PluginContext, s: WebSettings, workspace?: string): string {
+  const dir = join(workspace ?? ctx.paths.workspace, s.screenshotDir);
   mkdirSync(dir, { recursive: true });
   return join(dir, `${newId()}.png`);
 }
@@ -123,11 +123,11 @@ export default definePlugin({
       sideEffects: "external",
       idempotent: false,
       timeoutMs: 180_000,
-      async run({ url }) {
+      async run({ url }, run) {
         try {
           const shot = await withBrowser(ctx.net.public, url, s.browserTimeoutMs, async (p, nav) => {
             const title = await p.title();
-            const path = shotPath(ctx, s);
+            const path = shotPath(ctx, s, run.workspace);
             await p.screenshot({ path, fullPage: false });
             const text = htmlToMarkdown(await p.content(), p.url(), s).markdown;
             return { url: p.url(), path, title, ...pageState(nav.status, title, text) };
@@ -157,7 +157,7 @@ export default definePlugin({
       sideEffects: "external",
       idempotent: false,
       timeoutMs: 300_000,
-      async run({ url, actions }) {
+      async run({ url, actions }, run) {
         try {
           if (actions.length > 8) throw new ToolError("invalid_args", "at most 8 actions");
           const doc = await withBrowser(ctx.net.public, url, s.browserTimeoutMs, async (p, nav) => {
@@ -181,7 +181,7 @@ export default definePlugin({
             }
             const html = await p.content();
             const md = htmlToMarkdown(html, p.url(), s);
-            const screenshot = shotPath(ctx, s);
+            const screenshot = shotPath(ctx, s, run.workspace);
             await p.screenshot({ path: screenshot, fullPage: false });
             return { url: p.url(), ...md, untrusted: true as const, screenshot, ...pageState(nav.status, md.title, md.markdown) };
           });

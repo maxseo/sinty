@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Chat UI: unified muted status line («Агент думает…» / «Фон · …») without the white pill; optional **Стриминг ответа** toggle in Настройки → Общие (`sinty.prefs.streaming`, default on).
+- Project workspace chroot: when a session has `projectId`, `fs.*`, `shell.run`, and web screenshots resolve relative paths against `workspace/projects/<slug>` (not the global workspace). Chats without a project keep the global root.
 - Session policy trust: skip further policy `ask` in a chat (deny unchanged) via UI «Больше не спрашивать в этом чате»,
   approval `remember`, `POST /v1/sessions/:id/policy-grants`, or phrases like «не спрашивай» / "just do it". Journaled as
   `session.policy_grant`; tool calls still appear in the journal.
