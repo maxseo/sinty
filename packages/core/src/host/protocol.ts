@@ -58,6 +58,8 @@ export interface CallCtx {
   turnId: string;
   callId: string;
   idempotencyKey: string;
+  /** Session workspace root (project dir when the chat has a projectId). */
+  workspace?: string;
 }
 
 /** ctx.net.public.fetch over IPC; the core does the request (see netguard.ts). */

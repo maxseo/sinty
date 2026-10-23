@@ -242,8 +242,8 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
 
 function GeneralPane() {
   const [prefs, setPrefs] = useState(() => {
-    try { return { preset: "standard", permission: "full", language: "ru", appearance: localStorage.getItem("sinty.theme") || "system", enter: "queue", ...JSON.parse(localStorage.getItem("sinty.prefs") || "{}") }; }
-    catch { return { preset: "standard", permission: "full", language: "ru", appearance: "system", enter: "queue" }; }
+    try { return { preset: "standard", permission: "full", language: "ru", appearance: localStorage.getItem("sinty.theme") || "system", enter: "queue", streaming: true, ...JSON.parse(localStorage.getItem("sinty.prefs") || "{}") }; }
+    catch { return { preset: "standard", permission: "full", language: "ru", appearance: "system", enter: "queue", streaming: true }; }
   });
   const set = (patch: Partial<typeof prefs>): void => {
     const next = { ...prefs, ...patch };
@@ -276,6 +276,9 @@ function GeneralPane() {
       </div>
       <label class="set-row">Enter, пока агент занят
         <select value={prefs.enter} onChange={(e) => set({ enter: e.currentTarget.value })}><option value="queue">В очередь</option><option value="interrupt">Прервать</option></select>
+      </label>
+      <label class="set-row">Стриминг ответа<span class="small muted">Показывать текст по мере генерации</span>
+        <input type="checkbox" checked={prefs.streaming !== false} onChange={(e) => set({ streaming: e.currentTarget.checked })} />
       </label>
       <TokenRow />
     </div>

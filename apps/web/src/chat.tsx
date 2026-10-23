@@ -240,6 +240,14 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
       (m) => {
         const e = JSON.parse(m.data) as SintyEvent;
         if (e.type === "model.delta") {
+          let streamOn = true;
+          try {
+            const prefs = JSON.parse(localStorage.getItem("sinty.prefs") || "{}") as { streaming?: boolean };
+            streamOn = prefs.streaming !== false;
+          } catch {
+            /* default on */
+          }
+          if (!streamOn) return;
           const t = (e.data as { text?: string }).text;
           if (t) setStreaming((s) => s + t);
           return;
@@ -458,12 +466,11 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
             }
           })}
           {streaming && <div class="msg agent live">{streaming}</div>}
-          {bgStatus && (
-            <div class={`bg-status ${bgStatus.tone}`} aria-live="polite">
-              <span class="bg-status-shimmer">{bgStatus.text}</span>
+          {!streaming && (bgStatus || running) && (
+            <div class={`typing${bgStatus?.tone === "warn" ? " warn" : ""}`} aria-live="polite">
+              {bgStatus ? bgStatus.text : "Агент думает…"}
             </div>
           )}
-          {running && !streaming && !bgStatus && <div class="typing">агент думает…</div>}
           <div ref={bottom} />
         </div>
       )}

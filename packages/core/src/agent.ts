@@ -24,7 +24,7 @@ import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
 import { detectPolicyTrustPhrase } from "./policy-trust.js";
 import { watchStall } from "./stall.js";
-import { agentHasPlugin, listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
+import { agentHasPlugin, ensureProjectDirs, listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
 import type { SecretStore } from "./secrets.js";
 import type { SupervisorClient } from "./supervisor-client.js";
 
@@ -1021,7 +1021,7 @@ export class Agent {
         }
         let verdict = evaluateTool(this.d.policy, tool.name, tool.sideEffects);
         for (const touched of pathsTouched(tool.name, call.args)) {
-          const byPath = pathVerdict(this.d.policy, this.d.paths.workspace, touched.access, touched.path);
+          const byPath = pathVerdict(this.d.policy, this.sessionWorkspace(sessionId), touched.access, touched.path);
           if (!byPath) continue;
           if (byPath.decision === "deny" || verdict.decision === "allow") verdict = byPath;
           if (byPath.decision === "deny") break;
@@ -1056,7 +1056,7 @@ export class Agent {
         if (tool.idempotent) return this.execute(sessionId, turnId, stepId, call, tool, signal, true);
         const owner = this.d.host.toolOwner(tool.name);
         if (tool.recoverable && owner) {
-          const outcome = await owner.recover(tool.name, { sessionId, turnId, callId: call.callId, idempotencyKey: status.idempotencyKey });
+          const outcome = await owner.recover(tool.name, { sessionId, turnId, callId: call.callId, idempotencyKey: status.idempotencyKey, workspace: this.sessionWorkspace(sessionId) });
           if (outcome.status === "completed") {
             this.record({ ...base, type: "tool.call.completed", actor: { kind: "plugin", id: owner.name }, data: { callId: call.callId, result: outcome.result.content, durationMs: 0 } });
             return "done";
@@ -1103,7 +1103,7 @@ export class Agent {
       if (tool.plugin) await this.observePatch(tool.plugin, { ok: false, code: "plugin_unavailable" });
       return "done";
     }
-    const outcome = await owner.callTool(tool.name, call.args, { sessionId, turnId, callId: call.callId, idempotencyKey }, {
+    const outcome = await owner.callTool(tool.name, call.args, { sessionId, turnId, callId: call.callId, idempotencyKey, workspace: this.sessionWorkspace(sessionId) }, {
       timeoutMs: tool.timeoutMs,
       signal,
       onProgress: (p) => this.streamEvent({ type: "tool.call.progress", sessionId, turnId, ts: new Date().toISOString(), data: { callId: call.callId, ...p } }),
@@ -1136,7 +1136,7 @@ export class Agent {
     if (name === "shell.run") {
       const a = args as { command: string; cwd?: string; timeoutMs?: number };
       try {
-        return await runShell(this.d.paths.workspace, a.command, a.cwd ?? ".", a.timeoutMs ?? 30_000, {
+        return await runShell(this.sessionWorkspace(sessionId), a.command, a.cwd ?? ".", a.timeoutMs ?? 30_000, {
           ...(this.d.config.shell ?? {}),
           strict: this.d.policy.mode === "strict",
           home: this.d.paths.home,
@@ -1419,6 +1419,16 @@ export class Agent {
     return agentHasPlugin(speaker, tool.plugin, DEFAULT_ON_PLUGINS, sharedPlugins(this.d.paths));
   }
 
+  /** Workspace root for a session: project dir when the chat has a projectId, else the global workspace. */
+  private sessionWorkspace(sessionId: string): string {
+    const projectId = this.d.journal.getSession(sessionId)?.projectId;
+    if (!projectId) return this.d.paths.workspace;
+    const project = listProjects(this.d.paths).find((p) => p.id === projectId);
+    if (!project) return this.d.paths.workspace;
+    ensureProjectDirs(this.d.paths, project);
+    return projectDir(this.d.paths, project);
+  }
+
   private systemPrompt(sessionId?: string): string {
     const parts: string[] = [];
     const speaker = sessionId ? this.speaker(sessionId) : undefined;
@@ -1426,7 +1436,7 @@ export class Agent {
     if (speaker?.persona.trim()) parts.push(speaker.persona);
     else if (existsSync(this.d.paths.agents)) parts.push(readFileSync(this.d.paths.agents, "utf8"));
     if (this.d.config.agent.instructions) parts.push(this.d.config.agent.instructions);
-    const folder = project ? projectDir(this.d.paths, project) : this.d.paths.workspace;
+    const folder = sessionId ? this.sessionWorkspace(sessionId) : this.d.paths.workspace;
     // No clock here: the time of each turn is in its turn context, so this text stays byte-identical (cacheable).
     parts.push(
       `Workspace folder: ${folder}.`,

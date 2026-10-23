@@ -9,6 +9,12 @@ export interface ToolRunContext {
   callId: string;
   /** Stable for the same step across retries and resume. */
   idempotencyKey: string;
+  /**
+   * Effective workspace root for this call. When the session belongs to a project,
+   * the host sets this to that project's folder (`workspace/projects/<slug>`);
+   * otherwise it is the global workspace. Relative tool paths resolve here.
+   */
+  workspace?: string;
   signal: AbortSignal;
   progress(update: { message?: string; ratio?: number }): void;
 }
