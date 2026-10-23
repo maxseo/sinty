@@ -242,3 +242,93 @@ test("message during approval wait is queued (no 409)", async () => {
     cleanup();
   }
 });
+
+test("agent.task accepts wire tool names and runs them (not deny)", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [], {
+    policy: allowAll,
+    plugins: ["recording-provider", "test-tools"],
+    config: {
+      ...noStall,
+      providers: {
+        rec: {
+          protocol: "rec",
+          options: {
+            script: {
+              "please research": [
+                { toolCalls: [{ name: "agent__task", args: { task: "research X", background: true, tools: ["echo__say"] } }] },
+                { text: "ack" },
+              ],
+              "research X": [
+                { toolCalls: [{ name: "echo__say", args: { text: "found-it" } }] },
+                { text: "child done: found-it" },
+              ],
+            },
+          },
+        },
+      },
+      models: { default: "rec/test-model", fallback: [], routes: {}, catalog: [], maxOutputTokens: 1000 },
+    },
+  });
+  try {
+    const s = sinty.agent.createSession();
+    sinty.agent.send(s.id, "please research");
+    await waitFor(() => sinty.journal.events(s.id).find((e) => e.type === "task.completed"));
+    await sinty.agent.idle();
+    const child = sinty.journal.listSessions(50).find((x) => x.metadata?.parentSessionId === s.id)!;
+    assert.deepEqual(child.metadata?.tools, ["echo.say"], "wire names are stored as canonical");
+    const denied = sinty.journal.events(child.id).filter((e) => e.type === "tool.call.denied");
+    assert.equal(denied.length, 0, "wire allow-list must not deny echo.say");
+    const done = sinty.journal.events(child.id).find((e) => e.type === "tool.call.completed");
+    assert.ok(done, "echo.say must complete");
+    assert.match(JSON.stringify((done!.data as { result: unknown }).result), /found-it/);
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+test("background agent.task mirrors tool progress onto the parent", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [], {
+    policy: allowAll,
+    plugins: ["recording-provider", "test-tools"],
+    config: {
+      ...noStall,
+      providers: {
+        rec: {
+          protocol: "rec",
+          options: {
+            script: {
+              "please research": [
+                { toolCalls: [{ name: "agent__task", args: { task: "research X", background: true, tools: ["echo__say"] } }] },
+                { text: "ack" },
+              ],
+              "research X": [
+                { toolCalls: [{ name: "echo__say", args: { text: "found-it" } }] },
+                { text: "child done" },
+              ],
+            },
+          },
+        },
+      },
+      models: { default: "rec/test-model", fallback: [], routes: {}, catalog: [], maxOutputTokens: 1000 },
+    },
+  });
+  try {
+    const s = sinty.agent.createSession();
+    sinty.agent.send(s.id, "please research");
+    await waitFor(() => sinty.journal.events(s.id).find((e) => e.type === "task.completed"));
+    await sinty.agent.idle();
+    const progress = sinty.journal.events(s.id).filter((e) => e.type === "task.progress");
+    assert.ok(progress.some((e) => (e.data as { phase: string }).phase === "tool.started"), "parent sees tool.started");
+    assert.ok(progress.some((e) => (e.data as { phase: string }).phase === "tool.completed"), "parent sees tool.completed");
+    assert.ok(
+      progress.every((e) => (e.data as { tool?: string }).tool === "echo.say" || (e.data as { phase: string }).phase.startsWith("tool.")),
+      "progress carries the child tool name",
+    );
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});

@@ -134,6 +134,8 @@ export class Agent {
   private readonly pendingBackground = new Map<string, number>();
   /** Parent sessions that got task.completed while busy; flush after their turn leaves `running`. */
   private readonly pendingTaskTurns = new Set<string>();
+  /** Unsubscribe handlers that mirror background child tool activity onto the parent as task.progress. */
+  private readonly childProgressUnsub = new Map<string, () => void>();
   /** Last prompt per session, kept only while an inspector runs: the snapshot compares steps (`cache.reused`). */
   private readonly lastPrompt = new Map<string, PreviousPrompt>();
   /** Context contributors already warned about rewriting messages before the tail. */
@@ -288,10 +290,18 @@ export class Agent {
       this.childrenByParent.set(parentId, set);
     }
     set.add(childId);
-    if (taskId) this.taskSessions.set(taskId, childId);
+    if (taskId) {
+      this.taskSessions.set(taskId, childId);
+      this.watchBackgroundProgress(parentId, childId, taskId);
+    }
   }
 
   private unregisterChild(parentId: string, childId: string): void {
+    const unsub = this.childProgressUnsub.get(childId);
+    if (unsub) {
+      unsub();
+      this.childProgressUnsub.delete(childId);
+    }
     const set = this.childrenByParent.get(parentId);
     if (set) {
       set.delete(childId);
@@ -300,6 +310,78 @@ export class Agent {
     for (const [taskId, sid] of this.taskSessions) {
       if (sid === childId) this.taskSessions.delete(taskId);
     }
+  }
+
+  /**
+   * Mirror a background child's tool lifecycle onto the parent as task.progress so the parent chat
+   * is not silent for tens of seconds. Skips model.* noise; approvals still surface via childPending.
+   */
+  private watchBackgroundProgress(parentId: string, childId: string, taskId: string): void {
+    if (this.childProgressUnsub.has(childId)) return;
+    const toolsByCall = new Map<string, string>();
+    const unsub = this.d.bus.subscribe((msg) => {
+      if (msg.kind !== "journal") return;
+      const ev = msg.event;
+      if (ev.sessionId !== childId) return;
+      let phase: EventDataMap["task.progress"]["phase"] | undefined;
+      let tool: string | undefined;
+      let detail: string | undefined;
+      switch (ev.type) {
+        case "tool.call.requested": {
+          const d = ev.data as { callId: string; tool: string };
+          toolsByCall.set(d.callId, d.tool);
+          return;
+        }
+        case "tool.call.started": {
+          const d = ev.data as { callId: string; tool: string };
+          toolsByCall.set(d.callId, d.tool);
+          phase = "tool.started";
+          tool = d.tool;
+          break;
+        }
+        case "tool.call.completed": {
+          const d = ev.data as { callId: string };
+          phase = "tool.completed";
+          tool = toolsByCall.get(d.callId);
+          toolsByCall.delete(d.callId);
+          break;
+        }
+        case "tool.call.denied": {
+          const d = ev.data as { callId: string; note?: string };
+          phase = "tool.denied";
+          tool = toolsByCall.get(d.callId);
+          detail = d.note;
+          toolsByCall.delete(d.callId);
+          break;
+        }
+        case "tool.call.failed": {
+          const d = ev.data as { callId: string; code: string; message: string };
+          phase = "tool.failed";
+          tool = toolsByCall.get(d.callId);
+          detail = `${d.code}: ${d.message}`;
+          toolsByCall.delete(d.callId);
+          break;
+        }
+        case "tool.call.approval_requested": {
+          const d = ev.data as { callId: string; tool: string; reason?: string };
+          toolsByCall.set(d.callId, d.tool);
+          phase = "approval";
+          tool = d.tool;
+          detail = d.reason;
+          break;
+        }
+        default:
+          return;
+      }
+      if (!phase) return;
+      this.record({
+        sessionId: parentId,
+        type: "task.progress",
+        actor: SYSTEM,
+        data: strip({ taskId, childSessionId: childId, phase, tool, detail }),
+      });
+    });
+    this.childProgressUnsub.set(childId, unsub);
   }
 
   private releasePendingBackground(parentId: string): void {
@@ -627,7 +709,11 @@ export class Agent {
   private allowedTools(sessionId: string): string[] | undefined {
     const tools = this.d.journal.getSession(sessionId)?.metadata?.tools;
     if (!Array.isArray(tools)) return undefined;
-    return tools.filter((t): t is string => typeof t === "string" && t !== "agent.task" && t !== "agent.task_steer");
+    // Models see wire names (web__search) and often pass those into agent.task; store/compare as canonical (web.search).
+    return tools
+      .filter((t): t is string => typeof t === "string")
+      .map((t) => fromWire(t))
+      .filter((t) => t !== "agent.task" && t !== "agent.task_steer");
   }
 
   /** A short turn that can use only the listed tools. Its events stay in their own session. */
@@ -651,7 +737,9 @@ export class Agent {
       if (background) this.releasePendingBackground(sessionId);
       throw new CoreToolError("tree_budget", `the parent+children tree already used ${this.treeTokens(sessionId)} tokens (limit ${treeCap})`, "Wait for children to finish or raise agent.taskTreeTokens.");
     }
-    const tools = (args.tools?.length ? args.tools : ["web.search", "web.read", "web.links", "memory.recall", "skill.read"]).filter((t) => t !== "agent.task" && t !== "agent.task_steer");
+    const tools = (args.tools?.length ? args.tools : ["web.search", "web.read", "web.links", "memory.recall", "skill.read"])
+      .map((t) => fromWire(t))
+      .filter((t) => t !== "agent.task" && t !== "agent.task_steer");
     const taskId = background ? newId("tsk") : undefined;
     let child;
     try {
@@ -858,7 +946,7 @@ export class Agent {
         return "blocked";
       case "new": {
         const allow = this.allowedTools(sessionId);
-        if (allow && !allow.includes(tool.name)) {
+        if (allow && !allow.includes(tool.name) && !allow.includes(fromWire(tool.name)) && !allow.includes(toWire(tool.name))) {
           this.record({ ...base, type: "tool.call.denied", actor: SYSTEM, data: { callId: call.callId, by: SYSTEM, note: "not in this child turn's tool list" } });
           return "done";
         }
