@@ -84,3 +84,4 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 | 2026-10-23 | [Responsive-turn UX: hide children, no restart after stop-all](2026-10-23-responsive-turn-ux.md) | [#21](https://github.com/maxseo/sinty/pull/21) | Sidebar skips child sessions; interrupted tasks do not wake parent. |
 - [2026-10-23-child-tools-wire-and-bg-progress.md](2026-10-23-child-tools-wire-and-bg-progress.md) — wire tool names in agent.task + parent task.progress
 | 2026-10-23 | [Bubble child approvals into the parent chat](2026-10-23-bubble-child-approvals.md) | (open) | Parent chat shows agent.task approval cards; pending links to parent. |
+| 2026-10-23 | [Background UX: live status, session trust, stacked approvals](2026-10-23-bg-ux-status-grants.md) | (open) | Live Фон line; policyTrust; stacked cards; background opt-in. |

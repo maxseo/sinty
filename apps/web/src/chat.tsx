@@ -33,7 +33,7 @@ type Item =
   | { kind: "tool"; key: string; call: ToolCall }
   | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
 
-const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "task.completed", "task.progress"]);
+const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "session.policy_grant", "task.completed", "task.progress"]);
 
 function build(events: SintyEvent[]): Item[] {
   const items: Item[] = [];
@@ -107,32 +107,50 @@ function build(events: SintyEvent[]): Item[] {
       case "plugin.patch.rolled_back":
         items.push({ kind: "note", key, tone: "warn", text: `Патч ${d.patchId} откатан: ${d.reason}` });
         break;
-      case "task.progress": {
-        const label =
-          d.phase === "tool.started"
-            ? "работает"
-            : d.phase === "tool.completed"
-              ? "готово"
-              : d.phase === "tool.denied"
-                ? "отказано"
-                : d.phase === "tool.failed"
-                  ? "ошибка"
-                  : d.phase === "approval"
-                    ? "ждёт апрув"
-                    : d.phase;
-        const tool = d.tool ? ` ${d.tool}` : "";
-        const detail = d.detail ? ` — ${d.detail}` : "";
-        items.push({ kind: "note", key, tone: d.phase === "tool.failed" || d.phase === "tool.denied" ? "warn" : "info", text: `Фон · ${label}${tool}${detail}` });
+      case "task.progress":
+      case "task.completed":
+        // Live status is rendered once below the log (see liveBgStatus); full history stays in Журнал.
         break;
-      }
-      case "task.completed": {
-        const status = d.status === "completed" ? "готово" : d.status === "failed" ? "ошибка" : "прервано";
-        items.push({ kind: "note", key, tone: d.status === "completed" ? "info" : "warn", text: `Фоновая задача ${status}` });
-        break;
-      }
     }
   }
   return items;
+}
+
+
+function progressLabel(phase: string): string {
+  if (phase === "tool.started") return "работает";
+  if (phase === "tool.completed") return "готово";
+  if (phase === "tool.denied") return "отказано";
+  if (phase === "tool.failed") return "ошибка";
+  if (phase === "approval") return "ждёт апрув";
+  return phase;
+}
+
+/** One live background status for the chat (journal keeps every task.progress event). */
+function liveBgStatus(events: SintyEvent[]): { text: string; tone: "info" | "warn" } | null {
+  let lastProgress: SintyEvent | undefined;
+  let lastCompleted: SintyEvent | undefined;
+  let lastAgentAfterCompleted = false;
+  for (const e of events) {
+    if (e.type === "task.progress") lastProgress = e;
+    if (e.type === "task.completed") {
+      lastCompleted = e;
+      lastAgentAfterCompleted = false;
+    }
+    if (e.type === "message.agent" && lastCompleted) lastAgentAfterCompleted = true;
+  }
+  if (lastCompleted && (!lastProgress || (lastCompleted.seq ?? 0) >= (lastProgress.seq ?? 0))) {
+    if (lastAgentAfterCompleted) return null;
+    const d = lastCompleted.data as { status?: string };
+    const status = d.status === "completed" ? "готово" : d.status === "failed" ? "ошибка" : "прервано";
+    return { text: `Фон · ${status}`, tone: d.status === "completed" ? "info" : "warn" };
+  }
+  if (!lastProgress) return null;
+  const d = lastProgress.data as { phase?: string; tool?: string; detail?: string };
+  const tool = d.tool ? ` ${d.tool}` : "";
+  const detail = d.detail ? ` — ${d.detail}` : "";
+  const tone = d.phase === "tool.failed" || d.phase === "tool.denied" ? "warn" : "info";
+  return { text: `Фон · ${progressLabel(d.phase ?? "")}${tool}${detail}`, tone };
 }
 
 function toBase64(buf: ArrayBuffer): string {
@@ -269,11 +287,15 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   }, [sessionId]);
 
   const items = useMemo(() => build(events), [events]);
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [items.length, streaming]);
+  const bgStatus = useMemo(() => liveBgStatus(events), [events]);
+  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [items.length, streaming, bgStatus?.text]);
 
   const pending = info?.pending ?? null;
   const childApprovals = childPending.filter((p) => p.reason === "approval" && p.approvals.length > 0);
+  const childApprovalCount = childApprovals.reduce((n, p) => n + p.approvals.length, 0);
+  const parentApprovalCount = pending?.reason === "approval" ? pending.approvals.length : 0;
   const running = info?.activeTurn?.status === "running";
+  const policyTrust = info?.metadata?.policyTrust === true;
 
   const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number }[]>([]);
 
@@ -308,9 +330,27 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
     }
   };
 
-  const decide = async (callId: string, decision: "approve" | "deny", targetSessionId: string = sessionId): Promise<void> => {
+  const decide = async (
+    callId: string,
+    decision: "approve" | "deny",
+    targetSessionId: string = sessionId,
+    remember = false,
+  ): Promise<void> => {
     try {
-      await api(`/v1/sessions/${encodeURIComponent(targetSessionId)}/approvals/${encodeURIComponent(callId)}`, { body: { decision } });
+      await api(`/v1/sessions/${encodeURIComponent(targetSessionId)}/approvals/${encodeURIComponent(callId)}`, {
+        body: { decision, ...(remember ? { remember: true } : {}) },
+      });
+      await loadInfo();
+      onChange();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /** Session trust: skip further policy asks in this chat; approve everything currently waiting. */
+  const grantTrust = async (): Promise<void> => {
+    try {
+      await api(`/v1/sessions/${encodeURIComponent(sessionId)}/policy-grants`, { body: { trust: true, note: "ui remember" } });
       await loadInfo();
       onChange();
     } catch (err) {
@@ -418,42 +458,68 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
             }
           })}
           {streaming && <div class="msg agent live">{streaming}</div>}
-          {running && !streaming && <div class="typing">агент думает…</div>}
+          {bgStatus && (
+            <div class={`bg-status ${bgStatus.tone}`} aria-live="polite">
+              <span class="bg-status-shimmer">{bgStatus.text}</span>
+            </div>
+          )}
+          {running && !streaming && !bgStatus && <div class="typing">агент думает…</div>}
           <div ref={bottom} />
         </div>
       )}
 
       {childApprovals.length > 0 && tab === "chat" && !pluginTab && (
         <div class="child-approvals">
-          <div class="menu-label">Фоновая задача ждёт одобрения</div>
-          {childApprovals.flatMap((p) =>
-            p.approvals.map((a) => (
-              <ToolCard
-                key={`${p.sessionId}:${a.callId}`}
-                call={{ callId: a.callId, tool: a.tool, args: a.args, state: "approval", reason: a.reason }}
-                onDecide={(callId, d) => decide(callId, d, p.sessionId)}
-              />
-            )),
-          )}
-          {childApprovals.reduce((n, p) => n + p.approvals.length, 0) > 1 && (
-            <div class="approvals">
-              Ждут решения: {childApprovals.reduce((n, p) => n + p.approvals.length, 0)}
-              <button
-                onClick={() =>
-                  childApprovals.forEach((p) => p.approvals.forEach((a) => void decide(a.callId, "approve", p.sessionId)))
-                }
-              >
+          <div class="menu-label">
+            Фоновая задача ждёт одобрения
+            {childApprovalCount > 1 && <span class="badge">{childApprovalCount}</span>}
+          </div>
+          <div class={`approval-stack${childApprovalCount > 1 ? " stacked" : ""}`}>
+            {childApprovals
+              .flatMap((p) => p.approvals.map((a) => ({ p, a })))
+              .map(({ p, a }, flatIndex, all) => {
+                const depth = all.length - 1 - flatIndex;
+                return (
+                  <div
+                    key={`${p.sessionId}:${a.callId}`}
+                    class="approval-stack-card"
+                    style={all.length > 1 ? { zIndex: flatIndex + 1, transform: `translate(${depth * 6}px, ${depth * 8}px)` } : undefined}
+                  >
+                    <ToolCard
+                      call={{ callId: a.callId, tool: a.tool, args: a.args, state: "approval", reason: a.reason }}
+                      onDecide={(callId, d) => decide(callId, d, p.sessionId)}
+                    />
+                  </div>
+                );
+              })}
+          </div>
+          <div class="approvals">
+            {childApprovalCount > 1 && <span>Ждут решения: {childApprovalCount}</span>}
+            {childApprovalCount > 1 && (
+              <button onClick={() => childApprovals.forEach((p) => p.approvals.forEach((a) => void decide(a.callId, "approve", p.sessionId)))}>
                 Одобрить все
               </button>
-            </div>
-          )}
+            )}
+            {!policyTrust && (
+              <button title="Больше не спрашивать разрешения в этом чате (в журнале всё равно видно)" onClick={() => void grantTrust()}>
+                Больше не спрашивать в этом чате
+              </button>
+            )}
+          </div>
         </div>
       )}
 
-      {pending?.reason === "approval" && pending.approvals.length > 1 && (
-        <div class="approvals">
-          Ждут решения: {pending.approvals.length}
-          <button onClick={() => pending.approvals.forEach((a) => void decide(a.callId, "approve"))}>Одобрить все</button>
+      {pending?.reason === "approval" && parentApprovalCount > 0 && tab === "chat" && !pluginTab && (
+        <div class="approvals parent-approvals-bar">
+          {parentApprovalCount > 1 && <span>Ждут решения: {parentApprovalCount}</span>}
+          {parentApprovalCount > 1 && (
+            <button onClick={() => pending.approvals.forEach((a) => void decide(a.callId, "approve"))}>Одобрить все</button>
+          )}
+          {!policyTrust && (
+            <button title="Больше не спрашивать разрешения в этом чате" onClick={() => void grantTrust()}>
+              Больше не спрашивать в этом чате
+            </button>
+          )}
         </div>
       )}
 

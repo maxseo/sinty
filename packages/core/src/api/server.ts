@@ -38,6 +38,7 @@ async function discoverModels(protocol: string, baseUrl: string, apiKey: string)
 const OVERVIEW: ReadonlySet<EventType> = new Set<EventType>([
   "session.created",
   "session.updated",
+  "session.policy_grant",
   "agent.state",
   "turn.started",
   "turn.completed",
@@ -409,11 +410,20 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/v1/sessions/:id/pending", (c) => c.json({ pending: sinty.agent.pending(c.req.param("id")) }));
 
   app.post("/v1/sessions/:id/approvals/:callId", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { decision?: string; note?: string };
+    const body = (await c.req.json().catch(() => ({}))) as { decision?: string; note?: string; remember?: boolean };
     if (body.decision !== "approve" && body.decision !== "deny") throw new AgentError("bad_request", 'decision must be "approve" or "deny"');
     const by: Actor = { kind: "human", id: "api" };
-    sinty.agent.decide(c.req.param("id"), c.req.param("callId"), body.decision, by, body.note);
+    sinty.agent.decide(c.req.param("id"), c.req.param("callId"), body.decision, by, body.note, { remember: body.remember === true });
     return c.json({ ok: true });
+  });
+
+  /** Session-scoped auto-allow for policy `ask` (deny unchanged). Also approves current waiting asks. */
+  app.post("/v1/sessions/:id/policy-grants", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { trust?: boolean; note?: string };
+    if (body.trust !== true) throw new AgentError("bad_request", "trust must be true");
+    const by: Actor = { kind: "human", id: "api" };
+    sinty.agent.grantPolicyTrust(c.req.param("id"), by, body.note);
+    return c.json({ ok: true, policyTrust: true });
   });
 
   app.post("/v1/sessions/:id/interrupt", async (c) => c.json({ interrupted: await sinty.agent.interrupt(c.req.param("id")) }));

@@ -524,6 +524,34 @@ nav a:hover,
   color: var(--muted);
   font-style: italic;
 }
+.bg-status {
+  align-self: flex-start;
+  max-width: min(760px, 90%);
+  padding: 0.35em 0.85em;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+  color: var(--muted);
+}
+.bg-status.warn {
+  border-color: var(--warn-line);
+  background: var(--warn);
+  color: inherit;
+}
+.bg-status-shimmer {
+  display: inline-block;
+  background: linear-gradient(90deg, currentColor 0%, color-mix(in srgb, currentColor 35%, transparent) 45%, currentColor 90%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: bg-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes bg-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
 .note {
   align-self: stretch;
   padding: 0.4em 0.8em;
@@ -574,7 +602,8 @@ nav a:hover,
 }
 .approvals {
   display: flex;
-  gap: 1em;
+  flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
   padding: 0.4em 1.2em;
   background: var(--warn);
@@ -1027,3 +1056,28 @@ button.icon:hover:not(:disabled) {
   flex-direction: column;
   gap: 8px;
 }
+.approval-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.approval-stack.stacked {
+  min-height: 7.5rem;
+  margin-bottom: calc(var(--stack-extra, 0) * 8px);
+}
+.approval-stack.stacked .approval-stack-card {
+  position: absolute;
+  left: 0;
+  right: 12px;
+  top: 0;
+  transition: transform 0.15s ease;
+}
+.approval-stack.stacked .approval-stack-card:last-child {
+  position: relative;
+  right: 0;
+}
+.parent-approvals-bar {
+  margin: 0 16px 8px;
+}
+

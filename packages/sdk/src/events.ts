@@ -38,6 +38,12 @@ export interface EventDataMap {
   "session.updated": { title?: string; metadata?: Record<string, unknown> };
   "session.archived": Record<string, never>;
 
+  /**
+   * Human granted session-scoped auto-allow for policy `ask` (deny still applies).
+   * Auditable: tools still journal started/completed; UI may skip approval cards.
+   */
+  "session.policy_grant": { trust: true; by: Actor; note?: string };
+
   "turn.started": { trigger: "message" | "schedule" | "task" | "resume" };
   "turn.completed": { steps: number };
   "turn.failed": { code: string; message: string };
