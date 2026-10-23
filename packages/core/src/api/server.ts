@@ -407,6 +407,9 @@ export function createApp(sinty: Sinty): Hono {
 
   app.post("/v1/sessions/:id/interrupt", async (c) => c.json({ interrupted: await sinty.agent.interrupt(c.req.param("id")) }));
 
+  /** Stop this session and every agent.task child under it. */
+  app.post("/v1/sessions/:id/stop-all", async (c) => c.json({ interrupted: await sinty.agent.stopAll(c.req.param("id")) }));
+
   /** Everything that waits for a human, across sessions. */
   app.get("/v1/pending", (c) =>
     c.json({

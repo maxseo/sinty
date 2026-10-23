@@ -1,6 +1,6 @@
-/** Arms a two-step timer. The first silence calls `onNotice` and keeps waiting. The second calls `onEscalate`. */
-export function watchStall(seconds: number, onNotice: () => void, onEscalate: () => void): { stop: () => void } {
-  if (!Number.isFinite(seconds) || seconds <= 0) return { stop: () => undefined };
+/** Arms a two-step timer. The first silence calls `onNotice` and keeps waiting. The second calls `onEscalate`. `pulse` restarts from stage 0. */
+export function watchStall(seconds: number, onNotice: () => void, onEscalate: () => void): { stop: () => void; pulse: () => void } {
+  if (!Number.isFinite(seconds) || seconds <= 0) return { stop: () => undefined, pulse: () => undefined };
   const ms = Math.round(seconds * 1000);
   let stage = 0;
   let timer: NodeJS.Timeout | undefined;
@@ -20,6 +20,12 @@ export function watchStall(seconds: number, onNotice: () => void, onEscalate: ()
   return {
     stop() {
       if (timer) clearTimeout(timer);
+      timer = undefined;
+    },
+    pulse() {
+      if (timer) clearTimeout(timer);
+      stage = 0;
+      arm();
     },
   };
 }

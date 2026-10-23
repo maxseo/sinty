@@ -23,12 +23,27 @@ export function tempHome(): { home: string; cleanup: () => void } {
 }
 
 export function testConfig(script: ScriptStep[], extra: Partial<SintyConfig> = {}, plugins = ["fake-provider", "test-tools"]): Partial<SintyConfig> {
-  return {
+  // responsive-turn is DEFAULT_ON in production; tests that assert exact prompt prefixes disable it
+  // here. Enable it in a test with plugins.disabled that omits it (see responsive-turns.test.ts).
+  const basePlugins = { enabled: plugins, disabled: ["responsive-turn"], config: {}, searchPaths: [FIXTURES] };
+  const merged: Partial<SintyConfig> = {
     providers: { fake: { protocol: "fake", options: { script } } },
     models: { default: "fake/test-model", fallback: [], routes: {}, catalog: [], maxOutputTokens: 1000 },
-    plugins: { enabled: plugins, config: {}, searchPaths: [FIXTURES] },
+    plugins: basePlugins,
     ...extra,
   };
+  if (extra.plugins) {
+    merged.plugins = {
+      ...basePlugins,
+      ...extra.plugins,
+      enabled: extra.plugins.enabled ?? basePlugins.enabled,
+      // Union: keep the test-helper default (responsive-turn off) plus any test-specific disables.
+      disabled: [...new Set([...(basePlugins.disabled ?? []), ...(extra.plugins.disabled ?? [])])],
+      searchPaths: extra.plugins.searchPaths ?? basePlugins.searchPaths,
+      config: extra.plugins.config ?? basePlugins.config,
+    };
+  }
+  return merged;
 }
 
 export async function boot(home: string, script: ScriptStep[], opts: { config?: Partial<SintyConfig>; policy?: Partial<SintyPolicy>; plugins?: string[] } = {}): Promise<Sinty> {

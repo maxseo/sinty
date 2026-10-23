@@ -111,14 +111,14 @@ test("tool-web: plugins.disabled turns it off; Settings writes plugins.disabled 
   try {
     // A config.yaml from before step 7: tool-web is not listed, the web tools still come.
     writeFileSync(paths.config, stringify({ models: { default: "fake/m" }, providers: { fake: { protocol: "fake" } }, plugins: { enabled: ["fake-provider", "tool-fs"] } }));
-    assert.deepEqual(loadConfig(paths).plugins.enabled, ["fake-provider", "tool-fs", "tool-web", "skills"]);
+    assert.deepEqual(loadConfig(paths).plugins.enabled, ["fake-provider", "tool-fs", "tool-web", "skills", "responsive-turn"]);
     assert.ok(!readFileSync(paths.config, "utf8").includes("tool-web"), "loading does not write config.yaml");
 
-    saveSettings(paths, { model: "fake/m", fallback: [], enabled: ["fake-provider", "tool-fs", "skills"] }, { fake: {} });
+    saveSettings(paths, { model: "fake/m", fallback: [], enabled: ["fake-provider", "tool-fs", "skills", "responsive-turn"] }, { fake: {} });
     assert.deepEqual(loadConfig(paths).plugins.disabled, ["tool-web"]);
     assert.ok(!loadConfig(paths).plugins.enabled.includes("tool-web"));
 
-    saveSettings(paths, { model: "fake/m", fallback: [], enabled: ["fake-provider", "tool-fs", "tool-web", "skills"] }, { fake: {} });
+    saveSettings(paths, { model: "fake/m", fallback: [], enabled: ["fake-provider", "tool-fs", "tool-web", "skills", "responsive-turn"] }, { fake: {} });
     assert.equal(loadConfig(paths).plugins.disabled, undefined);
     assert.ok(loadConfig(paths).plugins.enabled.includes("tool-web"));
   } finally {

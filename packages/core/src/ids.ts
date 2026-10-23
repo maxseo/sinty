@@ -18,7 +18,7 @@ export function ulid(now = Date.now()): string {
   return encodeTime(now) + encodeRandom(random);
 }
 
-export function newId(prefix: "ses" | "trn" | "stp" | "call" | "pat" | "inc"): string {
+export function newId(prefix: "ses" | "trn" | "stp" | "call" | "pat" | "inc" | "tsk"): string {
   return `${prefix}_${ulid()}`;
 }
 

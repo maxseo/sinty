@@ -21,6 +21,13 @@ export const configSchema = z.object({
       userId: z.string().default("local"),
       timezone: z.string().optional(),
       instructions: z.string().optional(),
+      /** Max concurrent background agent.task children under one parent (like kanban maxParallel). */
+      taskMaxParallel: z.number().int().min(1).default(3),
+      /**
+       * Shared token budget for a parent turn plus its agent.task children (tree). 0 = no shared cap
+       * (each session still has its own turn budget).
+       */
+      taskTreeTokens: z.number().int().min(0).default(0),
     })
     .prefault({}),
   providers: z.record(z.string(), providerSchema).default({}),
@@ -240,7 +247,7 @@ export type SintyPolicy = z.infer<typeof policySchema>;
  * the prompt. All of them were core before plan step 7: an existing config.yaml whose plugins.enabled predates the
  * move keeps them without being rewritten.
  */
-export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "skills"];
+export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "skills", "responsive-turn"];
 
 /** Appends DEFAULT_ON_PLUGINS that are neither enabled nor disabled, in memory. Idempotent. */
 export function withDefaultPlugins<T extends { plugins: { enabled: string[]; disabled?: string[] | undefined } }>(config: T): T {

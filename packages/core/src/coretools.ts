@@ -97,10 +97,23 @@ export const CORE_TOOLS: CoreToolDef[] = [
   },
   {
     name: "agent.task",
-    description: "Run a short child turn with only the listed tools, then return its answer. Omit tools to allow web search, web read, memory recall and skill read. The child cannot start another child or use tools outside the list.",
+    description:
+      "Run a short child turn with only the listed tools. Omit tools to allow web search, web read, memory recall and skill read. The child cannot start another child or use tools outside the list. With background: true return {taskId,sessionId} immediately; when the child finishes the parent gets a task.completed event and a turn with trigger task if idle.",
     input: z.object({
       task: z.string().min(1),
       tools: z.array(z.string()).max(12).optional().describe("tool names the child may call"),
+      background: z.boolean().optional().describe("return immediately; result arrives as task.completed on the parent"),
+    }),
+    sideEffects: "none",
+    idempotent: false,
+  },
+  {
+    name: "agent.task_steer",
+    description: "Append a user message to a running child started by agent.task (by sessionId or taskId). Use to correct or narrow a background child without waiting for it to finish.",
+    input: z.object({
+      text: z.string().min(1),
+      sessionId: z.string().optional().describe("child session id from agent.task"),
+      taskId: z.string().optional().describe("task id from a background agent.task"),
     }),
     sideEffects: "none",
     idempotent: false,
