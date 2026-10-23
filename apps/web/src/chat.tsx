@@ -128,7 +128,8 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   const [events, setEvents] = useState<SintyEvent[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
-  const [info, setInfo] = useState<SessionInfo & { pending: Pending | null }>();
+  const [info, setInfo] = useState<SessionInfo & { pending: Pending | null; childPending?: Pending[] }>();
+  const [childPending, setChildPending] = useState<Pending[]>([]);
   const [view, setView] = useState<string>(() => savedView(tabs));
   // /v1/plugins may answer after the chat mounted: restore a saved plugin view once its tab is known.
   useEffect(() => {
@@ -156,7 +157,11 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   const bottom = useRef<HTMLDivElement>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadInfo = async (): Promise<void> => setInfo(await api(`/v1/sessions/${encodeURIComponent(sessionId)}`));
+  const loadInfo = async (): Promise<void> => {
+    const data = await api<SessionInfo & { pending: Pending | null; childPending?: Pending[] }>(`/v1/sessions/${encodeURIComponent(sessionId)}`);
+    setInfo(data);
+    setChildPending(data.childPending ?? []);
+  };
 
   // Same rule as the core (Agent.speaker): the chat's own agentIds, else the project's agents; lead answers by default.
   const [membersKnown, setMembersKnown] = useState(false);
@@ -216,10 +221,35 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
     );
   }, [sessionId]);
 
+  // Child agent.task approvals land on the child session stream; watch the global bus so the parent chat refreshes.
+  useEffect(() => {
+    return subscribe(
+      () => "/v1/stream",
+      (m) => {
+        const e = JSON.parse(m.data) as SintyEvent;
+        if (
+          e.type === "turn.blocked" ||
+          e.type === "tool.call.approval_requested" ||
+          e.type === "tool.call.approved" ||
+          e.type === "tool.call.denied" ||
+          e.type === "turn.resumed" ||
+          e.type === "turn.completed" ||
+          e.type === "turn.failed" ||
+          e.type === "turn.interrupted" ||
+          e.type === "task.completed"
+        ) {
+          if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+          refreshTimer.current = setTimeout(() => void loadInfo(), 150);
+        }
+      },
+    );
+  }, [sessionId]);
+
   const items = useMemo(() => build(events), [events]);
   useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [items.length, streaming]);
 
   const pending = info?.pending ?? null;
+  const childApprovals = childPending.filter((p) => p.reason === "approval" && p.approvals.length > 0);
   const running = info?.activeTurn?.status === "running";
 
   const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number }[]>([]);
@@ -255,10 +285,11 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
     }
   };
 
-  const decide = async (callId: string, decision: "approve" | "deny"): Promise<void> => {
+  const decide = async (callId: string, decision: "approve" | "deny", targetSessionId: string = sessionId): Promise<void> => {
     try {
-      await api(`/v1/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(callId)}`, { body: { decision } });
+      await api(`/v1/sessions/${encodeURIComponent(targetSessionId)}/approvals/${encodeURIComponent(callId)}`, { body: { decision } });
       await loadInfo();
+      onChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -366,6 +397,33 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
           {streaming && <div class="msg agent live">{streaming}</div>}
           {running && !streaming && <div class="typing">агент думает…</div>}
           <div ref={bottom} />
+        </div>
+      )}
+
+      {childApprovals.length > 0 && tab === "chat" && !pluginTab && (
+        <div class="child-approvals">
+          <div class="menu-label">Фоновая задача ждёт одобрения</div>
+          {childApprovals.flatMap((p) =>
+            p.approvals.map((a) => (
+              <ToolCard
+                key={`${p.sessionId}:${a.callId}`}
+                call={{ callId: a.callId, tool: a.tool, args: a.args, state: "approval", reason: a.reason }}
+                onDecide={(callId, d) => decide(callId, d, p.sessionId)}
+              />
+            )),
+          )}
+          {childApprovals.reduce((n, p) => n + p.approvals.length, 0) > 1 && (
+            <div class="approvals">
+              Ждут решения: {childApprovals.reduce((n, p) => n + p.approvals.length, 0)}
+              <button
+                onClick={() =>
+                  childApprovals.forEach((p) => p.approvals.forEach((a) => void decide(a.callId, "approve", p.sessionId)))
+                }
+              >
+                Одобрить все
+              </button>
+            </div>
+          )}
         </div>
       )}
 

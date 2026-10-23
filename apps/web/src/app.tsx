@@ -216,8 +216,24 @@ function Shell() {
                       <div class="menu-label">Ждут ответа <span class="badge">{pending.length}</span></div>
                       {pending.map((p) => {
                         const s = sessions.find((x) => x.id === p.sessionId);
+                        const parentId =
+                          p.parentSessionId ||
+                          (typeof s?.metadata?.parentSessionId === "string" ? s.metadata.parentSessionId : undefined);
+                        const openId = parentId || p.sessionId;
+                        const parent = parentId ? sessions.find((x) => x.id === parentId) : undefined;
+                        const label = parent?.title || s?.title || p.title || p.sessionId;
                         const why = p.reason === "approval" ? "одобрение" : p.reason === "ask_human" ? "вопрос" : p.reason === "budget" ? "бюджет" : "супервизор";
-                        return <a key={p.turnId} class={route.page === "chat" && route.sessionId === p.sessionId ? "on" : ""} href={href({ page: "chat", sessionId: p.sessionId })} title={p.detail ?? why}>{s?.title || p.sessionId} <span class="small muted">· {why}</span></a>;
+                        const childNote = parentId ? "фон" : why;
+                        return (
+                          <a
+                            key={p.turnId}
+                            class={route.page === "chat" && route.sessionId === openId ? "on" : ""}
+                            href={href({ page: "chat", sessionId: openId })}
+                            title={p.detail ?? why}
+                          >
+                            {label} <span class="small muted">· {childNote}</span>
+                          </a>
+                        );
                       })}
                     </div>
                   )}

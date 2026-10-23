@@ -356,7 +356,18 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/v1/sessions/:id", (c) => {
     const s = sinty.journal.getSession(c.req.param("id"));
     if (!s) throw new AgentError("not_found", "session not found", 404);
-    return c.json({ ...sessionInfo(sinty.journal, s), pending: sinty.agent.pending(s.id) });
+    // Background agent.task children keep their own blocked turns; surface those approvals on the parent
+    // so the human can decide without opening a hidden child chat.
+    const childPending = sinty.journal
+      .activeTurns()
+      .filter((t) => t.status === "blocked")
+      .map((t) => {
+        const child = sinty.journal.getSession(t.sessionId);
+        if (child?.metadata?.parentSessionId !== s.id) return null;
+        return sinty.agent.pending(t.sessionId);
+      })
+      .filter((p): p is NonNullable<typeof p> => Boolean(p));
+    return c.json({ ...sessionInfo(sinty.journal, s), pending: sinty.agent.pending(s.id), childPending });
   });
 
   app.post("/v1/blobs", async (c) => {
@@ -410,13 +421,24 @@ export function createApp(sinty: Sinty): Hono {
   /** Stop this session and every agent.task child under it. */
   app.post("/v1/sessions/:id/stop-all", async (c) => c.json({ interrupted: await sinty.agent.stopAll(c.req.param("id")) }));
 
-  /** Everything that waits for a human, across sessions. */
+  /** Everything that waits for a human, across sessions. Child tasks include parentSessionId for the UI. */
   app.get("/v1/pending", (c) =>
     c.json({
       pending: sinty.journal
         .activeTurns()
         .filter((t) => t.status === "blocked")
-        .map((t) => sinty.agent.pending(t.sessionId))
+        .map((t) => {
+          const p = sinty.agent.pending(t.sessionId);
+          if (!p) return null;
+          const session = sinty.journal.getSession(t.sessionId);
+          const parentSessionId =
+            typeof session?.metadata?.parentSessionId === "string" ? session.metadata.parentSessionId : undefined;
+          return {
+            ...p,
+            title: session?.title ?? null,
+            ...(parentSessionId ? { parentSessionId } : {}),
+          };
+        })
         .filter(Boolean),
     }),
   );

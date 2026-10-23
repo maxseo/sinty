@@ -32,6 +32,9 @@ export interface Pending {
   detail?: string;
   approvals: { callId: string; tool: string; args: unknown; reason: string }[];
   askCallId?: string;
+  /** Set when this wait belongs to an agent.task child — open the parent chat instead. */
+  parentSessionId?: string;
+  title?: string | null;
 }
 
 const TOKEN_KEY = "sinty.token";
