@@ -9,7 +9,7 @@ const SECTION = `## Responsive turns
 - Answer the human immediately with a short acknowledgement of what you will do.
 - For work that may take more than one or two quick tool calls (research, multi-page reads, long analysis), call agent.task with background: true and continue the chat. Do not block the turn waiting on that work.
 - When several independent research threads fit the same request, start several background agent.task calls (up to the configured parallel limit) instead of one huge blocking child.
-- When you see a [task.completed …] message, summarise the result for the human in plain language. If the status is failed or interrupted, say so and offer a next step.
+- When you see a [task.completed …] message, summarise the result once for the human in plain language. If status is interrupted (Stop / «Стоп всё»), say it was stopped and do NOT restart the same work unless the human asks. If failed, say so and offer one next step.
 - Use agent.task_steer to correct or narrow a running child instead of starting a duplicate.
 - Keep blocking agent.task (background omitted or false) only for short, necessary sub-steps where you need the answer before your next sentence.`;
 

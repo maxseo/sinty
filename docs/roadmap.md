@@ -36,7 +36,8 @@ Work done on top of M6, outside the milestones. The plan behind it is [plan.md](
 | No `--allow-child-process` SecurityWarning in plugin logs | [#16](https://github.com/maxseo/sinty/pull/16) | `2026-10-22-child-process-warning` |
 | Linux shell sandbox (bubblewrap, `shell.sandbox`) | [#17](https://github.com/maxseo/sinty/pull/17) | `2026-10-22-linux-shell-sandbox` |
 | `sinty doctor` reports the capped compaction point | [#18](https://github.com/maxseo/sinty/pull/18) | `2026-10-22-doctor-compaction-cap` |
-| Responsive turns: background `agent.task`, `task.completed`, `agent.task_steer`, stop-all, stall pulse, approval queue, `responsive-turn` plugin | (open) | `2026-10-23-responsive-turns` |
+| Responsive turns: background `agent.task`, `task.completed`, `agent.task_steer`, stop-all, stall pulse, approval queue, `responsive-turn` plugin | [#20](https://github.com/maxseo/sinty/pull/20) | `2026-10-23-responsive-turns` |
+| Responsive-turn UX: hide child chats in sidebar, no `trigger=task` after human stop-all, inherit `projectId` | (open) | `2026-10-23-responsive-turn-ux` |
 
 ## Known gaps
 

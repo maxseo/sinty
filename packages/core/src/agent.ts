@@ -577,6 +577,9 @@ export class Agent {
       data: { taskId, childSessionId, status, text: summary },
     });
     this.unregisterChild(parentId, childSessionId);
+    // Interrupted (Stop / stop-all): journal the event so the next human message can see it, but do not
+    // wake the parent — otherwise the model restarts the same work after the human cancelled the tree.
+    if (status === "interrupted") return;
     // Idle parent: open a turn so the model can report the result (trigger "task").
     // Busy parent: remember and flush when its turn leaves `running` (see launch finally).
     if (!parentTurn && !this.runningHasSession(parentId)) {
@@ -652,8 +655,10 @@ export class Agent {
     const taskId = background ? newId("tsk") : undefined;
     let child;
     try {
+      const parent = this.d.journal.getSession(sessionId);
       child = this.createSession({
         title: args.task.slice(0, 80),
+        projectId: parent?.projectId ?? undefined,
         metadata: strip({ parentSessionId: sessionId, tools, background: background || undefined, taskId }),
       });
     } catch (e) {
