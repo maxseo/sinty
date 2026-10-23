@@ -132,6 +132,16 @@ The fallback check ([#14](https://github.com/maxseo/sinty/pull/14)) trims or ski
 - **Why:** crash recovery is tested by simulating the journal state; a real kill of the process proves it end to end.
 - **Effect on the agent:** none in behaviour. Regressions in crash recovery are caught before release.
 
+
+### `scheduler` plugin (durable timers / cron) — not kanban
+- **Why:** channels and n8n migration need fire-at / cron jobs that survive restarts (`kind: schedule` in the
+  plugin manifest). Kanban is a board for human tasks; it does not schedule agent work.
+- **Effect on the agent:** it can register a durable job (once or cron), get a wake event when it fires, and keep
+  working while the human is away. Separate from `agent.task` background children (in-process, session-scoped) and
+  from the kanban plugin (UI board only).
+- **Status:** not built. Responsive turns (background `agent.task`, `task.completed`, stop-all) landed without it;
+  do not stretch kanban into a scheduler.
+
 ## Security and limits
 
 ### OS-level network control (`strict` mode)

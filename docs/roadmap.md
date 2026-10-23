@@ -36,11 +36,13 @@ Work done on top of M6, outside the milestones. The plan behind it is [plan.md](
 | No `--allow-child-process` SecurityWarning in plugin logs | [#16](https://github.com/maxseo/sinty/pull/16) | `2026-10-22-child-process-warning` |
 | Linux shell sandbox (bubblewrap, `shell.sandbox`) | [#17](https://github.com/maxseo/sinty/pull/17) | `2026-10-22-linux-shell-sandbox` |
 | `sinty doctor` reports the capped compaction point | [#18](https://github.com/maxseo/sinty/pull/18) | `2026-10-22-doctor-compaction-cap` |
+| Responsive turns: background `agent.task`, `task.completed`, `agent.task_steer`, stop-all, stall pulse, approval queue, `responsive-turn` plugin | (open) | `2026-10-23-responsive-turns` |
 
 ## Known gaps
 
+- Durable `scheduler` plugin (cron / fire-at) is still open; it is not the kanban board. See [backlog](backlog.md#scheduler-plugin-durable-timers--cron--not-kanban).
 - In `standard` mode the network allowlist is enforced by the plugin runtime (`fetch` is replaced), not by the OS. A malicious plugin could use `node:net` directly. OS-level control comes with `strict` mode (M5).
 - Budgets in USD are not enforced yet (no price table). The compaction point is capped in tokens (`memory.compactCapTokens`), not in money.
-- One active turn per session: a second message returns `409 turn_active`.
+- One active turn per session: a second message while the agent is working still returns `409 turn_active`. A message while the turn waits for approval is queued (responsive turns).
 - Vector recall is off until an embedding route is configured (`models.routes.embed` is empty by default); recall is full-text only. See [backlog](backlog.md#embeddings-are-not-configured-by-default).
 - The shell sandbox covers Linux (bubblewrap) and Windows; macOS runs shell commands without a sandbox.

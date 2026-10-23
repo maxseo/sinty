@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Responsive turns: `agent.task` accepts `background: true` and returns `{taskId,sessionId}` immediately; when the
+  child ends the parent gets a `task.completed` journal event and, if idle, a turn with `trigger: "task"`. New core
+  tool `agent.task_steer` appends into a running child by `sessionId` or `taskId`. `POST /v1/sessions/:id/stop-all`
+  and the Web UI «Стоп всё» interrupt the session and every `agent.task` child. Blocking children pulse the parent's
+  stall watch so a live child does not look hung. A message while a turn waits for approval is queued (no `409`).
+  Config: `agent.taskMaxParallel` (default 3), `agent.taskTreeTokens` (default 0 = off). Default-on plugin
+  `responsive-turn` adds the prompt rule (ack first, long work as background tasks); disable with
+  `plugins.disabled: [responsive-turn]`.
+
 - Memory recall by word form: facts are also indexed as stems (`facts_stem`; Snowball Russian in `stem.ts`, English
   through SQLite's porter tokenizer), with stemmed AND and OR stages after the exact AND. "столы новые" finds "новый
   стол", "cats runs" finds "cat ... running". Existing databases build the index on first open.
