@@ -1361,20 +1361,21 @@ export class Agent {
 
   /**
    * The roster agent that speaks in this session. Members are the chat's own `metadata.agentIds` (what the Web UI
-   * picks for a new chat), else the project's agents. The agent named by the last human message wins when it is a
-   * member; otherwise the project lead (when a member), otherwise the first member. No members: undefined, and the
-   * global AGENTS.md with `config.agent.name` applies.
+   * picks for a new chat), else the project's agents, else (for agent.task children) the parent's speaker. The agent
+   * named by the last human message wins when it is a member; otherwise the project lead (when a member), otherwise
+   * the first member. No members: undefined, and the global AGENTS.md with `config.agent.name` applies.
    */
   private speaker(sessionId: string, depth = 0): AgentRecord | undefined {
     const session = this.d.journal.getSession(sessionId);
     if (!session) return undefined;
-    // A child turn (agent.task) works as the agent that delegated it: same persona, plugins and memory scope.
-    const parent = session.metadata?.parentSessionId;
-    if (typeof parent === "string" && !session.projectId && !Array.isArray(session.metadata?.agentIds) && depth < 4) return this.speaker(parent, depth + 1);
     const roster = loadRoster(this.d.paths);
     const project = session.projectId ? roster.projects.find((p) => p.id === session.projectId) : undefined;
     const known = (id: string): boolean => roster.agents.some((a) => a.id === id);
     const own = Array.isArray(session.metadata?.agentIds) ? (session.metadata.agentIds as unknown[]).filter((id): id is string => typeof id === "string") : [];
+    // Child turns (agent.task) copy the parent's projectId. Inherit the parent's speaker when this session has no
+    // own agentIds and the project does not supply any either — otherwise empty projects fell through to models.default.
+    const parent = session.metadata?.parentSessionId;
+    if (typeof parent === "string" && !own.length && !(project?.agentIds?.length) && depth < 4) return this.speaker(parent, depth + 1);
     const members = (own.length ? own : project?.agentIds ?? []).filter(known);
     if (!members.length) return undefined;
     const asked = [...this.d.journal.events(sessionId, { types: ["message.user"] })].reverse().find((e) => typeof (e.data as { agentId?: string }).agentId === "string");

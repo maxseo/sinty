@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format follows
 - Stacked approval cards for background children; skill `background-tasks` + tighter `responsive-turn` / `agent.task` background rules.
 
 ### Fixed
+- `agent.task` children that inherit the parent's `projectId` also inherit the parent's speaker when the project has no `agentIds` (and the child has none of its own). Empty projects no longer fall through to `models.default` for child turns; project `agentIds` still win when set.
 - `agent.task` tool lists accept wire names (`web__search`) as well as canonical (`web.search`);
   wire-only lists no longer auto-deny every child web call with `not in this child turn's tool list`.
 - Background `agent.task` approvals surface in the parent chat (`childPending` on

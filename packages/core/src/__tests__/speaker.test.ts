@@ -121,3 +121,40 @@ test("speaker: no agents in the chat or the project, or only deleted ones: globa
     assert.deepEqual(snap!.persona, { source: "global" });
   });
 });
+
+test("speaker: agent.task child with projectId inherits parent speaker when project has no agents", async () => {
+  await withSinty({}, async (sinty, home) => {
+    const alpha = saveAgent(sinty.paths, { name: "Alpha", persona: "ALPHA-PERSONA-MARKER", model: "rec/alpha" });
+    const project = saveProject(sinty.paths, { name: "empty-for-child" });
+    assert.deepEqual([project.agentIds, project.leadId], [[], ""]);
+    const parent = sinty.agent.createSession({ projectId: project.id, metadata: { agentIds: [alpha.id] } });
+    // Mimic agent.task: child copies projectId, has parentSessionId, no own agentIds.
+    const child = sinty.agent.createSession({
+      projectId: project.id,
+      metadata: { parentSessionId: parent.id, tools: ["echo__say"] },
+    });
+    sinty.agent.send(child.id, "hi");
+    await sinty.agent.idle();
+    assert.match(requests(home)[0]!.messages[0]!.content, /^ALPHA-PERSONA-MARKER/);
+    assert.equal(agentMessage(sinty, child.id).agentName, "Alpha");
+    assert.equal(agentMessage(sinty, child.id).agentId, alpha.id);
+  });
+});
+
+test("speaker: project agentIds still win over parent inherit for a child", async () => {
+  await withSinty({}, async (sinty, home) => {
+    const alpha = saveAgent(sinty.paths, { name: "Alpha", persona: "ALPHA-PERSONA-MARKER" });
+    const beta = saveAgent(sinty.paths, { name: "Beta", persona: "BETA-PERSONA-MARKER" });
+    const project = saveProject(sinty.paths, { name: "with-agents", agentIds: [beta.id], leadId: beta.id });
+    const parent = sinty.agent.createSession({ projectId: project.id, metadata: { agentIds: [alpha.id] } });
+    const child = sinty.agent.createSession({
+      projectId: project.id,
+      metadata: { parentSessionId: parent.id },
+    });
+    sinty.agent.send(child.id, "hi");
+    await sinty.agent.idle();
+    // Child has no own agentIds → project members (Beta), not parent Alpha.
+    assert.match(requests(home)[0]!.messages[0]!.content, /^BETA-PERSONA-MARKER/);
+    assert.equal(agentMessage(sinty, child.id).agentName, "Beta");
+  });
+});
