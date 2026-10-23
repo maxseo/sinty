@@ -159,6 +159,34 @@ test("stopAll interrupts parent and background children", async () => {
     await sinty.agent.idle();
     assert.ok(!sinty.journal.activeTurn(s.id));
     assert.ok(!sinty.journal.activeTurn(childId));
+    const events = sinty.journal.events(s.id);
+    assert.ok(events.some((e) => e.type === "task.completed" && (e.data as { status: string }).status === "interrupted"));
+    assert.ok(
+      !events.some((e) => e.type === "turn.started" && (e.data as { trigger?: string }).trigger === "task"),
+      "stop-all must not wake the parent with trigger=task",
+    );
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+test("background agent.task child inherits parent projectId", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(
+    home,
+    [
+      { toolCalls: [{ name: "agent__task", args: { task: "bg", background: true, tools: ["echo__say"] } }] },
+      { text: "ack" },
+    ],
+    { policy: allowAll, config: noStall },
+  );
+  try {
+    const s = sinty.agent.createSession({ projectId: "prj_test_inherit" });
+    sinty.agent.send(s.id, "go");
+    const child = await waitFor(() => sinty.journal.listSessions(50).find((x) => x.metadata?.parentSessionId === s.id));
+    assert.equal(child.projectId, "prj_test_inherit");
+    await sinty.agent.idle();
   } finally {
     await sinty.stop();
     cleanup();

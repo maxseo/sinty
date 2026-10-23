@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Responsive turns UX: sidebar no longer lists `agent.task` child sessions as chats; children inherit the parent's
+  `projectId`. After a human «Стоп всё» / interrupt, `task.completed` with `status: interrupted` is still journaled
+  but the parent is not woken with `trigger: "task"` (so the model does not restart cancelled work). Plugin
+  `responsive-turn` prompt updated accordingly.
+
 ### Added
 - Responsive turns: `agent.task` accepts `background: true` and returns `{taskId,sessionId}` immediately; when the
   child ends the parent gets a `task.completed` journal event and, if idle, a turn with `trigger: "task"`. New core

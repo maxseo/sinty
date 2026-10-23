@@ -52,6 +52,11 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** Background agent.task children are real sessions but not sidebar chats. */
+function isChildSession(s: SessionInfo): boolean {
+  return typeof s.metadata?.parentSessionId === "string" && s.metadata.parentSessionId.length > 0;
+}
+
 function Shell() {
   const route = useRoute();
   const [agent, setAgent] = useState<AgentInfo>();
@@ -181,8 +186,9 @@ function Shell() {
   const settingsOn = route.page === "settings";
   const sections = useSections([agent]);
   const agentsOn = route.page === "agents";
-  const pinned = pins.map((id) => sessions.find((s) => s.id === id)).filter((s): s is SessionInfo => Boolean(s));
-  const loose = sessions.filter((s) => !s.projectId);
+  const chats = sessions.filter((s) => !isChildSession(s));
+  const pinned = pins.map((id) => chats.find((s) => s.id === id)).filter((s): s is SessionInfo => Boolean(s));
+  const loose = chats.filter((s) => !s.projectId);
 
   return (
     <div class={`shell ${leftOpen ? "" : "left-closed"}`}>
@@ -227,7 +233,7 @@ function Shell() {
                             <button class="nav-item" onClick={() => { toggleProjectOpen(p.id); chooseProject(p.id); }}><IconFolder /> <span class="title">{p.name}</span></button>
                             <button class="icon" title="Новый чат в проекте" onClick={() => openProjectChat(p.id)}><IconPlus /></button>
                           </div>
-                          {openProjects.includes(p.id) && sessions.filter((s) => s.projectId === p.id).map((s) => (
+                          {openProjects.includes(p.id) && chats.filter((s) => s.projectId === p.id).map((s) => (
                             <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
                           ))}
                         </div>

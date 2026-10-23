@@ -81,3 +81,4 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 | 2026-10-22 | [`sinty doctor` reports the capped compaction point](2026-10-22-doctor-compaction-cap.md) | [#18](https://github.com/maxseo/sinty/pull/18) | The doctor uses the core's compaction rule. |
 | 2026-10-22 | [Project state docs for handoff](2026-10-22-docs-project-state.md) | [#19](https://github.com/maxseo/sinty/pull/19) | `docs/plan.md`, roadmap/backlog refresh, journal audit and this index. |
 | 2026-10-23 | [Responsive turns (background agent.task, stop-all, steer)](2026-10-23-responsive-turns.md) | (open) | Background children, task.completed, cascade stop, default-on plugin. |
+| 2026-10-23 | [Responsive-turn UX: hide children, no restart after stop-all](2026-10-23-responsive-turn-ux.md) | (open) | Sidebar skips child sessions; interrupted tasks do not wake parent. |
