@@ -15,6 +15,7 @@ Built since the last backlog update; details in the [roadmap](roadmap.md#done-af
 - Better stemming for recall (Snowball / porter) — [#13](https://github.com/maxseo/sinty/pull/13).
 - Login token rotation — [#15](https://github.com/maxseo/sinty/pull/15).
 - No `--allow-child-process` SecurityWarning in plugin logs — [#16](https://github.com/maxseo/sinty/pull/16).
+- Background UX: live status, session policy trust, stacked approvals, background routing — (open PR).
 
 ## Tools and plugins
 

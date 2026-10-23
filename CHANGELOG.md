@@ -7,6 +7,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Session policy trust: skip further policy `ask` in a chat (deny unchanged) via UI «Больше не спрашивать в этом чате»,
+  approval `remember`, `POST /v1/sessions/:id/policy-grants`, or phrases like «не спрашивай» / "just do it". Journaled as
+  `session.policy_grant`; tool calls still appear in the journal.
+- Chat live background status: one updating «Фон · …» line instead of a wall of `task.progress` notes (journal keeps all events).
+- Stacked approval cards for background children; skill `background-tasks` + tighter `responsive-turn` / `agent.task` background rules.
+
 ### Fixed
 - `agent.task` tool lists accept wire names (`web__search`) as well as canonical (`web.search`);
   wire-only lists no longer auto-deny every child web call with `not in this child turn's tool list`.

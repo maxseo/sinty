@@ -22,6 +22,7 @@ import { runShell, ShellSandboxError } from "./shell.js";
 import { renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
+import { detectPolicyTrustPhrase } from "./policy-trust.js";
 import { watchStall } from "./stall.js";
 import { agentHasPlugin, listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
 import type { SecretStore } from "./secrets.js";
@@ -198,6 +199,9 @@ export class Agent {
       if (hit) return { turnId: hit.turnId };
     }
     const actor = opts.actor ?? { kind: "human", id: "user" };
+    if (detectPolicyTrustPhrase(text)) {
+      this.grantPolicyTrust(sessionId, actor, "user phrase");
+    }
     const active = j.activeTurn(sessionId);
     if (active) {
       if (active.status !== "blocked") {
@@ -233,7 +237,12 @@ export class Agent {
     return { turnId };
   }
 
-  decide(sessionId: string, callId: string, decision: "approve" | "deny", by: Actor, note?: string): void {
+  decide(sessionId: string, callId: string, decision: "approve" | "deny", by: Actor, note?: string, opts: { remember?: boolean } = {}): void {
+    if (decision === "approve" && opts.remember) {
+      // Grant + approve-all (including this callId); do not decide again.
+      this.grantPolicyTrust(this.trustRootSession(sessionId), by, note ?? "remember on approve");
+      return;
+    }
     const turn = this.d.journal.activeTurn(sessionId);
     if (!turn || turn.status !== "blocked") throw new AgentError("not_blocked", "no blocked turn in this session", 409);
     const view = this.view(turn.id);
@@ -247,6 +256,62 @@ export class Agent {
       data: strip({ callId, by, note }),
     });
     this.resume(sessionId, turn.id);
+  }
+
+  /**
+   * Session-scoped trust: skip policy `ask` for the rest of this chat (and its agent.task children).
+   * `deny` is unchanged. Journals `session.policy_grant` and auto-approves current waiting asks.
+   */
+  grantPolicyTrust(sessionId: string, by: Actor, note?: string): void {
+    const root = this.trustRootSession(sessionId);
+    const cur = this.d.journal.getSession(root);
+    if (!cur) throw new AgentError("not_found", `session ${root} not found`, 404);
+    if (cur.metadata?.policyTrust === true) {
+      this.approveAllAwaiting(root, by, note ?? "session trust");
+      return;
+    }
+    this.d.journal.mergeSessionMetadata(root, { policyTrust: true });
+    this.record({
+      sessionId: root,
+      type: "session.policy_grant",
+      actor: by,
+      data: strip({ trust: true as const, by, note }),
+    });
+    this.approveAllAwaiting(root, by, note ?? "session trust");
+  }
+
+  /** Parent chat id for policy trust (children inherit the parent's grant). */
+  private trustRootSession(sessionId: string): string {
+    const s = this.d.journal.getSession(sessionId);
+    const parent = s?.metadata?.parentSessionId;
+    return typeof parent === "string" ? parent : sessionId;
+  }
+
+  private sessionPolicyTrust(sessionId: string): boolean {
+    const root = this.trustRootSession(sessionId);
+    return this.d.journal.getSession(root)?.metadata?.policyTrust === true;
+  }
+
+  /** Approve every awaiting_approval call on this session and its live children, one resume per session. */
+  private approveAllAwaiting(sessionId: string, by: Actor, note?: string): void {
+    const approveOne = (id: string): void => {
+      const turn = this.d.journal.activeTurn(id);
+      if (!turn || turn.status !== "blocked") return;
+      const waiting = this.view(turn.id).calls.filter((c) => c.status.kind === "awaiting_approval");
+      if (!waiting.length) return;
+      for (const c of waiting) {
+        this.record({
+          sessionId: id,
+          turnId: turn.id,
+          type: "tool.call.approved",
+          actor: by,
+          data: strip({ callId: c.call.callId, by, note }),
+        });
+      }
+      this.resume(id, turn.id);
+    };
+    approveOne(sessionId);
+    for (const childId of this.childSessionIds(sessionId)) approveOne(childId);
   }
 
   async interrupt(sessionId: string, by: Actor = { kind: "human", id: "user" }): Promise<boolean> {
@@ -966,8 +1031,21 @@ export class Agent {
           return "done";
         }
         const forced = this.forcedApproval(call);
-        if (verdict.decision === "ask" || forced) {
-          this.record({ ...base, type: "tool.call.approval_requested", actor: SYSTEM, data: { callId: call.callId, tool: tool.name, args: call.args, reason: forced ?? `policy ${verdict.rule}` } });
+        if (forced) {
+          this.record({ ...base, type: "tool.call.approval_requested", actor: SYSTEM, data: { callId: call.callId, tool: tool.name, args: call.args, reason: forced } });
+          return this.block(sessionId, turnId, "approval", `${tool.name} needs approval`);
+        }
+        if (verdict.decision === "ask") {
+          if (this.sessionPolicyTrust(sessionId)) {
+            this.record({
+              ...base,
+              type: "tool.call.approved",
+              actor: SYSTEM,
+              data: { callId: call.callId, by: SYSTEM, note: "session trust" },
+            });
+            return this.execute(sessionId, turnId, stepId, call, tool, signal);
+          }
+          this.record({ ...base, type: "tool.call.approval_requested", actor: SYSTEM, data: { callId: call.callId, tool: tool.name, args: call.args, reason: `policy ${verdict.rule}` } });
           return this.block(sessionId, turnId, "approval", `${tool.name} needs approval`);
         }
         return this.execute(sessionId, turnId, stepId, call, tool, signal);

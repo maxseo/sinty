@@ -10,6 +10,7 @@ export { PatchError, PatchManager } from "./patches.js";
 export { SupervisorClient } from "./supervisor-client.js";
 export { CORE_TOOLS } from "./coretools.js";
 export { evaluateTool, globMatch, hostAllowed } from "./policy.js";
+export { detectPolicyTrustPhrase } from "./policy-trust.js";
 export { PROTOCOL_VERSION } from "@sinty/sdk";
 export { loadRegistry, type RegistryEntry } from "./registry.js";
 export { resolvePaths, type SintyPaths } from "./paths.js";

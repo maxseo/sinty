@@ -179,6 +179,15 @@ export class Journal {
     return this.getSession(id);
   }
 
+  /** Shallow-merge keys into session.metadata (e.g. policyTrust). Returns the updated row. */
+  mergeSessionMetadata(id: string, patch: Record<string, unknown>): SessionRow | undefined {
+    const cur = this.getSession(id);
+    if (!cur) return undefined;
+    const metadata = { ...cur.metadata, ...patch };
+    this.db.prepare("UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(metadata), new Date().toISOString(), id);
+    return this.getSession(id);
+  }
+
   /** Writes the event durably and returns it. Stream-only types are rejected. */
   append<T extends EventType>(input: AppendInput<T>): SintyEvent<T> {
     if (STREAM_ONLY.has(input.type)) throw new Error(`${input.type} is stream-only`);
