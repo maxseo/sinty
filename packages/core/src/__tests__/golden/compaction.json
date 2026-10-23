@@ -91,6 +91,7 @@
     ],
     "tools": [
       "agent__task",
+      "agent__task_steer",
       "ask_human",
       "context__recall",
       "memory__forget",

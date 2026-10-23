@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "responsive-turn",
+  "version": "0.1.0",
+  "description": "Prompt rule: acknowledge the user immediately, run long work as background agent.task, report on task.completed",
+  "kinds": [
+    "context"
+  ],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {},
+  "editable": true
+}

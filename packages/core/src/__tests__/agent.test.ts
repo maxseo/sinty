@@ -95,7 +95,10 @@ test("policy ask blocks the turn until approved", async () => {
     await sinty.agent.idle();
     assert.equal(sinty.journal.activeTurn(s.id)?.status, "blocked");
     const req = find<{ callId: string }>(sinty.journal.events(s.id), "tool.call.approval_requested")!;
-    assert.throws(() => sinty.agent.send(s.id, "hurry"), /blocked/);
+    // Queued into the blocked turn (no 409); applied after approve on the next model step.
+    const queued = sinty.agent.send(s.id, "hurry");
+    assert.equal(queued.turnId, sinty.journal.activeTurn(s.id)!.id);
+    assert.ok(sinty.journal.events(s.id).some((e) => e.type === "message.user" && (e.data as { text: string }).text === "hurry"));
 
     sinty.agent.decide(s.id, req.callId, "approve", { kind: "human", id: "test" });
     await sinty.agent.idle();

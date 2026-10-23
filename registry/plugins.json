@@ -108,6 +108,14 @@
       ]
     },
     {
+      "name": "responsive-turn",
+      "version": "0.1.0",
+      "description": "Prompt rule: acknowledge the user immediately, run long work as background agent.task, report on task.completed",
+      "kinds": [
+        "context"
+      ]
+    },
+    {
       "name": "server-a2a",
       "version": "0.1.0",
       "description": "A2A agent card and message/send: another agent can give Sinty a task and read the answer",

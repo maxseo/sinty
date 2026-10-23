@@ -62,7 +62,7 @@ const AGENT: Actor = { kind: "agent", id: "sinty" };
 const SUPERVISOR: Actor = { kind: "supervisor", id: "supervisor" };
 const MAX_TOOL_RESULT_CHARS = 50_000;
 /** Journal events that become dialogue messages (eventsToMessages). */
-const DIALOGUE_EVENTS: EventType[] = ["message.user", "context.turn", "model.response", "tool.call.completed", "tool.call.failed", "tool.call.denied", "supervisor.notice"];
+const DIALOGUE_EVENTS: EventType[] = ["message.user", "context.turn", "model.response", "tool.call.completed", "tool.call.failed", "tool.call.denied", "supervisor.notice", "task.completed"];
 
 const CORE_INFO: ToolInfo[] = CORE_TOOLS.map((t) => ({
   name: t.name,
@@ -125,7 +125,15 @@ export interface AgentDeps {
 
 /** The turn loop. All state is derived from the journal, so the same code serves normal work, approvals and crash recovery. */
 export class Agent {
-  private readonly running = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  private readonly running = new Map<string, { controller: AbortController; done: Promise<void>; sessionId: string; pulseStall?: () => void }>();
+  /** Live child sessions started by agent.task, keyed by parent session id. */
+  private readonly childrenByParent = new Map<string, Set<string>>();
+  /** Background taskId -> child session id (for agent.task_steer). */
+  private readonly taskSessions = new Map<string, string>();
+  /** Background starts in flight (before the child turn is active), for taskMaxParallel under Promise.all. */
+  private readonly pendingBackground = new Map<string, number>();
+  /** Parent sessions that got task.completed while busy; flush after their turn leaves `running`. */
+  private readonly pendingTaskTurns = new Set<string>();
   /** Last prompt per session, kept only while an inspector runs: the snapshot compares steps (`cache.reused`). */
   private readonly lastPrompt = new Map<string, PreviousPrompt>();
   /** Context contributors already warned about rewriting messages before the tail. */
@@ -199,14 +207,20 @@ export class Agent {
       const reason = this.view(active.id).lastBlockReason;
       if (pendingAsk) {
         this.record({ sessionId, turnId: active.id, type: "tool.call.completed", actor, data: { callId: pendingAsk, result: { answer: text }, durationMs: 0 } });
+        if (opts.idempotencyKey) j.rememberIdempotency(opts.idempotencyKey, sessionId, active.id);
+        this.resume(sessionId, active.id);
+        return { turnId: active.id };
       } else if (reason === "supervisor" || reason === "budget") {
         this.record({ sessionId, turnId: active.id, type: "message.user", actor, data: strip({ text, channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
+        if (opts.idempotencyKey) j.rememberIdempotency(opts.idempotencyKey, sessionId, active.id);
+        this.resume(sessionId, active.id);
+        return { turnId: active.id };
       } else {
-        throw new AgentError("turn_active", `turn ${active.id} is blocked on an approval; approve, deny or interrupt it`, 409);
+        // Approval wait: queue the message into the blocked turn (no 409). It is applied after approve/deny on resume.
+        this.record({ sessionId, turnId: active.id, type: "message.user", actor, data: strip({ text, channel: opts.channel, attachments: opts.attachments, agentId: opts.agentId }) });
+        if (opts.idempotencyKey) j.rememberIdempotency(opts.idempotencyKey, sessionId, active.id);
+        return { turnId: active.id };
       }
-      if (opts.idempotencyKey) j.rememberIdempotency(opts.idempotencyKey, sessionId, active.id);
-      this.resume(sessionId, active.id);
-      return { turnId: active.id };
     }
     const turnId = newId("trn");
     j.startTurn(turnId, sessionId);
@@ -235,15 +249,86 @@ export class Agent {
 
   async interrupt(sessionId: string, by: Actor = { kind: "human", id: "user" }): Promise<boolean> {
     const turn = this.d.journal.activeTurn(sessionId);
-    if (!turn) return false;
-    const r = this.running.get(turn.id);
+    const r = turn ? this.running.get(turn.id) : undefined;
+    // Snapshot children before abort: the blocking agent.task finally may unregister them as we unwind.
+    const children = this.childSessionIds(sessionId);
+    // Abort the parent first so a blocking agent.task cannot resume after its child ends, then cascade.
+    if (r) r.controller.abort();
+    let any = Boolean(r);
+    for (const childId of children) {
+      if (await this.interrupt(childId, by)) any = true;
+    }
+    if (!turn) return any;
     if (r) {
-      r.controller.abort();
       await r.done;
       return true;
     }
     this.endTurn(sessionId, turn.id, "interrupted", { type: "turn.interrupted", data: { by } });
     return true;
+  }
+
+  /** Interrupt this session and every agent.task child under it (the stop-all tree). */
+  async stopAll(sessionId: string, by: Actor = { kind: "human", id: "user" }): Promise<boolean> {
+    return this.interrupt(sessionId, by);
+  }
+
+  private childSessionIds(parentId: string): string[] {
+    const live = this.childrenByParent.get(parentId);
+    if (live?.size) return [...live];
+    return this.d.journal
+      .listSessions(500)
+      .filter((s) => s.metadata?.parentSessionId === parentId)
+      .map((s) => s.id);
+  }
+
+  private registerChild(parentId: string, childId: string, taskId?: string): void {
+    let set = this.childrenByParent.get(parentId);
+    if (!set) {
+      set = new Set();
+      this.childrenByParent.set(parentId, set);
+    }
+    set.add(childId);
+    if (taskId) this.taskSessions.set(taskId, childId);
+  }
+
+  private unregisterChild(parentId: string, childId: string): void {
+    const set = this.childrenByParent.get(parentId);
+    if (set) {
+      set.delete(childId);
+      if (!set.size) this.childrenByParent.delete(parentId);
+    }
+    for (const [taskId, sid] of this.taskSessions) {
+      if (sid === childId) this.taskSessions.delete(taskId);
+    }
+  }
+
+  private releasePendingBackground(parentId: string): void {
+    const n = (this.pendingBackground.get(parentId) ?? 1) - 1;
+    if (n <= 0) this.pendingBackground.delete(parentId);
+    else this.pendingBackground.set(parentId, n);
+  }
+
+  /** Active background children of a parent (sessions with an active turn). */
+  private activeBackgroundChildren(parentId: string): number {
+    let n = 0;
+    for (const id of this.childSessionIds(parentId)) {
+      const meta = this.d.journal.getSession(id)?.metadata;
+      if (!meta?.background) continue;
+      if (this.d.journal.activeTurn(id)) n++;
+    }
+    return n;
+  }
+
+  /** Tokens used by the parent turn (if any) plus all of its child turns still in the journal view. */
+  private treeTokens(parentId: string): number {
+    let total = 0;
+    const parentTurn = this.d.journal.activeTurn(parentId);
+    if (parentTurn) total += this.view(parentTurn.id).tokens;
+    for (const id of this.childSessionIds(parentId)) {
+      const t = this.d.journal.activeTurn(id);
+      if (t) total += this.view(t.id).tokens;
+    }
+    return total;
   }
 
   /** Continue every turn that was running when the process stopped. */
@@ -330,12 +415,20 @@ export class Agent {
   private launch(sessionId: string, turnId: string): void {
     if (this.running.has(turnId)) return;
     const controller = new AbortController();
-    const done = this.advance(sessionId, turnId, controller.signal)
+    const entry: { controller: AbortController; done: Promise<void>; sessionId: string; pulseStall?: () => void } = {
+      controller,
+      sessionId,
+      done: Promise.resolve(),
+    };
+    entry.done = this.advance(sessionId, turnId, controller.signal)
       .catch((e: unknown) => {
         this.d.log?.("error", `turn ${turnId} crashed`, e instanceof Error ? e.stack : e);
       })
-      .finally(() => this.running.delete(turnId));
-    this.running.set(turnId, { controller, done });
+      .finally(() => {
+        this.running.delete(turnId);
+        this.flushPendingTaskTurn(sessionId);
+      });
+    this.running.set(turnId, entry);
   }
 
   private async advance(sessionId: string, turnId: string, signal: AbortSignal): Promise<void> {
@@ -347,7 +440,7 @@ export class Agent {
         const open = view.calls.filter((c) => c.status.kind !== "resolved");
         if (open.length) {
           const stepId = view.lastResponse!.stepId!;
-          const parallel = open.filter((c) => this.canRunTogether(c.call.tool));
+          const parallel = open.filter((c) => this.canRunTogether(c.call.tool, c.call.args));
           const batch = parallel.length >= 2 ? parallel : [open[0]!];
           const outcomes = await Promise.all(batch.map((c) => this.guardStall(sessionId, turnId, signal, (inner) => this.processCall(sessionId, turnId, stepId, c.call, c.status, inner))));
           if (outcomes.some((o) => o === "stalled" || o === "blocked")) return;
@@ -420,6 +513,8 @@ export class Agent {
         markEscalated?.();
       },
     );
+    const run = this.running.get(turnId);
+    if (run) run.pulseStall = () => watch.pulse();
     const job = work(child.signal).catch((e: unknown) => {
       if (escalated) return "stalled" as const;
       throw e;
@@ -432,6 +527,7 @@ export class Agent {
       }
       return result;
     } finally {
+      if (run) delete run.pulseStall;
       watch.stop();
       parent.removeEventListener("abort", onAbort);
     }
@@ -459,6 +555,55 @@ export class Agent {
     this.d.journal.setTurnStatus(turnId, status);
     this.record({ sessionId, turnId, type: ev.type, actor: SYSTEM, data: ev.data } as AppendInput<T>);
     this.record({ sessionId, turnId, type: "agent.state", actor: SYSTEM, data: { state: status === "completed" ? "done" : status === "failed" ? "error" : "idle" } });
+    this.notifyParentTask(sessionId, status === "interrupted" ? "interrupted" : status === "failed" ? "failed" : "completed");
+  }
+
+  /** Background agent.task: write task.completed on the parent and start a trigger=task turn when the parent is idle. */
+  private notifyParentTask(childSessionId: string, status: "completed" | "failed" | "interrupted"): void {
+    const child = this.d.journal.getSession(childSessionId);
+    const parentId = typeof child?.metadata?.parentSessionId === "string" ? child.metadata.parentSessionId : undefined;
+    const taskId = typeof child?.metadata?.taskId === "string" ? child.metadata.taskId : undefined;
+    const background = child?.metadata?.background === true;
+    if (!parentId || !taskId || !background) return;
+    const events = this.d.journal.events(childSessionId);
+    const text = [...events].reverse().find((e) => e.type === "message.agent")?.data as { text?: string } | undefined;
+    const summary = text?.text || (status === "completed" ? "Дочерний ход закончился без текста." : status === "failed" ? "Дочерний ход завершился ошибкой." : "Дочерний ход прерван.");
+    const parentTurn = this.d.journal.activeTurn(parentId);
+    this.record({
+      sessionId: parentId,
+      turnId: parentTurn?.id,
+      type: "task.completed",
+      actor: SYSTEM,
+      data: { taskId, childSessionId, status, text: summary },
+    });
+    this.unregisterChild(parentId, childSessionId);
+    // Idle parent: open a turn so the model can report the result (trigger "task").
+    // Busy parent: remember and flush when its turn leaves `running` (see launch finally).
+    if (!parentTurn && !this.runningHasSession(parentId)) {
+      this.launchTaskTurn(parentId);
+    } else {
+      this.pendingTaskTurns.add(parentId);
+    }
+  }
+
+  /** Start a trigger=task turn on an idle parent so it can report background child results. */
+  private launchTaskTurn(sessionId: string): void {
+    if (this.d.journal.activeTurn(sessionId) || this.runningHasSession(sessionId)) return;
+    this.pendingTaskTurns.delete(sessionId);
+    const turnId = newId("trn");
+    this.d.journal.startTurn(turnId, sessionId);
+    this.record({ sessionId, turnId, type: "turn.started", actor: SYSTEM, data: { trigger: "task" } });
+    this.launch(sessionId, turnId);
+  }
+
+  private flushPendingTaskTurn(sessionId: string): void {
+    if (!this.pendingTaskTurns.has(sessionId)) return;
+    this.launchTaskTurn(sessionId);
+  }
+
+  private runningHasSession(sessionId: string): boolean {
+    for (const r of this.running.values()) if (r.sessionId === sessionId) return true;
+    return false;
   }
 
   private block(sessionId: string, turnId: string, reason: EventDataMap["turn.blocked"]["reason"], detail?: string): "blocked" {
@@ -468,8 +613,10 @@ export class Agent {
     return "blocked";
   }
 
-  private canRunTogether(tool: string): boolean {
-    if (tool === "agent.task" || tool === "ask_human" || tool === "shell.run") return false;
+  private canRunTogether(tool: string, args?: unknown): boolean {
+    if (tool === "ask_human" || tool === "shell.run" || tool === "agent.task_steer") return false;
+    // Background agent.task returns immediately, so several may start in one model step.
+    if (tool === "agent.task") return Boolean(args && typeof args === "object" && (args as { background?: boolean }).background);
     const found = this.allTools().find((t) => t.name === tool);
     return found?.sideEffects === "read" || found?.sideEffects === "none";
   }
@@ -477,19 +624,108 @@ export class Agent {
   private allowedTools(sessionId: string): string[] | undefined {
     const tools = this.d.journal.getSession(sessionId)?.metadata?.tools;
     if (!Array.isArray(tools)) return undefined;
-    return tools.filter((t): t is string => typeof t === "string" && t !== "agent.task");
+    return tools.filter((t): t is string => typeof t === "string" && t !== "agent.task" && t !== "agent.task_steer");
   }
 
   /** A short turn that can use only the listed tools. Its events stay in their own session. */
-  private async delegate(sessionId: string, args: { task: string; tools?: string[] }): Promise<{ sessionId: string; text: string }> {
+  private async delegate(
+    sessionId: string,
+    args: { task: string; tools?: string[]; background?: boolean },
+    signal?: AbortSignal,
+  ): Promise<{ sessionId: string; text: string } | { taskId: string; sessionId: string }> {
     if (this.allowedTools(sessionId)) throw new CoreToolError("nested_task", "a child turn cannot start another child turn");
-    const tools = (args.tools?.length ? args.tools : ["web.search", "web.read", "web.links", "memory.recall", "skill.read"]).filter((t) => t !== "agent.task");
-    const child = this.createSession({ title: args.task.slice(0, 80), metadata: { parentSessionId: sessionId, tools } });
+    const background = args.background === true;
+    const maxParallel = this.d.config.agent.taskMaxParallel ?? 3;
+    if (background) {
+      const pending = this.pendingBackground.get(sessionId) ?? 0;
+      if (this.activeBackgroundChildren(sessionId) + pending >= maxParallel) {
+        throw new CoreToolError("task_limit", `already ${maxParallel} background child tasks running (agent.taskMaxParallel)`, "Wait for task.completed or raise agent.taskMaxParallel.");
+      }
+      this.pendingBackground.set(sessionId, pending + 1);
+    }
+    const treeCap = this.d.config.agent.taskTreeTokens ?? 0;
+    if (treeCap > 0 && this.treeTokens(sessionId) >= treeCap) {
+      if (background) this.releasePendingBackground(sessionId);
+      throw new CoreToolError("tree_budget", `the parent+children tree already used ${this.treeTokens(sessionId)} tokens (limit ${treeCap})`, "Wait for children to finish or raise agent.taskTreeTokens.");
+    }
+    const tools = (args.tools?.length ? args.tools : ["web.search", "web.read", "web.links", "memory.recall", "skill.read"]).filter((t) => t !== "agent.task" && t !== "agent.task_steer");
+    const taskId = background ? newId("tsk") : undefined;
+    let child;
+    try {
+      child = this.createSession({
+        title: args.task.slice(0, 80),
+        metadata: strip({ parentSessionId: sessionId, tools, background: background || undefined, taskId }),
+      });
+    } catch (e) {
+      if (background) this.releasePendingBackground(sessionId);
+      throw e;
+    }
+    this.registerChild(sessionId, child.id, taskId);
+
+    if (background) {
+      // Defer the child turn to the next microtask so the parent can finish this tool step and take the
+      // next model response first (shared fake-provider scripts in tests; fairer scheduling in prod).
+      // pendingBackground stays until the child actually starts, preserving taskMaxParallel.
+      const childId = child.id;
+      const task = args.task;
+      queueMicrotask(() => {
+        try {
+          if (signal?.aborted) {
+            void this.interrupt(childId);
+            return;
+          }
+          this.send(childId, task);
+        } finally {
+          this.releasePendingBackground(sessionId);
+        }
+      });
+      return { taskId: taskId!, sessionId: child.id };
+    }
+
     const { turnId } = this.send(child.id, args.task);
-    await this.running.get(turnId)?.done;
+    const onAbort = (): void => {
+      void this.interrupt(child.id);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+
+    // Blocking child: pulse the parent's stall watch on child progress so a long but live child does not look hung.
+    const parentTurn = this.d.journal.activeTurn(sessionId);
+    const unsub = this.d.bus.subscribe((msg) => {
+      const ev = msg.kind === "journal" ? msg.event : msg.event;
+      if (ev.sessionId !== child.id) return;
+      if (ev.type === "tool.call.progress" || ev.type === "tool.call.completed" || ev.type === "tool.call.started" || ev.type === "model.response" || ev.type === "model.request") {
+        if (parentTurn) this.running.get(parentTurn.id)?.pulseStall?.();
+      }
+    });
+    try {
+      await this.running.get(turnId)?.done;
+    } finally {
+      unsub();
+      signal?.removeEventListener("abort", onAbort);
+      this.unregisterChild(sessionId, child.id);
+    }
+    if (signal?.aborted) throw new DOMException("interrupted", "AbortError");
     const events = this.d.journal.events(child.id);
     const text = [...events].reverse().find((e) => e.type === "message.agent")?.data as { text?: string } | undefined;
     return { sessionId: child.id, text: text?.text || "Дочерний ход закончился без текста." };
+  }
+
+  /** Append a user message into a child of this session (agent.task_steer). */
+  private steerTask(parentSessionId: string, args: { text: string; sessionId?: string; taskId?: string }): { sessionId: string; turnId: string } {
+    let childId = args.sessionId;
+    if (!childId && args.taskId) childId = this.taskSessions.get(args.taskId);
+    if (!childId && args.taskId) {
+      const hit = this.d.journal.listSessions(500).find((s) => s.metadata?.taskId === args.taskId && s.metadata?.parentSessionId === parentSessionId);
+      childId = hit?.id;
+    }
+    if (!childId) throw new CoreToolError("not_found", "child session or taskId not found", "Pass sessionId or taskId from agent.task.");
+    const child = this.d.journal.getSession(childId);
+    if (!child || child.metadata?.parentSessionId !== parentSessionId) {
+      throw new CoreToolError("forbidden", "that session is not a child of this chat", "Only steer children started by agent.task in this session.");
+    }
+    const { turnId } = this.send(childId, args.text);
+    return { sessionId: childId, turnId };
   }
 
   /** The turn budget (config.yaml supervisor.budget over policy.yaml budgets.turn). With `stop: false` it only warns. */
@@ -679,9 +915,10 @@ export class Agent {
 
     if (CORE_TOOL_NAMES.has(tool.name)) {
       try {
-        const result = await this.runCoreTool(sessionId, tool.name, call.args);
+        const result = await this.runCoreTool(sessionId, tool.name, call.args, signal);
         this.record({ ...base, type: "tool.call.completed", actor: SYSTEM, data: { callId: call.callId, result, durationMs: Date.now() - t0 } });
       } catch (e) {
+        if (signal.aborted || (e instanceof Error && e.name === "AbortError")) throw e instanceof Error ? e : new DOMException("interrupted", "AbortError");
         const err =
           e instanceof CoreToolError || e instanceof PatchError ? { code: e.code, message: e.message, hint: e.hint } : { code: "internal", message: e instanceof Error ? e.message : String(e), hint: undefined };
         this.record({ ...base, type: "tool.call.failed", actor: SYSTEM, data: strip({ callId: call.callId, ...err, durationMs: Date.now() - t0 }) });
@@ -717,13 +954,14 @@ export class Agent {
     }
   }
 
-  private async runCoreTool(sessionId: string, name: string, rawArgs: unknown): Promise<unknown> {
+  private async runCoreTool(sessionId: string, name: string, rawArgs: unknown, signal?: AbortSignal): Promise<unknown> {
     const parsed = CORE_INPUT.get(name)!.safeParse(rawArgs ?? {});
     if (!parsed.success) throw new CoreToolError("invalid_args", z.prettifyError(parsed.error), "Fix the arguments to match the tool schema.");
     const args = parsed.data as unknown;
     if (name === "context.recall") return this.recall(sessionId, args);
     if (name.startsWith("memory.")) return this.memoryTool(sessionId, name, args);
-    if (name === "agent.task") return this.delegate(sessionId, args as { task: string; tools?: string[] });
+    if (name === "agent.task") return this.delegate(sessionId, args as { task: string; tools?: string[]; background?: boolean }, signal);
+    if (name === "agent.task_steer") return this.steerTask(sessionId, args as { text: string; sessionId?: string; taskId?: string });
     if (name === "shell.run") {
       const a = args as { command: string; cwd?: string; timeoutMs?: number };
       try {
@@ -1075,6 +1313,7 @@ export class Agent {
           if (v.lastResponse) v.inputAfterResponse = true;
           continue;
         case "supervisor.notice":
+        case "task.completed":
           if (v.lastResponse) v.inputAfterResponse = true;
           continue;
         case "message.agent":
@@ -1204,6 +1443,15 @@ export function eventsToMessages(events: SintyEvent[], dataDir?: string): ChatMe
         closeOpen();
         out.push({ role: "user", content: `[supervisor] ${(e as SintyEvent<"supervisor.notice">).data.text}` });
         break;
+      case "task.completed": {
+        closeOpen();
+        const d = (e as SintyEvent<"task.completed">).data;
+        out.push({
+          role: "user",
+          content: `[task.completed ${d.taskId} ${d.status}] ${d.text}`,
+        });
+        break;
+      }
     }
   }
   closeOpen();

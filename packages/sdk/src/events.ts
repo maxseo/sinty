@@ -76,6 +76,10 @@ export interface EventDataMap {
 
   "agent.state": { state: AgentState };
 
+  /** A background agent.task finished; written on the parent session (often without an active turn). */
+  "task.completed": { taskId: string; childSessionId: string; status: "completed" | "failed" | "interrupted"; text: string };
+
+
   "plugin.loaded": { plugin: string; version: string; commit?: string };
   "plugin.crashed": { plugin: string; exitCode: number | null; restarts: number };
   "plugin.patch.proposed": { patchId: string; plugin: string; reason: string; branch: string };
