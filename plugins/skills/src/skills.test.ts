@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { editSkillFile, listSkillFiles, listSkills, readSkill, readSkillFile, skillCatalog, writeSkill, writeSkillFile } from "./skills.ts";
+import { editSkillFile, importSkill, listSkillFiles, listSkills, readSkill, readSkillFile, skillCatalog, writeSkill, writeSkillFile } from "./skills.ts";
 
 test("skills: description from frontmatter, full text on read", () => {
   const root = mkdtempSync(join(tmpdir(), "sinty-skills-"));
@@ -22,4 +22,11 @@ test("skills: description from frontmatter, full text on read", () => {
   assert.deepEqual(listSkillFiles(root, "stew").files, ["SKILL.md", "scripts/simmer.js"]);
   assert.match(readSkillFile(root, "stew", "scripts/simmer.js").text, /minutes = 40/);
   assert.throws(() => writeSkillFile(root, "stew", "../secret.txt", "nope"));
+  importSkill(root, "launch", [
+    { path: "launch/SKILL.md", text: "---\ndescription: Publish it.\n---\n# Launch\n" },
+    { path: "notes.md", text: "Channels.\n" },
+  ]);
+  assert.equal(listSkills(root).find((s) => s.name === "launch")?.description, "Publish it.");
+  assert.deepEqual(listSkillFiles(root, "launch").files, ["SKILL.md", "notes.md"]);
+  assert.throws(() => importSkill(root, "empty", [{ path: "readme.md", text: "no skill" }]));
 });
