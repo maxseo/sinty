@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { SkillsPane } from "./skills-pane";
 import { api, shortTime, type SintyEvent } from "./api.js";
 import { href } from "./route.js";
 
@@ -180,6 +181,7 @@ export function SectionPane({ id }: { id: string }) {
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
+  if (id === "plugin.skills") return <SkillsPane />;
   if (!section) return error ? <p class="error">{error}</p> : null;
   const base = toDraft(section);
   const changed = section.fields.filter((f) => draft[f.key] !== base[f.key]);

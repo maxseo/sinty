@@ -2,6 +2,7 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import type { BusMessage, LogFn } from "@sinty/core";
 
@@ -28,6 +29,8 @@ Usage:
   sinty upgrade --from <dir>      replace this install with a tree whose integrity.json matches
   sinty version
   sinty plugins                     catalog from registry/plugins.json and whether each is enabled
+  sinty skills add <folder-or.zip>
+                                   copy an Agent Skills folder (SKILL.md) into the skills directory
   sinty memory eval [--labels file.jsonl] [--arms a,b] [--limit 200] [--json]
                                    offline recall replay: hit rate on labeled queries, memory-block
                                    tokens and recall latency per arm (no chat model calls)
@@ -90,6 +93,8 @@ async function main(): Promise<number> {
       return version();
     case "plugins":
       return plugins();
+    case "skills":
+      return skillsCmd(rest);
     case "memory":
       return memoryCmd(rest);
     default:
@@ -301,6 +306,20 @@ function version(): number {
   const integrity = readIntegrity(resolvePaths(values.home).install);
   console.log(`protocol ${PROTOCOL_VERSION}`);
   console.log(integrity ? `sinty install, ${Object.keys(integrity.files).length} hashed files` : "sinty (source tree, no integrity.json)");
+  return 0;
+}
+
+async function skillsCmd(args: string[]): Promise<number> {
+  if (args[0] !== "add" || !args[1]) {
+    console.error("usage: sinty skills add <folder-or.zip>");
+    return 2;
+  }
+  const paths = resolvePaths(values.home);
+  const mod = (await import(pathToFileURL(join(paths.bundledPlugins, "skills", "dist", "install.js")).href)) as {
+    installSkillSource(root: string, source: string): { name: string; files: string[] };
+  };
+  const installed = mod.installSkillSource(paths.skills, args[1]);
+  console.log(`${installed.name} (${installed.files.length} files) → ${join(paths.skills, installed.name)}`);
   return 0;
 }
 

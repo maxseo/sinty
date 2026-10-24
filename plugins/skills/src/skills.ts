@@ -26,6 +26,23 @@ export function listSkills(root: string): SkillInfo[] {
   return out;
 }
 
+/** Writes SKILL.md and any extra text files. One of the paths must be SKILL.md. */
+export function importSkill(root: string, name: string, files: { path: string; text: string }[]): { name: string; files: string[] } {
+  if (!files.length) throw new Error("no files");
+  const normalized = files.map((f) => {
+    const path = shown(f.path);
+    return { path: path.startsWith(`${name}/`) ? path.slice(name.length + 1) : path, text: f.text };
+  });
+  if (!normalized.some((f) => f.path === "SKILL.md" || f.path === "skill.md")) throw new Error("the skill needs a SKILL.md");
+  const written: string[] = [];
+  for (const file of normalized) {
+    if (file.path === "SKILL.md" || file.path === "skill.md") writeSkill(root, name, file.text);
+    else writeSkillFile(root, name, file.path, file.text);
+    written.push(file.path === "skill.md" ? "SKILL.md" : file.path);
+  }
+  return { name, files: written };
+}
+
 export function writeSkill(root: string, name: string, text: string): { name: string; path: string } {
   if (!NAME.test(name)) throw new Error("skill name must be letters, digits, dash or underscore");
   const body = text.trim();
@@ -155,8 +172,20 @@ function skillFile(root: string, name: string): string | undefined {
 function descriptionOf(text: string): string {
   const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
   if (fm?.[1]) {
-    const line = fm[1].split(/\r?\n/).find((l) => l.startsWith("description:"));
-    if (line) return oneLine(line.slice("description:".length).trim().replace(/^["']|["']$/g, ""));
+    const lines = fm[1].split(/\r?\n/);
+    const at = lines.findIndex((l) => l.startsWith("description:"));
+    if (at >= 0) {
+      const rest = lines[at]!.slice("description:".length).trim();
+      if (rest === ">" || rest === "|" || rest === "") {
+        const block = [];
+        for (const line of lines.slice(at + 1)) {
+          if (!/^\s/.test(line)) break;
+          block.push(line.trim());
+        }
+        if (block.length) return oneLine(block.join(" "));
+      }
+      return oneLine(rest.replace(/^["']|["']$/g, ""));
+    }
   }
   const heading = text.split(/\r?\n/).find((l) => l.startsWith("# "));
   return oneLine(heading ? heading.slice(2) : "");

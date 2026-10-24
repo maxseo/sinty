@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { serve, type ServerType } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -267,6 +269,27 @@ export function createApp(sinty: Sinty): Hono {
     // A provider that just got a key or a new base URL may now answer its model list.
     sinty.windows.reset();
     return c.json({ ok: true });
+  });
+
+
+  app.post("/v1/skills/install", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { path?: unknown; zipBase64?: unknown; command?: unknown; files?: { path?: unknown; dataBase64?: unknown }[] } | null;
+    if (typeof body?.command === "string") {
+      const output = await runSkillCommand(body.command, sinty.paths.skills);
+      return c.json(output);
+    }
+    const mod = await skillInstaller(sinty.paths.bundledPlugins);
+    try {
+      if (typeof body?.path === "string" && body.path.trim()) return c.json(mod.installSkillSource(sinty.paths.skills, body.path.trim()), 201);
+      if (typeof body?.zipBase64 === "string" && body.zipBase64) return c.json(mod.installSkillZip(sinty.paths.skills, Buffer.from(body.zipBase64, "base64")), 201);
+      if (Array.isArray(body?.files)) {
+        const files = body.files.flatMap((f) => (typeof f.path === "string" && typeof f.dataBase64 === "string" ? [{ path: f.path, data: Buffer.from(f.dataBase64, "base64") }] : []));
+        return c.json(mod.installSkillFiles(sinty.paths.skills, files), 201);
+      }
+    } catch (e) {
+      throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
+    }
+    throw new AgentError("bad_request", "path, zipBase64, files or command is required");
   });
 
   // Kept for API clients from before plan step 7: the skills list now comes from the skills plugin (GET /p/skills/list).
@@ -645,6 +668,40 @@ function sse(c: Context, subscribe: (push: (e: LiveEvent) => void) => () => void
       unsubscribe();
     }
   });
+}
+
+function runSkillCommand(command: string, cwd: string): Promise<{ code: number; output: string }> {
+  const line = command.trim();
+  if (!line || line.length > 500) throw new AgentError("bad_request", "команда пустая или длиннее 500 символов");
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(line, { shell: true, cwd, windowsHide: true });
+    let output = "";
+    const take = (chunk: Buffer): void => {
+      output += chunk.toString("utf8");
+      if (output.length > 8000) output = output.slice(-8000);
+    };
+    child.stdout?.on("data", take);
+    child.stderr?.on("data", take);
+    const timer = setTimeout(() => child.kill(), 120_000);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(new AgentError("bad_request", e.message));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolvePromise({ code: code ?? 1, output: output.trim() });
+    });
+  });
+}
+
+async function skillInstaller(bundledPlugins: string): Promise<{
+  installSkillFiles(root: string, files: { path: string; data: Buffer }[]): { name: string; files: string[] };
+  installSkillSource(root: string, source: string): { name: string; files: string[] };
+  installSkillZip(root: string, zip: Buffer): { name: string; files: string[] };
+}> {
+  const file = join(bundledPlugins, "skills", "dist", "install.js");
+  if (!existsSync(file)) throw new AgentError("bad_request", "плагин skills не собран");
+  return import(pathToFileURL(file).href);
 }
 
 function safeEqual(a: string, b: string): boolean {
