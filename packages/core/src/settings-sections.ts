@@ -1,18 +1,26 @@
 /**
- * Settings sections shown by the Web UI under Settings: the core's own (the supervisor) and those plugins declare in
- * their manifest `settings`. Every section is a flat list of fields over one object in config.yaml; saving rewrites
- * only those keys through a YAML document so comments and the rest of the file stay as they are.
+ * Settings sections shown by the Web UI under Settings: the core's own (supervisor, memory, policy) and those
+ * plugins declare in their manifest `settings`. Saving rewrites only the listed keys through a YAML document so
+ * comments and the rest of the file stay as they are. Most sections write config.yaml; the policy section writes
+ * policy.yaml (core-owned: tools cannot write it, the authenticated settings API may).
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseDocument } from "yaml";
 import type { SettingsField, SettingsSection, SettingsSectionManifest } from "@sinty/sdk";
-import { effectiveBudget, loadConfig, type SintyConfig, type SintyPolicy } from "./config.js";
+import { effectiveBudget, loadConfig, loadPolicy, type SintyConfig, type SintyPolicy } from "./config.js";
 import { DEFAULT_COMPACT_CAP } from "./context-window.js";
 import type { SintyPaths } from "./paths.js";
 
 const BUDGET = "Бюджет хода";
 const CHECKS = "Проверки";
 const LIMITS = "Пороги и эскалация";
+const DEFAULTS = "По умолчанию";
+
+const DECISION = [
+  { value: "allow", label: "Разрешить" },
+  { value: "ask", label: "Спрашивать" },
+  { value: "deny", label: "Запретить" },
+];
 
 /** The core's supervisor section over config.yaml `supervisor:`. */
 export const SUPERVISOR_SECTION: SettingsSectionManifest = {
@@ -77,12 +85,44 @@ export const MEMORY_SECTION: SettingsSectionManifest = {
   ],
 };
 
+/** The core's policy section over policy.yaml (defaults + mode). Tools/paths/net/agents stay out of v1 UI. */
+export const POLICY_SECTION: SettingsSectionManifest = {
+  title: "Политика",
+  description:
+    "Долгоживущие разрешения в policy.yaml. «Разрешить / спрашивать / запретить» — для инструментов без точного правила в tools:, по их sideEffects. «Не спрашивай» в чате, фраза вроде «не спрашивай» / just do it, remember на карточке и Allow all — только на эту сессию: пропускают ask, deny и чувствительные пути (.env, ключи) всё равно спрашивают. Карты tools:/paths:/net: и агенты — вручную в файле.",
+  fields: [
+    {
+      key: "mode",
+      label: "Режим",
+      type: "select",
+      options: [
+        { value: "standard", label: "Обычный" },
+        { value: "strict", label: "Строгий (shell только в sandbox)" },
+      ],
+      help: "strict на Linux: shell.run только через bubblewrap; если sandbox недоступен — отказ. Действует на следующие вызовы.",
+    },
+    {
+      key: "defaults.none",
+      label: "Без побочных эффектов (none)",
+      type: "select",
+      group: DEFAULTS,
+      options: DECISION,
+      help: "Типично: memory.recall, skill.*, list. Полный доступ ≈ allow на все четыре; спрашивать ≈ ask на write и external; только чтение ≈ deny на write и external.",
+    },
+    { key: "defaults.read", label: "Чтение (read)", type: "select", group: DEFAULTS, options: DECISION },
+    { key: "defaults.write", label: "Запись (write)", type: "select", group: DEFAULTS, options: DECISION },
+    { key: "defaults.external", label: "Внешнее (external)", type: "select", group: DEFAULTS, options: DECISION, help: "Сеть, shell, браузер и прочее с sideEffects: external." },
+  ],
+};
+
 interface SectionDef {
   manifest: SettingsSectionManifest;
   owner: "core" | "plugin";
   plugin?: string;
-  /** Where the section's object lives in config.yaml. */
+  /** Where the section's object lives in the store file (empty = file root). */
   path: string[];
+  /** Which $SINTY_HOME file this section rewrites. */
+  store: "config" | "policy";
   /** Current values (merged with defaults) as an object. */
   current: Record<string, unknown>;
   /** Values an empty field falls back to. */
@@ -115,6 +155,7 @@ function defs(src: SectionSources): Map<string, SectionDef> {
     manifest: SUPERVISOR_SECTION,
     owner: "core",
     path: ["supervisor"],
+    store: "config",
     current: sup,
     defaults: {
       "budget.tokens": policyTurn.tokens ?? 0,
@@ -125,10 +166,26 @@ function defs(src: SectionSources): Map<string, SectionDef> {
     },
     restart: false,
   });
+  out.set("policy", {
+    manifest: POLICY_SECTION,
+    owner: "core",
+    path: [],
+    store: "policy",
+    current: src.policy as unknown as Record<string, unknown>,
+    defaults: {
+      mode: "standard",
+      "defaults.none": "allow",
+      "defaults.read": "allow",
+      "defaults.write": "ask",
+      "defaults.external": "ask",
+    },
+    restart: false,
+  });
   out.set("memory", {
     manifest: MEMORY_SECTION,
     owner: "core",
     path: ["memory"],
+    store: "config",
     current: src.config.memory as unknown as Record<string, unknown>,
     defaults: { compactCapTokens: DEFAULT_COMPACT_CAP },
     restart: false,
@@ -141,7 +198,16 @@ function defs(src: SectionSources): Map<string, SectionDef> {
       const d = getPath(p.config ?? {}, f.key);
       if (d !== undefined) defaults[f.key] = d;
     }
-    out.set(`plugin.${p.name}`, { manifest: p.settings, owner: "plugin", plugin: p.name, path: ["plugins", "config", p.name], current: merge(p.config ?? {}, own), defaults, restart: true });
+    out.set(`plugin.${p.name}`, {
+      manifest: p.settings,
+      owner: "plugin",
+      plugin: p.name,
+      path: ["plugins", "config", p.name],
+      store: "config",
+      current: merge(p.config ?? {}, own),
+      defaults,
+      restart: true,
+    });
   }
   return out;
 }
@@ -162,7 +228,16 @@ export function listSections(src: SectionSources): SettingsSection[] {
       const v = getPath(d.current, f.key);
       if (v !== undefined) values[f.key] = v;
     }
-    return { id, ...d.manifest, owner: d.owner, ...(d.plugin ? { plugin: d.plugin } : {}), values, defaults: d.defaults, restart: d.restart };
+    return {
+      id,
+      ...d.manifest,
+      owner: d.owner,
+      ...(d.plugin ? { plugin: d.plugin } : {}),
+      values,
+      defaults: d.defaults,
+      restart: d.restart,
+      store: d.store === "policy" ? "policy.yaml" : "config.yaml",
+    };
   });
 }
 
@@ -194,14 +269,33 @@ export function checkField(f: SettingsField, v: unknown): unknown {
 }
 
 /**
- * Writes the given fields of one section to config.yaml and returns the reloaded config. Unknown keys are rejected; a
- * file the config schema then refuses is put back as it was.
+ * Copies a loaded policy onto the live in-memory object (agent/host keep the same reference).
  */
-export function saveSection(src: SectionSources, id: string, values: Record<string, unknown>): { config: SintyConfig; restart: boolean; section: SettingsSection } {
+export function assignPolicy(target: SintyPolicy, next: SintyPolicy): void {
+  target.mode = next.mode;
+  target.defaults = next.defaults;
+  target.tools = next.tools;
+  target.paths = next.paths;
+  target.net = next.net;
+  target.budgets = next.budgets;
+  target.approvals = next.approvals;
+  target.agents = next.agents;
+}
+
+/**
+ * Writes the given fields of one section to config.yaml or policy.yaml and returns the reloaded values.
+ * Unknown keys are rejected; a file the schema then refuses is put back as it was.
+ */
+export function saveSection(
+  src: SectionSources,
+  id: string,
+  values: Record<string, unknown>,
+): { config: SintyConfig; policy: SintyPolicy; restart: boolean; section: SettingsSection } {
   const d = defs(src).get(id);
   if (!d) throw new Error(`no settings section ${id}`);
   const fields = new Map(d.manifest.fields.map((f) => [f.key, f]));
-  const before = existsSync(src.paths.config) ? readFileSync(src.paths.config, "utf8") : "";
+  const filePath = d.store === "policy" ? src.paths.policy : src.paths.config;
+  const before = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
   const doc = parseDocument(before);
   let restart = d.restart;
   for (const [key, raw] of Object.entries(values)) {
@@ -213,14 +307,16 @@ export function saveSection(src: SectionSources, id: string, values: Record<stri
     else doc.setIn(at, v);
     if (id === "supervisor" && key === "enabled" && v !== getPath(d.current, key)) restart = true;
   }
-  writeFileSync(src.paths.config, String(doc));
-  let config: SintyConfig;
+  writeFileSync(filePath, String(doc));
+  let config = src.config;
+  let policy = src.policy;
   try {
-    config = loadConfig(src.paths);
+    if (d.store === "policy") policy = loadPolicy(src.paths);
+    else config = loadConfig(src.paths);
   } catch (e) {
-    writeFileSync(src.paths.config, before);
+    writeFileSync(filePath, before);
     throw e;
   }
-  const section = listSections({ ...src, config }).find((s) => s.id === id)!;
-  return { config, restart, section };
+  const section = listSections({ ...src, config, policy }).find((s) => s.id === id)!;
+  return { config, policy, restart, section };
 }

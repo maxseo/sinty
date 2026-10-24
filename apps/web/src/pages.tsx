@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
-import { go } from "./route.js";
+import { go, href } from "./route.js";
 import { SectionPane } from "./supervisor-ui.js";
 
 function useLoad<T>(path: string, deps: unknown[]): { data: T | undefined; error: string; reload: () => void } {
@@ -242,8 +242,8 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
 
 function GeneralPane() {
   const [prefs, setPrefs] = useState(() => {
-    try { return { preset: "standard", permission: "full", language: "ru", appearance: localStorage.getItem("sinty.theme") || "system", enter: "queue", streaming: true, ...JSON.parse(localStorage.getItem("sinty.prefs") || "{}") }; }
-    catch { return { preset: "standard", permission: "full", language: "ru", appearance: "system", enter: "queue", streaming: true }; }
+    try { return { preset: "standard", language: "ru", appearance: localStorage.getItem("sinty.theme") || "system", enter: "queue", streaming: true, ...JSON.parse(localStorage.getItem("sinty.prefs") || "{}") }; }
+    catch { return { preset: "standard", language: "ru", appearance: "system", enter: "queue", streaming: true }; }
   });
   const set = (patch: Partial<typeof prefs>): void => {
     const next = { ...prefs, ...patch };
@@ -261,9 +261,7 @@ function GeneralPane() {
       <label class="set-row">Пресет агента<span class="small muted">Для новых сессий</span>
         <select value={prefs.preset} onChange={(e) => set({ preset: e.currentTarget.value })}><option value="standard">Обычный</option><option value="careful">Осторожный</option></select>
       </label>
-      <label class="set-row">Доступ
-        <select value={prefs.permission} onChange={(e) => set({ permission: e.currentTarget.value })}><option value="full">Полный</option><option value="ask">Спрашивать</option><option value="read">Только чтение</option></select>
-      </label>
+      <p class="set-row small muted">Разрешения по умолчанию (allow / ask / deny) — в разделе <a href={href({ page: "settings", section: "policy" })}>Политика</a>. «Не спрашивай» в чате действует только на эту сессию и не отменяет deny.</p>
       <label class="set-row">Язык
         <select value={prefs.language} onChange={(e) => set({ language: e.currentTarget.value })}><option value="ru">Русский</option><option value="en">English</option></select>
       </label>
