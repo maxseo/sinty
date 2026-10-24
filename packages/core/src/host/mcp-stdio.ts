@@ -15,9 +15,23 @@ interface Rpc {
 export async function connectMcp(init: InitMessage, register: (tool: ToolDefinition) => void): Promise<() => void> {
   const command = init.manifest.command;
   if (!command?.length) throw new Error("mcp-stdio plugin needs command");
+  // Optional env from plugins.config.<name>.env: values are secret:// refs resolved via init.secrets.
+  const childEnv = { ...process.env };
+  const envMap = init.config.env;
+  if (envMap && typeof envMap === "object" && !Array.isArray(envMap)) {
+    for (const [key, ref] of Object.entries(envMap as Record<string, unknown>)) {
+      if (typeof ref !== "string") continue;
+      const m = /^secret:\/\/(.+)$/.exec(ref.trim());
+      if (!m) continue;
+      const v = init.secrets[m[1]!];
+      if (v !== undefined) childEnv[key] = v;
+    }
+  }
   const child = spawn(command[0]!, command.slice(1), {
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
+    env: childEnv,
+    cwd: init.paths.plugin,
   }) as ChildProcessWithoutNullStreams;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   let seq = 0;

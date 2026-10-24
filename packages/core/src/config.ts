@@ -410,6 +410,7 @@ tools:
   "plugin.read": allow
   "plugin.propose_patch": allow
   "plugin.apply_patch": ask
+  "mcp.install": ask
   "kanban.*": allow
   "memory.recall": allow
   "memory.write": allow
