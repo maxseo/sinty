@@ -1,0 +1,28 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "mcp-catalog",
+  "version": "0.1.0",
+  "description": "Settings → MCP: list installed MCP plugins and add a custom one via POST /v1/plugins/mcp",
+  "kinds": [
+    "ui"
+  ],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {},
+  "config": {
+    "showDisabled": true
+  },
+  "settings": {
+    "title": "MCP",
+    "description": "Установленные MCP-плагины (runtime mcp-stdio / http) и форма «Добавить свой». Установка идёт через POST /v1/plugins/mcp (как mcp.install). Секреты только secret://…. Каталог популярных MCP — позже.",
+    "fields": [
+      {
+        "key": "showDisabled",
+        "label": "Показывать выключенные",
+        "type": "boolean",
+        "help": "В списке Установленные также показывать MCP, выключенные в plugins.enabled. Экран MCP рисует свой UI; это поле читает панель."
+      }
+    ]
+  },
+  "editable": true
+}
