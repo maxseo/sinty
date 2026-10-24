@@ -5,7 +5,7 @@ export type Route =
   | { page: "board" }
   | { page: "plugins" }
   | { page: "agents"; agentId?: string }
-  /** `general`, `models`, `plugins`, or a settings section id from /v1/settings/sections (`supervisor`, `plugin.<name>`). */
+  /** `general`, `models`, `plugins`, or a settings section id from /v1/settings/sections (`supervisor`, `policy`, `memory`, `plugin.<name>`). */
   | { page: "settings"; section: string }
   | { page: "kit" }
   | { page: "tab"; plugin: string; tab: string };

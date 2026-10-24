@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Settings section **Политика**: edit `policy.yaml` `mode` and `defaults` (none/read/write/external → allow|ask|deny) via `PUT /v1/settings/sections/policy`. Live without restart. Session «не спрашивай» unchanged. Dead Общие «Доступ» localStorage control removed; link points to Политика.
+
 - Chat UI: unified muted status line («Агент думает…» / «Фон · …») without the white pill; optional **Стриминг ответа** toggle in Настройки → Общие (`sinty.prefs.streaming`, default on).
 - Project workspace chroot: when a session has `projectId`, `fs.*`, `shell.run`, and web screenshots resolve relative paths against `workspace/projects/<slug>` (not the global workspace). Chats without a project keep the global root.
 - Session policy trust: skip further policy `ask` in a chat (deny unchanged) via UI «Больше не спрашивать в этом чате»,

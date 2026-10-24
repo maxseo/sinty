@@ -2,6 +2,8 @@
 
 `$SINTY_HOME/policy.yaml` is owned by the core. No tool can write it. Changes take effect on the next step.
 
+The Web UI **Настройки → Политика** edits `mode` and `defaults` through `PUT /v1/settings/sections/policy` (authenticated). Session «не спрашивай» / phrase / remember skips further `ask` in that chat only and does not change this file; `deny` and sensitive paths still ask. Maps `tools:` / `paths:` / `net:` / `agents:` stay file-only in v1.
+
 ```yaml
 mode: standard            # standard | strict
 

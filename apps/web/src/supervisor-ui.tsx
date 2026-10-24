@@ -139,6 +139,7 @@ export interface SectionInfo {
   values: Record<string, unknown>;
   defaults: Record<string, unknown>;
   restart: boolean;
+  store?: "config.yaml" | "policy.yaml";
 }
 
 export function useSections(deps: unknown[]): SectionInfo[] {
@@ -194,7 +195,8 @@ export function SectionPane({ id }: { id: string }) {
       const r = await api<{ restart: boolean; section: SectionInfo }>(`/v1/settings/sections/${encodeURIComponent(id)}`, { method: "PUT", body: { values } });
       setSection(r.section);
       setDraft(toDraft(r.section));
-      setNotice(r.restart ? "Сохранено в config.yaml. Действует после перезапуска sinty web." : "Сохранено в config.yaml и уже действует.");
+      const file = r.section.store ?? (id === "policy" ? "policy.yaml" : "config.yaml");
+      setNotice(r.restart ? `Сохранено в ${file}. Действует после перезапуска sinty web.` : `Сохранено в ${file} и уже действует.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -211,6 +213,7 @@ export function SectionPane({ id }: { id: string }) {
       <h3>{section.title}</h3>
       {section.description && <p class="small muted">{section.description}</p>}
       {section.owner === "plugin" && <p class="small muted">Плагин <code>{section.plugin}</code>. Значения в config.yaml: plugins.config.{section.plugin}.</p>}
+      {section.id === "policy" && <p class="small muted">Файл <code>policy.yaml</code>. Инструменты его писать не могут — только этот экран (и ручное редактирование).</p>}
       {groups.map((g) => (
         <fieldset key={g.name} class="set-group">
           {g.name && <legend>{g.name}</legend>}

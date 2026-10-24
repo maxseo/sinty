@@ -32,7 +32,7 @@ export interface SettingsSectionManifest {
 
 /** One section as `GET /v1/settings/sections` returns it. */
 export interface SettingsSection extends SettingsSectionManifest {
-  /** `supervisor` for the core's section, `plugin.<name>` for a plugin's. */
+  /** `supervisor` / `memory` / `policy` for core sections, `plugin.<name>` for a plugin's. */
   id: string;
   owner: "core" | "plugin";
   plugin?: string;
@@ -42,4 +42,6 @@ export interface SettingsSection extends SettingsSectionManifest {
   defaults: Record<string, unknown>;
   /** Changes apply after `sinty web` restarts (plugins read their config at start). */
   restart: boolean;
+  /** Which $SINTY_HOME file the section rewrites (`config.yaml` or `policy.yaml`). */
+  store?: "config.yaml" | "policy.yaml";
 }

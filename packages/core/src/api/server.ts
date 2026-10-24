@@ -14,7 +14,7 @@ import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
 import { loadRegistry } from "../registry.js";
 import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
-import { listSections, saveSection } from "../settings-sections.js";
+import { assignPolicy, listSections, saveSection } from "../settings-sections.js";
 import { matchRoute, serveStatic } from "./static.js";
 
 async function discoverModels(protocol: string, baseUrl: string, apiKey: string): Promise<{ id: string }[]> {
@@ -510,6 +510,9 @@ export function createApp(sinty: Sinty): Hono {
       // Live: the agent reads config.supervisor on every step; the supervisor process gets the new limits now.
       sinty.config.supervisor = saved.config.supervisor;
       sinty.supervisor?.setSettings(sinty.supervisorSettings());
+    } else if (c.req.param("id") === "policy") {
+      // Live: agent/host keep the same policy object; mutate in place so the next tool call sees it.
+      assignPolicy(sinty.policy, saved.policy);
     } else {
       sinty.config.plugins.config = saved.config.plugins.config;
     }
