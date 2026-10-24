@@ -27,6 +27,8 @@ Connect it to Claude Desktop / Claude Code, ChatGPT connectors, Grok (remote MCP
 
 Any MCP server is a plugin with `"runtime": "mcp-stdio"` or `"http"` — see [plugin manifest](spec/plugin-manifest.md#mcp-servers-as-plugins).
 
+Install one into `$SINTY_HOME/plugins/<name>/` with core tool `mcp.install` or `POST /v1/plugins/mcp` (both need human approval). Enable it on an agent via the MCP tab when it is not shared. A curated catalog UI is not in this release yet.
+
 ## Sub-agents: Claude Code, Codex, Grok CLI
 
 Plugin `delegate` runs coding agents as sub-agents in a workspace folder, via ACP (Agent Client Protocol) when supported or via CLI otherwise. Tool `delegate.run({ agent, prompt, cwd, timeout })` returns the result and a transcript reference. Under Herdr the sub-agent runs in a Herdr pane and its state is visible there.

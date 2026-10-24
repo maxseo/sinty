@@ -6,6 +6,7 @@ import { budgetTokens, type CheckpointPhase, type SupervisedTool } from "@sinty/
 import type { Bus, StreamOnlyEvent } from "./bus.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, effectiveBudget, type SintyConfig, type SintyPolicy } from "./config.js";
 import { CORE_TOOL_NAMES, CORE_TOOLS, coreToolSchema } from "./coretools.js";
+import { installMcpPlugin, McpInstallError, type McpInstallInput } from "./mcp-install.js";
 import { newId } from "./ids.js";
 import type { PluginHost, PluginProcess, RegisteredTool } from "./host/host.js";
 import { appendOnly, buildSnapshot, newTrace, redactPatterns, traceBase, traceContributor, type ContextTrace, type PreviousPrompt } from "./inspect.js";
@@ -1091,7 +1092,7 @@ export class Agent {
       } catch (e) {
         if (signal.aborted || (e instanceof Error && e.name === "AbortError")) throw e instanceof Error ? e : new DOMException("interrupted", "AbortError");
         const err =
-          e instanceof CoreToolError || e instanceof PatchError ? { code: e.code, message: e.message, hint: e.hint } : { code: "internal", message: e instanceof Error ? e.message : String(e), hint: undefined };
+          e instanceof CoreToolError || e instanceof PatchError || e instanceof McpInstallError ? { code: e.code, message: e.message, hint: e.hint } : { code: "internal", message: e instanceof Error ? e.message : String(e), hint: undefined };
         this.record({ ...base, type: "tool.call.failed", actor: SYSTEM, data: strip({ callId: call.callId, ...err, durationMs: Date.now() - t0 }) });
       }
       return "done";
@@ -1145,6 +1146,16 @@ export class Agent {
       } catch (e) {
         if (e instanceof ShellSandboxError) throw new CoreToolError("sandbox_unavailable", e.message, "Do not retry: a human has to install bubblewrap or change shell.sandbox in config.yaml.");
         throw new CoreToolError("invalid_args", e instanceof Error ? e.message : String(e), "cwd stays inside the workspace.");
+      }
+    }
+    if (name === "mcp.install") {
+      try {
+        const result = await installMcpPlugin(this.d.paths, this.d.config, this.d.host, args as McpInstallInput);
+        this.d.supervisor?.setTools(this.supervisedTools());
+        return result;
+      } catch (e) {
+        if (e instanceof McpInstallError) throw new CoreToolError(e.code, e.message, e.hint);
+        throw e;
       }
     }
     const patches = this.d.patches;

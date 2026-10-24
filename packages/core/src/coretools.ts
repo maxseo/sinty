@@ -130,6 +130,33 @@ export const CORE_TOOLS: CoreToolDef[] = [
     sideEffects: "write",
     idempotent: false,
   },
+  {
+    name: "mcp.install",
+    description:
+      "Install an external MCP server as a home plugin under $SINTY_HOME/plugins/<name>. runtime mcp-stdio needs command (e.g. npx -y @modelcontextprotocol/server-github); http needs url. Secrets only as names or secret:// refs in permissions.secrets / env — never raw values. Needs human approval. After install, enable the plugin on the agent (MCP tab) if it is not shared.",
+    input: z.object({
+      name: z.string().min(2).max(64).describe("plugin id: lowercase letters, digits, hyphens"),
+      description: z.string().max(300).optional(),
+      version: z.string().optional().describe("semver, default 0.1.0"),
+      runtime: z.enum(["mcp-stdio", "http"]),
+      command: z.array(z.string().min(1)).min(1).optional().describe("mcp-stdio: executable and args"),
+      url: z.string().min(1).optional().describe("http: MCP endpoint URL"),
+      permissions: z
+        .object({
+          net: z.array(z.string()).optional(),
+          secrets: z.array(z.string()).optional().describe("secret names or secret://name"),
+          env: z.array(z.string()).optional().describe("host env var names to pass through"),
+        })
+        .optional(),
+      env: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("MCP child env: values must be secret://<name>, never raw secrets"),
+      replace: z.boolean().optional().describe("overwrite an existing home plugin folder; never overwrites bundled"),
+    }),
+    sideEffects: "external",
+    idempotent: false,
+  },
 ];
 
 export const CORE_TOOL_NAMES = new Set(CORE_TOOLS.map((t) => t.name));

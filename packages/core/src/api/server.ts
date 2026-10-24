@@ -12,6 +12,7 @@ import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
+import { installMcpPlugin, McpInstallError, type McpInstallInput } from "../mcp-install.js";
 import { loadRegistry } from "../registry.js";
 import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
 import { assignPolicy, listSections, saveSection } from "../settings-sections.js";
@@ -325,6 +326,26 @@ export function createApp(sinty: Sinty): Hono {
   app.delete("/v1/roster/projects/:id", (c) => {
     deleteProject(sinty.paths, c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  /** Install an external MCP server as a home plugin (same as core tool mcp.install). */
+  app.post("/v1/plugins/mcp", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as McpInstallInput | null;
+    if (!body || typeof body !== "object" || typeof body.name !== "string" || (body.runtime !== "mcp-stdio" && body.runtime !== "http")) {
+      throw new AgentError("bad_request", "name and runtime (mcp-stdio|http) are required");
+    }
+    try {
+      const result = await installMcpPlugin(sinty.paths, sinty.config, sinty.host, body);
+      sinty.supervisor?.setTools(sinty.agent.supervisedTools());
+      return c.json(result, 201);
+    } catch (e) {
+      if (e instanceof McpInstallError) {
+        const status = e.code === "exists" || e.code === "bundled" ? 409 : 400;
+        const msg = e.hint ? `${e.message} (${e.hint})` : e.message;
+        throw new AgentError(e.code, msg, status);
+      }
+      throw e;
+    }
   });
 
   app.put("/v1/plugins/shared", async (c) => {

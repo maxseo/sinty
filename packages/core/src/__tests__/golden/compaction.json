@@ -94,6 +94,7 @@
       "agent__task_steer",
       "ask_human",
       "context__recall",
+      "mcp__install",
       "memory__forget",
       "memory__recall",
       "memory__write",
