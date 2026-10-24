@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 - Settings → Навыки: list/viewer and «Добавить навык» (form, paste, folder, zip, command). `POST /p/skills/import`, `GET /p/skills/item`, `GET /p/skills/file`, `POST /v1/skills/install`, CLI `sinty skills add <folder-or.zip>`.
+- Settings → **MCP** (plugin `mcp-catalog`): tabs Установленные | Добавить. List home/bundled MCP plugins (`mcp-stdio` / `http`), enable/disable; add via `POST /v1/plugins/mcp` (same as `mcp.install`). Secrets only `secret://…`. Curated catalog / skill / auto-bind later.
 - MCP install (phase 1): core tool `mcp.install` and `POST /v1/plugins/mcp` write a home plugin (`runtime: mcp-stdio` | `http`) under `$SINTY_HOME/plugins/<name>/`, enable it in config.yaml, and hot-start via `PluginHost.reload`. Policy **ask**. Secrets only as names / `secret://` refs (optional `env` map); never raw values. Catalog UI, skill, and per-agent auto-enable are later.
 
 - Settings section **Политика**: edit `policy.yaml` `mode` and `defaults` (none/read/write/external → allow|ask|deny) via `PUT /v1/settings/sections/policy`. Live without restart. Session «не спрашивай» unchanged. Dead Общие «Доступ» localStorage control removed; link points to Политика.
