@@ -8,6 +8,8 @@ export interface WebSettings {
   maxResults: number;
   timeoutMs: number;
   maxBytes: number;
+  /** Hard download limit for web.fetch_file (no truncate). */
+  maxFetchBytes: number;
   maxChars: number;
   maxLinks: number;
   browserTimeoutMs: number;
@@ -51,6 +53,7 @@ export function readSettings(config: Readonly<Record<string, unknown>>): WebSett
     maxResults: Math.round(num(config.maxResults, 8, 1, 20)),
     timeoutMs: num(config.timeoutSeconds, 20, 1, 60) * 1000,
     maxBytes: Math.round(num(config.maxPageKb, 5000, 50, 20_000) * 1000),
+    maxFetchBytes: Math.round(num(config.maxFetchMb, 20, 1, 20) * 1_000_000),
     maxChars: Math.round(num(config.maxChars, 20_000, 1000, 200_000)),
     maxLinks: Math.round(num(config.maxLinks, 40, 1, 200)),
     browserTimeoutMs: num(config.browserTimeoutSeconds, 20, 1, 60) * 1000,

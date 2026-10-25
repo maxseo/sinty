@@ -13,6 +13,7 @@ import { ToolError } from "@sinty/sdk";
 export const HINTS = {
   net_blocked: "Only public http(s) pages. Private hosts are blocked.",
   bad_request: "Use an absolute http(s) url.",
+  too_large_fetch: "The file is larger than the download size limit (Settings → Web → max download size). Raise maxFetchMb or pick a smaller file.",
   too_large: "The page is larger than the page size limit (Settings → Веб → «Предел размера страницы»). Try web.interact, or another page with the same data.",
   timeout: "The site did not answer in time. Try once more later, or use another source.",
   net_failed: "The site could not be reached (DNS, connection or TLS error). Check the address, or use another source.",
@@ -57,7 +58,7 @@ export function toWebError(e: unknown): ToolError {
     if (e.code.startsWith("http_")) return e;
     if (CORE_CODES.has(e.code)) {
       const own = (HINTS as Record<string, string>)[e.code];
-      return new ToolError(e.code, e.message, { hint: e.code === "net_blocked" ? (e.hint ?? HINTS.net_blocked) : (own ?? e.hint ?? HINTS.web_failed) });
+      return new ToolError(e.code, e.message, { hint: e.code === "net_blocked" ? (e.hint ?? HINTS.net_blocked) : e.code === "too_large" ? (e.hint ?? own ?? HINTS.web_failed) : (own ?? e.hint ?? HINTS.web_failed) });
     }
     return new ToolError(e.code, e.message, { hint: e.hint ?? HINTS.web_failed });
   }
