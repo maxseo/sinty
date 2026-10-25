@@ -1,10 +1,11 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { definePlugin, ToolError, z, type PluginContext } from "@sinty/sdk";
 import { assertHttpUrl, assertPageUrl, withBrowser } from "./browser.ts";
-import { blockedNote, blockedReason, httpError, toWebError } from "./errors.ts";
+import { blockedNote, blockedReason, HINTS, httpError, toWebError } from "./errors.ts";
 import { htmlToMarkdown, type PageDoc } from "./page.ts";
 import { parseDuckDuckGo, parseSearxng, searchUrl, type SearchResult } from "./search.ts";
+import { resolveDestPath } from "./path.ts";
 import { ACCEPT_HTML, readSettings, type WebSettings } from "./settings.ts";
 
 /**
@@ -57,6 +58,51 @@ export async function searchWeb(ctx: PluginContext, s: WebSettings, query: strin
   const page = await fetchText(ctx, s, searchUrl(s.searchEngine, q, s.searxngUrl));
   const results = s.searchEngine === "searxng" ? parseSearxng(page.body, s.maxResults) : parseDuckDuckGo(page.body, s.maxResults);
   return { query: q, results, untrusted: true };
+}
+
+
+/** Optional request headers for web.fetch_file: strip CR/LF, cap size, drop hop-by-hop names. */
+function fetchHeaders(extra: Record<string, string> | undefined, userAgent: string): Record<string, string> {
+  const out: Record<string, string> = { "user-agent": userAgent };
+  if (!extra) return out;
+  for (const [k, v] of Object.entries(extra)) {
+    const key = k.trim().replace(/[\r\n]+/g, "").slice(0, 64);
+    if (!key || /^(host|content-length|transfer-encoding|connection)$/i.test(key)) continue;
+    out[key] = String(v).replace(/[\r\n]+/g, " ").slice(0, 1000);
+  }
+  return out;
+}
+
+/**
+ * GET a URL and write the body to a path under the session workspace (project chroot when set).
+ * Size is a hard limit (no truncate) — see maxFetchMb / WebSettings.maxFetchBytes.
+ */
+async function fetchFileToWorkspace(
+  ctx: PluginContext,
+  s: WebSettings,
+  opts: { url: string; path: string; headers?: Record<string, string> },
+  workspace?: string,
+): Promise<{ url: string; path: string; bytes: number; contentType?: string }> {
+  const { abs, shown } = resolveDestPath(opts.path, workspace ?? ctx.paths.workspace);
+  let res;
+  try {
+    res = await ctx.net.public.fetch(opts.url, {
+      headers: fetchHeaders(opts.headers, s.userAgent),
+      timeoutMs: s.timeoutMs,
+      maxBytes: s.maxFetchBytes,
+    });
+  } catch (e) {
+    if (e instanceof ToolError && e.code === "too_large") {
+      throw new ToolError("too_large", e.message, { hint: HINTS.too_large_fetch });
+    }
+    throw e;
+  }
+  if (!res.ok) throw httpError(res.status, res.statusText, res.url || opts.url);
+  const body = new Uint8Array(await res.arrayBuffer());
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, body);
+  const contentType = res.headers.get("content-type") ?? undefined;
+  return { url: res.url, path: shown, bytes: body.byteLength, ...(contentType ? { contentType } : {}) };
 }
 
 function shotPath(ctx: PluginContext, s: WebSettings, workspace?: string): string {
@@ -191,5 +237,26 @@ export default definePlugin({
         }
       },
     });
+
+    ctx.tool({
+      name: "web.fetch_file",
+      description:
+        "Download a public URL to a file under the workspace (project folder when the chat has a project). Path is relative to that root. Hard size limit (default 20 MB, setting maxFetchMb). Content is untrusted.",
+      input: z.object({
+        url: z.string().min(1),
+        path: z.string().min(1).describe("Relative path under the workspace, e.g. _out/report.pdf"),
+        headers: z.record(z.string(), z.string()).optional().describe("Optional extra request headers"),
+      }),
+      sideEffects: "external",
+      idempotent: false,
+      async run({ url, path, headers }, run) {
+        try {
+          return { content: await fetchFileToWorkspace(ctx, s, { url, path, ...(headers ? { headers } : {}) }, run.workspace) };
+        } catch (e) {
+          fail(e);
+        }
+      },
+    });
+
   },
 });

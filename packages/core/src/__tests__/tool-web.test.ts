@@ -56,7 +56,7 @@ const OLD_WEB_TOOLS: Record<string, { description: string; input: z.ZodType; ide
   },
 };
 
-test("tool-web: on by default, owns the five web tools with the old names, descriptions and schemas", async () => {
+test("tool-web: on by default, owns the five legacy web tools plus web.fetch_file", async () => {
   const { home, cleanup } = tempHome();
   const sinty = await boot(home, [{ text: "hi" }]);
   try {
@@ -74,10 +74,15 @@ test("tool-web: on by default, owns the five web tools with the old names, descr
       assert.deepEqual(schema, coreToolSchema({ name, description: old.description, input: old.input, sideEffects: "external", idempotent: old.idempotent }), name);
     }
     const wire = sinty.agent.toolSchemas().filter((t) => t.name.startsWith("web__")).map((t) => t.name);
-    assert.deepEqual(wire, ["web__interact", "web__links", "web__read", "web__screenshot", "web__search"]);
+    assert.deepEqual(wire, ["web__fetch_file", "web__interact", "web__links", "web__read", "web__screenshot", "web__search"]);
+    const fetch = proc.tools.find((x) => x.name === "web.fetch_file");
+    assert.ok(fetch, "web.fetch_file is registered");
+    assert.equal(fetch.sideEffects, "external");
+    assert.equal(fetch.idempotent, false);
     // Still ask by default: sideEffects external.
     const supervised = sinty.agent.supervisedTools().find((t) => t.name === "web.read");
     assert.equal(supervised?.plugin, "tool-web");
+    assert.ok(sinty.agent.supervisedTools().some((t) => t.name === "web.fetch_file"));
   } finally {
     await sinty.stop();
     cleanup();
@@ -353,7 +358,7 @@ test("tool-web: the search parser can be repaired by a plugin patch; its tests g
     const fixed = await sinty.patches.propose(s.id, { plugin: "tool-web", reason: "new DuckDuckGo markup", files: [{ path: "src/search.ts", content: `// parser updated\n${src}` }] });
     assert.equal(fixed.status, "ready", fixed.testOutput);
     assert.equal(fixed.permissionsChanged, false);
-    assert.match(fixed.testOutput, /load: ok, tools \[web\.search, web\.read, web\.links, web\.screenshot, web\.interact\]/);
+    assert.match(fixed.testOutput, /load: ok, tools \[web\.search, web\.read, web\.links, web\.screenshot, web\.interact, web\.fetch_file\]/);
     assert.equal((await sinty.patches.apply(fixed.id)).applied, true);
     assert.equal(sinty.host.plugins.get("tool-web")?.loaded.bundled, false);
     assert.equal(sinty.host.toolOwner("web.search")?.name, "tool-web");
@@ -362,5 +367,99 @@ test("tool-web: the search parser can be repaired by a plugin patch; its tests g
   } finally {
     await sinty.stop();
     cleanup();
+  }
+});
+
+test("tool-web: web.fetch_file writes under the project workspace and refuses escape", async () => {
+  const payload = Buffer.from("fetch-file-bytes-ok");
+  const srv = createServer((req, res) => {
+    if (req.url === "/big") {
+      res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(3_000_000) });
+      res.end(Buffer.alloc(3_000_000, 7));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/pdf", "content-length": String(payload.length) });
+    res.end(payload);
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const port = (srv.address() as AddressInfo).port;
+  const { home, cleanup } = tempHome();
+  const base = testConfig([{ text: "hi" }]);
+  const sinty = new Sinty({
+    home,
+    config: {
+      ...base,
+      plugins: { ...base.plugins!, config: { "tool-web": { allowPrivate: `127.0.0.1:${port}`, maxFetchMb: 1 } } },
+    },
+  });
+  try {
+    await sinty.start();
+    const { saveProject, projectDir } = await import("../roster.js");
+    const project = saveProject(sinty.paths, { name: "Fetch Demo" });
+    const folder = projectDir(sinty.paths, project);
+    const call = (args: Record<string, unknown>, workspace?: string) =>
+      sinty.host.toolOwner("web.fetch_file")!.callTool("web.fetch_file", args, { ...ctx, ...(workspace ? { workspace } : {}) }, {});
+
+    const ok = await call({ url: `http://127.0.0.1:${port}/doc.pdf`, path: "_out/doc.pdf" }, folder);
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    if (ok.ok) {
+      const c = ok.content as { path: string; bytes: number; contentType?: string; url: string };
+      assert.equal(c.path, "_out/doc.pdf");
+      assert.equal(c.bytes, payload.length);
+      assert.match(c.contentType ?? "", /application\/pdf/);
+      assert.equal(existsSync(join(folder, "_out", "doc.pdf")), true);
+      assert.equal(readFileSync(join(folder, "_out", "doc.pdf")).equals(payload), true);
+      assert.equal(existsSync(join(sinty.paths.workspace, "_out", "doc.pdf")), false, "must not write to global workspace");
+    }
+
+    const escape = await call({ url: `http://127.0.0.1:${port}/doc.pdf`, path: "../escape.bin" }, folder);
+    assert.equal(escape.ok, false);
+    if (!escape.ok) assert.equal(escape.error.code, "outside_workspace");
+
+    const tooBig = await call({ url: `http://127.0.0.1:${port}/big`, path: "_out/big.bin" }, folder);
+    assert.equal(tooBig.ok, false);
+    if (!tooBig.ok) {
+      assert.equal(tooBig.error.code, "too_large");
+      assert.match(tooBig.error.hint ?? "", /maxFetchMb|download size/i);
+    }
+  } finally {
+    await sinty.stop();
+    cleanup();
+    srv.close();
+  }
+});
+
+test("tool-web: web.fetch_file without a project uses the global workspace", async () => {
+  const payload = Buffer.from("global-fetch");
+  const srv = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" }).end(payload);
+  });
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const port = (srv.address() as AddressInfo).port;
+  const { home, cleanup } = tempHome();
+  const base = testConfig([{ text: "hi" }]);
+  const sinty = new Sinty({
+    home,
+    config: { ...base, plugins: { ...base.plugins!, config: { "tool-web": { allowPrivate: `127.0.0.1:${port}` } } } },
+  });
+  try {
+    await sinty.start();
+    const out = await sinty.host.toolOwner("web.fetch_file")!.callTool(
+      "web.fetch_file",
+      { url: `http://127.0.0.1:${port}/a.txt`, path: "_out/a.txt" },
+      ctx,
+      {},
+    );
+    assert.equal(out.ok, true, JSON.stringify(out));
+    if (out.ok) {
+      const c = out.content as { path: string; bytes: number };
+      assert.equal(c.path, "_out/a.txt");
+      assert.equal(c.bytes, payload.length);
+      assert.equal(readFileSync(join(sinty.paths.workspace, "_out", "a.txt"), "utf8"), "global-fetch");
+    }
+  } finally {
+    await sinty.stop();
+    cleanup();
+    srv.close();
   }
 });

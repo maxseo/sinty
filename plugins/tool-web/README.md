@@ -1,12 +1,12 @@
 # tool-web
 
-The web tools of Sinty: `web.search`, `web.read`, `web.links`, `web.screenshot`, `web.interact`. They were core tools
+The web tools of Sinty: `web.search`, `web.read`, `web.links`, `web.screenshot`, `web.interact`, `web.fetch_file`. They were core tools
 until plan step 7; names, descriptions and input schemas are unchanged, so policies (`policy.yaml tools`), approvals,
 the supervisor and old journals keep working. The plugin is on by default; turn it off with
 `plugins.disabled: [tool-web]` in config.yaml or by unticking it in Settings.
 
 Each tool has its own section below; the supervisor quotes only the section of the tool that failed.
-All five are `sideEffects: external`, so the default policy asks the human.
+All six are `sideEffects: external`, so the default policy asks the human.
 
 ## web.search
 
@@ -40,6 +40,19 @@ has the page's HTTP `status` and, for an error, captcha or anti-bot page, `block
 Markdown, links and a screenshot. Selectors are CSS. Like `web.screenshot` it returns `status` and, for a captcha or
 anti-bot page, `blocked`: then the content is not there, and repeating the request will not help.
 
+
+## web.fetch_file
+
+`web.fetch_file {url, path, headers?}`: download a public URL into a file under the session workspace
+(project folder `workspace/projects/<slug>` when the chat has a `projectId`, otherwise the global workspace).
+`path` is relative to that root (e.g. `_out/doc.pdf`). Parent folders are created. Escape outside the workspace
+is refused (`outside_workspace`). Optional `headers` are merged with the configured User-Agent; `Host` /
+`Content-Length` / hop-by-hop names are dropped.
+
+Size is a **hard** limit (no truncate): default **20 MB** (`maxFetchMb`, 1–20). Over the limit → `too_large`.
+Same network errors as `web.read` (`net_blocked`, `http_4xx` / `http_5xx`, `timeout`, `net_failed`).
+Returns `{ url, path, bytes, contentType? }`. Content on disk is untrusted.
+
 ## Network
 
 The plugin has no raw network access. Pages are fetched with `ctx.net.public.fetch` and the browser is started with
@@ -66,6 +79,7 @@ before a human applies it.
 | `maxResults` | 8 | search results, 1–20 |
 | `timeoutSeconds` | 20 | per page, redirects included |
 | `maxPageKb` | 5000 | larger pages are read up to this size and marked `[truncated]` |
+| `maxFetchMb` | 20 | hard download limit for `web.fetch_file` (1–20 MB, no truncate) |
 | `maxChars` | 20000 | Markdown is cut after this |
 | `maxLinks` | 40 | links per page |
 | `userAgent` | a desktop Chrome | empty or the old `Sinty/1.0` mean the default |

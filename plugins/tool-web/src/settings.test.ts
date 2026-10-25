@@ -8,6 +8,7 @@ test("defaults: the old core limits, a 5 MB page limit and a browser user agent"
   assert.equal(s.maxResults, 8);
   assert.equal(s.timeoutMs, 20_000);
   assert.equal(s.maxBytes, 5_000_000);
+  assert.equal(s.maxFetchBytes, 20_000_000);
   assert.equal(s.maxChars, 20_000);
   assert.equal(s.maxLinks, 40);
   assert.equal(s.browserTimeoutMs, 20_000);
@@ -27,10 +28,11 @@ test("user agent: the old default Sinty/1.0 saved by older Settings pages means 
 });
 
 test("values are clamped and the screenshot folder stays in the workspace", () => {
-  const s = readSettings({ maxResults: 99, timeoutSeconds: "5", maxPageKb: 1, searchEngine: "searxng" });
+  const s = readSettings({ maxResults: 99, timeoutSeconds: "5", maxPageKb: 1, maxFetchMb: 99, searchEngine: "searxng" });
   assert.equal(s.maxResults, 20);
   assert.equal(s.timeoutMs, 5000);
   assert.equal(s.maxBytes, 50_000);
+  assert.equal(s.maxFetchBytes, 20_000_000);
   assert.equal(s.searchEngine, "searxng");
   for (const bad of ["../x", "/etc", "C:\\\\x", "a/../../b", ".", ""]) assert.equal(safeSubdir(bad), "browser", bad);
   assert.equal(safeSubdir("shots/web"), "shots/web");
