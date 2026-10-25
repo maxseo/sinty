@@ -1150,7 +1150,15 @@ export class Agent {
     }
     if (name === "mcp.install") {
       try {
-        const result = await installMcpPlugin(this.d.paths, this.d.config, this.d.host, args as McpInstallInput);
+        const a = args as McpInstallInput;
+        const speaker = this.speaker(sessionId);
+        const bind = a.bind ?? "agent";
+        const agentId = bind === "agent" ? (a.agentId || speaker?.id) : undefined;
+        const result = await installMcpPlugin(this.d.paths, this.d.config, this.d.host, {
+          ...a,
+          bind,
+          ...(agentId ? { agentId } : {}),
+        });
         this.d.supervisor?.setTools(this.supervisedTools());
         return result;
       } catch (e) {

@@ -27,7 +27,7 @@ Connect it to Claude Desktop / Claude Code, ChatGPT connectors, Grok (remote MCP
 
 Any MCP server is a plugin with `"runtime": "mcp-stdio"` or `"http"` — see [plugin manifest](spec/plugin-manifest.md#mcp-servers-as-plugins).
 
-Install one into `$SINTY_HOME/plugins/<name>/` with core tool `mcp.install` or `POST /v1/plugins/mcp` (both need human approval). Enable it on an agent via the MCP tab when it is not shared. A curated catalog UI is not in this release yet.
+Install one into `$SINTY_HOME/plugins/<name>/` with core tool `mcp.install` or `POST /v1/plugins/mcp` (both need human approval). From chat, `mcp.install` defaults to `bind: agent` so the speaking agent gets the new MCP without flipping the agent MCP tab (`bind: shared` / `none` to change). Skill `mcp-install` covers when to call it. Settings → MCP lists and adds servers. A curated one-click catalog is later.
 
 ## Sub-agents: Claude Code, Codex, Grok CLI
 

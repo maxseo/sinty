@@ -8,9 +8,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- MCP install phase 3: skill `mcp-install` (when the user asks to add an MCP) and `mcp.install` **auto-bind** — default `bind: agent` adds the new home plugin to the speaking agent's roster list so tools work without the agent MCP tab; `bind: shared` / `none` supported. `POST /v1/plugins/mcp` still defaults to `none` (Settings UI).
 - Settings → Навыки: list/viewer and «Добавить навык» (form, paste, folder, zip, command). `POST /p/skills/import`, `GET /p/skills/item`, `GET /p/skills/file`, `POST /v1/skills/install`, CLI `sinty skills add <folder-or.zip>`.
-- Settings → **MCP** (plugin `mcp-catalog`): tabs Установленные | Добавить. List home/bundled MCP plugins (`mcp-stdio` / `http`), enable/disable; add via `POST /v1/plugins/mcp` (same as `mcp.install`). Secrets only `secret://…`. Curated catalog / skill / auto-bind later.
-- MCP install (phase 1): core tool `mcp.install` and `POST /v1/plugins/mcp` write a home plugin (`runtime: mcp-stdio` | `http`) under `$SINTY_HOME/plugins/<name>/`, enable it in config.yaml, and hot-start via `PluginHost.reload`. Policy **ask**. Secrets only as names / `secret://` refs (optional `env` map); never raw values. Catalog UI, skill, and per-agent auto-enable are later.
+- Settings → **MCP** (plugin `mcp-catalog`): tabs Установленные | Добавить. List home/bundled MCP plugins (`mcp-stdio` / `http`), enable/disable; add via `POST /v1/plugins/mcp` (same as `mcp.install`). Secrets only `secret://…`. Curated catalog later; skill + auto-bind in phase 3.
+- MCP install (phase 1): core tool `mcp.install` and `POST /v1/plugins/mcp` write a home plugin (`runtime: mcp-stdio` | `http`) under `$SINTY_HOME/plugins/<name>/`, enable it in config.yaml, and hot-start via `PluginHost.reload`. Policy **ask**. Secrets only as names / `secret://` refs (optional `env` map); never raw values. Catalog UI in phase 2; skill + per-agent auto-bind in phase 3.
 
 - Settings section **Политика**: edit `policy.yaml` `mode` and `defaults` (none/read/write/external → allow|ask|deny) via `PUT /v1/settings/sections/policy`. Live without restart. Session «не спрашивай» unchanged. Dead Общие «Доступ» localStorage control removed; link points to Политика.
 

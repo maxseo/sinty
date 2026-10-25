@@ -6,6 +6,8 @@ import type { SintyConfig } from "./config.js";
 import type { PluginHost } from "./host/host.js";
 import { parseManifest } from "./host/manifest.js";
 import { isInside, type SintyPaths } from "./paths.js";
+import { DEFAULT_ON_PLUGINS } from "./config.js";
+import { agentHasPlugin, listAgents, saveAgent, setSharedPlugins, sharedPlugins } from "./roster.js";
 
 /** Safe plugin id: same pattern as sinty.plugin.json `name`. */
 const PLUGIN_NAME = /^[a-z][a-z0-9-]{1,63}$/;
@@ -49,6 +51,16 @@ export interface McpInstallInput {
   env?: Record<string, string>;
   /** Replace an existing home plugin folder. Never replaces a bundled plugin. Default false. */
   replace?: boolean;
+  /**
+   * After install, make the MCP visible without flipping the agent MCP tab.
+   * - agent: add to the speaking agent's plugin list (needs agentId); if the agent uses a shared list, specialize that agent.
+   * - shared: append to roster sharedPlugins (no-op when shared is null = everyone already).
+   * - none: harness enable only (Settings / API default).
+   * Default none.
+   */
+  bind?: "agent" | "shared" | "none";
+  /** Roster agent id when bind is agent (from the speaking session). */
+  agentId?: string;
 }
 
 export interface McpInstallResult {
@@ -62,8 +74,17 @@ export interface McpInstallResult {
   started: boolean;
   /** Set when the plugin was written and enabled but hot-start failed. */
   startError?: string;
-  /** Hint for the agent / UI (per-agent enable is phase 3). */
+  /** How the plugin was bound for visibility after install. */
+  bound?: McpBindResult;
+  /** Hint for the agent / UI. */
   next?: string;
+}
+
+export interface McpBindResult {
+  mode: "agent" | "shared" | "all" | "already" | "none";
+  agentId?: string;
+  agentName?: string;
+  note?: string;
 }
 
 /**
@@ -160,6 +181,12 @@ export async function installMcpPlugin(paths: SintyPaths, config: SintyConfig, h
   const tools = proc && !proc.disabled ? proc.tools.map((t) => t.name) : [];
   const started = Boolean(proc) && !startError;
 
+  const bind = input.bind ?? "none";
+  const bound =
+    started && bind !== "none"
+      ? bindInstalledMcp(paths, name, bind, input.agentId)
+      : ({ mode: "none" } satisfies McpBindResult);
+
   return {
     name,
     runtime,
@@ -170,10 +197,69 @@ export async function installMcpPlugin(paths: SintyPaths, config: SintyConfig, h
     enabled: true,
     started,
     ...(startError ? { startError } : {}),
-    next: started
-      ? "MCP tools are loaded for the harness. Enable this plugin on an agent card (MCP tab) if it is not already shared/default-on."
-      : "The plugin folder was written and enabled; fix startError (or restart sinty web) then enable it on the agent if needed.",
+    bound,
+    next: nextHint(started, bound, name),
   };
+}
+
+function nextHint(started: boolean, bound: McpBindResult, name: string): string {
+  if (!started) {
+    return "The plugin folder was written and enabled; fix startError (or restart sinty web) then enable it on the agent if needed.";
+  }
+  switch (bound.mode) {
+    case "agent":
+      return `MCP ${name} is installed and enabled for agent ${bound.agentName ?? bound.agentId}. Tools are usable in this chat on the next model step.`;
+    case "shared":
+      return `MCP ${name} is installed and added to sharedPlugins. Agents that follow the shared list can use its tools.`;
+    case "all":
+      return `MCP ${name} is installed; plugins are shared with everyone, so no per-agent toggle was needed.`;
+    case "already":
+      return `MCP ${name} is installed; this agent already had it visible.`;
+    default:
+      return "MCP tools are loaded for the harness. Enable this plugin on an agent card (MCP tab) if it is not already shared/default-on.";
+  }
+}
+
+/**
+ * Ensures a just-installed MCP plugin is visible to the current agent or the shared list
+ * without a manual MCP-tab flip. Does not change config.yaml (install already enabled the plugin).
+ */
+export function bindInstalledMcp(
+  paths: SintyPaths,
+  pluginName: string,
+  bind: "agent" | "shared",
+  agentId?: string,
+): McpBindResult {
+  if (bind === "shared") {
+    const shared = sharedPlugins(paths);
+    if (shared === null) return { mode: "all", note: "sharedPlugins is null (every plugin is visible)" };
+    if (shared.includes(pluginName)) return { mode: "already" };
+    setSharedPlugins(paths, [...shared, pluginName]);
+    return { mode: "shared" };
+  }
+
+  const id = (agentId ?? "").trim();
+  if (!id) return { mode: "none", note: "bind=agent needs agentId (speaking agent)" };
+  const agent = listAgents(paths).find((a) => a.id === id);
+  if (!agent) return { mode: "none", note: `no roster agent ${id}` };
+
+  const shared = sharedPlugins(paths);
+  if (agentHasPlugin(agent, pluginName, DEFAULT_ON_PLUGINS, shared)) {
+    return { mode: "already", agentId: agent.id, agentName: agent.name };
+  }
+
+  if (agent.plugins.length > 0) {
+    saveAgent(paths, { ...agent, plugins: [...agent.plugins, pluginName] });
+    return { mode: "agent", agentId: agent.id, agentName: agent.name };
+  }
+
+  // Empty own list + non-null shared: specialize this agent so we do not push the MCP onto every card.
+  if (shared !== null) {
+    saveAgent(paths, { ...agent, plugins: [...shared, pluginName] });
+    return { mode: "agent", agentId: agent.id, agentName: agent.name };
+  }
+
+  return { mode: "all", agentId: agent.id, agentName: agent.name };
 }
 
 function validateName(raw: string): string {

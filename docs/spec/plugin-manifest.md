@@ -140,6 +140,6 @@ Steps, each journaled as `plugin.patch.*`:
 
 Tool errors the plugin raises on purpose (`ToolError` with its own code) do not count against the canary.
 
-MCP servers (only): create a new home plugin with core tool `mcp.install` or `POST /v1/plugins/mcp` (both **ask**). Writes `$SINTY_HOME/plugins/<name>/sinty.plugin.json`, enables it, hot-starts via `PluginHost.reload`. Does not go through the patch pipeline.
+MCP servers (only): create a new home plugin with core tool `mcp.install` or `POST /v1/plugins/mcp` (both **ask**). Writes `$SINTY_HOME/plugins/<name>/sinty.plugin.json`, enables it, hot-starts via `PluginHost.reload`. From chat, `mcp.install` defaults to `bind: agent` (roster visibility for the speaker); API/Settings default `bind: none`. Does not go through the patch pipeline.
 
 Not yet: creating arbitrary node plugins through the pipeline, a policy mode that applies patches automatically when tests pass.

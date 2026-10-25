@@ -23,4 +23,4 @@ export { ModelGateway, ModelError } from "./models.js";
 export { initHome, Sinty, type InitResult, type LogFn, type SintyOptions } from "./sinty.js";
 export { buildSnapshot, diffMessages, inspectStats, redactPatterns } from "./inspect.js";
 export { compactCap, compactPoint, ContextWindows, DEFAULT_COMPACT_CAP, describeCompaction, FALLBACK_CONTEXT_WINDOW, KNOWN_CONTEXT_WINDOWS, knownContextWindow, type ContextWindow } from "./context-window.js";
-export { installMcpPlugin, McpInstallError, type McpInstallInput, type McpInstallResult } from "./mcp-install.js";
+export { installMcpPlugin, bindInstalledMcp, McpInstallError, type McpInstallInput, type McpInstallResult, type McpBindResult } from "./mcp-install.js";
