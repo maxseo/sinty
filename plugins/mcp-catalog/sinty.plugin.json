@@ -1,8 +1,8 @@
 {
   "$schema": "../../schemas/plugin-manifest.schema.json",
   "name": "mcp-catalog",
-  "version": "0.1.0",
-  "description": "Settings → MCP: list installed MCP plugins and add a custom one via POST /v1/plugins/mcp",
+  "version": "0.2.0",
+  "description": "Settings → MCP: installed list, curated catalog cards, and custom add via POST /v1/plugins/mcp",
   "kinds": [
     "ui"
   ],
@@ -14,7 +14,7 @@
   },
   "settings": {
     "title": "MCP",
-    "description": "Установленные MCP-плагины (runtime mcp-stdio / http) и форма «Добавить свой». Установка идёт через POST /v1/plugins/mcp (как mcp.install). Секреты только secret://…. Каталог популярных MCP — позже.",
+    "description": "Установленные MCP (mcp-stdio / http), вкладка «Каталог» с one-click шаблонами (GitHub, Postgres, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX, Memory) и форма «Добавить свой». Установка через POST /v1/plugins/mcp. Секреты только secret://….",
     "fields": [
       {
         "key": "showDisabled",

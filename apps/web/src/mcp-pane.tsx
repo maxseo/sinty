@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api } from "./api";
+import { CURATED_MCP, type CuratedMcp } from "./mcp-curated";
 
 interface PluginRow {
   name: string;
@@ -22,19 +23,44 @@ interface InstallResult {
   next?: string;
 }
 
+export interface AddDraft {
+  name: string;
+  description: string;
+  runtime: "mcp-stdio" | "http";
+  commandText: string;
+  url: string;
+  envText: string;
+}
+
 function isMcp(p: PluginRow): boolean {
   return p.runtime === "mcp-stdio" || p.runtime === "http";
 }
 
-/** Settings → MCP: installed MCP plugins and a form to add one via POST /v1/plugins/mcp. */
+function draftFromCurated(c: CuratedMcp): AddDraft {
+  return {
+    name: c.id,
+    description: c.summary,
+    runtime: c.runtime,
+    commandText: c.command?.join(" ") ?? "",
+    url: c.url ?? "",
+    envText: c.envHints
+      ? Object.entries(c.envHints)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("\n")
+      : "",
+  };
+}
+
+/** Settings → MCP: installed MCP plugins, curated catalog, and a form to add one via POST /v1/plugins/mcp. */
 export function McpPane() {
-  const [tab, setTab] = useState<"list" | "add">("list");
+  const [tab, setTab] = useState<"list" | "catalog" | "add">("list");
   const [plugins, setPlugins] = useState<PluginRow[]>([]);
   const [enabled, setEnabled] = useState<string[]>([]);
   const [showDisabled, setShowDisabled] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<AddDraft | null>(null);
 
   const load = async (): Promise<void> => {
     const [plist, settings, sections] = await Promise.all([
@@ -53,6 +79,7 @@ export function McpPane() {
   }, []);
 
   const rows = plugins.filter(isMcp).filter((p) => showDisabled || enabled.includes(p.name));
+  const installed = new Set(plugins.filter(isMcp).map((p) => p.name));
 
   const setOn = async (name: string, on: boolean): Promise<void> => {
     setError("");
@@ -64,7 +91,11 @@ export function McpPane() {
         ? [...new Set([...cur.plugins.filter((p) => p.enabled).map((p) => p.name), name])]
         : cur.plugins.filter((p) => p.enabled && p.name !== name).map((p) => p.name);
       await api("/v1/settings", { method: "PUT", body: { model: cur.model, fallback: [], enabled: enabledNow } });
-      setNotice(on ? "Включён в config.yaml. Подхватится после перезапуска sinty web." : "Выключен в config.yaml. Действует после перезапуска sinty web.");
+      setNotice(
+        on
+          ? "Включён в config.yaml. Подхватится после перезапуска sinty web."
+          : "Выключен в config.yaml. Действует после перезапуска sinty web.",
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -73,55 +104,106 @@ export function McpPane() {
     }
   };
 
+  const useCurated = (c: CuratedMcp): void => {
+    setError("");
+    setNotice(`Шаблон «${c.title}» подставлен в форму. Проверьте command/env и секреты, затем Установить.`);
+    setDraft(draftFromCurated(c));
+    setTab("add");
+  };
+
   return (
     <div class="settings-sheet">
       <h3>MCP</h3>
-      <p class="small muted">Внешние MCP как плагины Sinty (mcp-stdio / http). Добавление пишет папку в $SINTY_HOME/plugins через POST /v1/plugins/mcp (тот же путь, что mcp.install). Секреты только secret://…. Видимость у агента — вкладка MCP в карточке агента.</p>
+      <p class="small muted">
+        Внешние MCP как плагины Sinty (mcp-stdio / http). Каталог — готовые карточки; «Добавить» — произвольный MCP.
+        Установка через POST /v1/plugins/mcp (как mcp.install). Секреты только secret://…. Видимость у агента — вкладка MCP в карточке агента.
+      </p>
       <div class="tabs">
-        <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Установленные</button>
-        <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>Добавить</button>
+        <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>
+          Установленные
+        </button>
+        <button type="button" class={tab === "catalog" ? "on" : ""} onClick={() => setTab("catalog")}>
+          Каталог
+        </button>
+        <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>
+          Добавить
+        </button>
       </div>
       {error && <p class="error">{error}</p>}
       {notice && <p class="small">{notice}</p>}
       {tab === "list" ? (
         <>
           <label class="field row">
-            <input type="checkbox" checked={showDisabled} disabled={busy} onChange={(e) => {
-              const next = e.currentTarget.checked;
-              setShowDisabled(next);
-              void api("/v1/settings/sections/plugin.mcp-catalog", { method: "PUT", body: { values: { showDisabled: next } } }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
-            }} />
+            <input
+              type="checkbox"
+              checked={showDisabled}
+              disabled={busy}
+              onChange={(e) => {
+                const next = e.currentTarget.checked;
+                setShowDisabled(next);
+                void api("/v1/settings/sections/plugin.mcp-catalog", {
+                  method: "PUT",
+                  body: { values: { showDisabled: next } },
+                }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+              }}
+            />
             <span>Показывать выключенные</span>
           </label>
           <div class="plugin-grid">
             {rows.map((p) => {
               const on = enabled.includes(p.name);
-              const status = !on ? "выключен" : p.tools.length > 0 ? `запущен · ${p.tools.length} тул.` : "включён · нет тулов / ошибка старта";
+              const status = !on
+                ? "выключен"
+                : p.tools.length > 0
+                  ? `запущен · ${p.tools.length} тул.`
+                  : "включён · нет тулов / ошибка старта";
               return (
                 <div key={p.name} class="plugin-tile">
                   <div>
                     <b>{p.name}</b>
-                    <div class="small muted">{p.runtime} · {p.location} · {p.version}</div>
+                    <div class="small muted">
+                      {p.runtime} · {p.location} · {p.version}
+                    </div>
                     <div class="small">{p.description || "без описания"}</div>
                     <div class="small muted">{status}</div>
-                    {p.tools.length > 0 && <div class="small muted">{p.tools.slice(0, 8).join(", ")}{p.tools.length > 8 ? "…" : ""}</div>}
+                    {p.tools.length > 0 && (
+                      <div class="small muted">
+                        {p.tools.slice(0, 8).join(", ")}
+                        {p.tools.length > 8 ? "…" : ""}
+                      </div>
+                    )}
                   </div>
                   <span class="tile-actions">
-                    <button type="button" class={on ? "secondary sm" : "ghost sm"} disabled={busy || p.defaultOn} onClick={() => void setOn(p.name, !on)}>{on ? "включён" : "выключен"}</button>
+                    <button
+                      type="button"
+                      class={on ? "secondary sm" : "ghost sm"}
+                      disabled={busy || p.defaultOn}
+                      onClick={() => void setOn(p.name, !on)}
+                    >
+                      {on ? "включён" : "выключен"}
+                    </button>
                   </span>
                 </div>
               );
             })}
           </div>
-          {rows.length === 0 && <p class="muted">Нет MCP-плагинов. Добавьте свой на вкладке «Добавить».</p>}
+          {rows.length === 0 && (
+            <p class="muted">
+              Нет MCP-плагинов. Откройте «Каталог» или «Добавить».
+            </p>
+          )}
         </>
+      ) : tab === "catalog" ? (
+        <CatalogTab installed={installed} busy={busy} onUse={useCurated} />
       ) : (
         <AddMcp
           busy={busy}
           setBusy={setBusy}
+          draft={draft}
           onError={setError}
           onDone={(msg) => {
             setNotice(msg);
+            setDraft(null);
             setTab("list");
             void load();
           }}
@@ -131,27 +213,108 @@ export function McpPane() {
   );
 }
 
+function CatalogTab({
+  installed,
+  busy,
+  onUse,
+}: {
+  installed: Set<string>;
+  busy: boolean;
+  onUse: (c: CuratedMcp) => void;
+}) {
+  return (
+    <section>
+      <p class="small muted">
+        Популярные MCP под стек Sinty. «Использовать» открывает форму «Добавить» с готовым command/url и secret:// env — секреты создайте заранее.
+      </p>
+      <div class="plugin-grid">
+        {CURATED_MCP.map((c) => {
+          const have = installed.has(c.id);
+          return (
+            <div key={c.id} class="plugin-tile">
+              <div>
+                <b>{c.title}</b>
+                <div class="small muted">
+                  {c.id} · {c.runtime}
+                  {have ? " · уже в списке" : ""}
+                </div>
+                <div class="small">{c.summary}</div>
+                {c.command && (
+                  <div class="small muted">
+                    <code>{c.command.join(" ")}</code>
+                  </div>
+                )}
+                {c.url && (
+                  <div class="small muted">
+                    <code>{c.url}</code>
+                  </div>
+                )}
+                {c.envHints && (
+                  <div class="small muted">
+                    env:{" "}
+                    {Object.entries(c.envHints)
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(", ")}
+                  </div>
+                )}
+                {c.note && <div class="small muted">{c.note}</div>}
+                {c.docsUrl && (
+                  <div class="small">
+                    <a href={c.docsUrl} target="_blank" rel="noreferrer">
+                      docs
+                    </a>
+                  </div>
+                )}
+              </div>
+              <span class="tile-actions">
+                <button type="button" class="secondary sm" disabled={busy} onClick={() => onUse(c)}>
+                  Использовать
+                </button>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function AddMcp({
   busy,
   setBusy,
+  draft,
   onError,
   onDone,
 }: {
   busy: boolean;
   setBusy: (v: boolean) => void;
+  draft: AddDraft | null;
   onError: (m: string) => void;
   onDone: (msg: string) => void;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [runtime, setRuntime] = useState<"mcp-stdio" | "http">("mcp-stdio");
-  const [commandText, setCommandText] = useState("");
-  const [url, setUrl] = useState("");
-  const [envText, setEnvText] = useState("");
+  const [name, setName] = useState(draft?.name ?? "");
+  const [description, setDescription] = useState(draft?.description ?? "");
+  const [runtime, setRuntime] = useState<"mcp-stdio" | "http">(draft?.runtime ?? "mcp-stdio");
+  const [commandText, setCommandText] = useState(draft?.commandText ?? "");
+  const [url, setUrl] = useState(draft?.url ?? "");
+  const [envText, setEnvText] = useState(draft?.envText ?? "");
   const [replace, setReplace] = useState(false);
 
+  useEffect(() => {
+    if (!draft) return;
+    setName(draft.name);
+    setDescription(draft.description);
+    setRuntime(draft.runtime);
+    setCommandText(draft.commandText);
+    setUrl(draft.url);
+    setEnvText(draft.envText);
+  }, [draft]);
+
   const parseEnv = (): Record<string, string> | undefined => {
-    const lines = envText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const lines = envText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
     if (!lines.length) return undefined;
     const env: Record<string, string> = {};
     for (const line of lines) {
@@ -190,7 +353,7 @@ function AddMcp({
     if (runtime === "mcp-stdio") {
       const command = commandText.trim().split(/\s+/).filter(Boolean);
       if (!command.length) {
-        onError("Для mcp-stdio укажите command (через пробел), например: npx -y @modelcontextprotocol/server-memory");
+        onError("Для mcp-stdio укажите command (через пробел), например: npx -y @modelcontextprotocol/server-github");
         return;
       }
       body = { ...body, command };
@@ -202,7 +365,12 @@ function AddMcp({
       }
       body = { ...body, url: u };
     }
-    if (!confirm(`Установить MCP «${id}»? Это создаст плагин в $SINTY_HOME/plugins и включит его (как mcp.install).`)) return;
+    if (
+      !confirm(
+        `Установить MCP «${id}»? Это создаст плагин в $SINTY_HOME/plugins и включит его (как mcp.install).`,
+      )
+    )
+      return;
     setBusy(true);
     try {
       const result = await api<InstallResult>("/v1/plugins/mcp", { body });
@@ -219,35 +387,63 @@ function AddMcp({
 
   return (
     <section class="panel">
-      <label class="field">Имя (id плагина)
+      <label class="field">
+        Имя (id плагина)
         <input value={name} placeholder="github" disabled={busy} onInput={(e) => setName(e.currentTarget.value)} />
       </label>
-      <label class="field">Описание
-        <input value={description} placeholder="опционально" disabled={busy} onInput={(e) => setDescription(e.currentTarget.value)} />
+      <label class="field">
+        Описание
+        <input
+          value={description}
+          placeholder="опционально"
+          disabled={busy}
+          onInput={(e) => setDescription(e.currentTarget.value)}
+        />
       </label>
-      <label class="field">Runtime
-        <select value={runtime} disabled={busy} onChange={(e) => setRuntime(e.currentTarget.value === "http" ? "http" : "mcp-stdio")}>
+      <label class="field">
+        Runtime
+        <select
+          value={runtime}
+          disabled={busy}
+          onChange={(e) => setRuntime(e.currentTarget.value === "http" ? "http" : "mcp-stdio")}
+        >
           <option value="mcp-stdio">mcp-stdio (локальная команда)</option>
           <option value="http">http (удалённый MCP)</option>
         </select>
       </label>
       {runtime === "mcp-stdio" ? (
-        <label class="field">Command (слова через пробел)
-          <input value={commandText} placeholder="npx -y @modelcontextprotocol/server-memory" disabled={busy} onInput={(e) => setCommandText(e.currentTarget.value)} />
+        <label class="field">
+          Command (слова через пробел)
+          <input
+            value={commandText}
+            placeholder="npx -y @modelcontextprotocol/server-github"
+            disabled={busy}
+            onInput={(e) => setCommandText(e.currentTarget.value)}
+          />
         </label>
       ) : (
-        <label class="field">URL
+        <label class="field">
+          URL
           <input value={url} placeholder="https://…" disabled={busy} onInput={(e) => setUrl(e.currentTarget.value)} />
         </label>
       )}
-      <label class="field">Env (по строке KEY=secret://name)
-        <textarea rows={3} value={envText} placeholder={"GITHUB_TOKEN=secret://github.token"} disabled={busy} onInput={(e) => setEnvText(e.currentTarget.value)} />
+      <label class="field">
+        Env (по строке KEY=secret://name)
+        <textarea
+          rows={3}
+          value={envText}
+          placeholder={"GITHUB_PERSONAL_ACCESS_TOKEN=secret://github.token"}
+          disabled={busy}
+          onInput={(e) => setEnvText(e.currentTarget.value)}
+        />
       </label>
       <label class="field row">
         <input type="checkbox" checked={replace} disabled={busy} onChange={(e) => setReplace(e.currentTarget.checked)} />
         <span>Заменить, если папка уже есть (replace)</span>
       </label>
-      <button type="button" disabled={busy || !name.trim()} onClick={() => void submit()}>Установить</button>
+      <button type="button" disabled={busy || !name.trim()} onClick={() => void submit()}>
+        Установить
+      </button>
     </section>
   );
 }
