@@ -19,6 +19,10 @@ Project chats already chroot `fs.*`, `shell.run`, and screenshots into `workspac
 - Optional headers sanitized (no Host / Content-Length / hop-by-hop; CR/LF stripped).
 - Settings field + README; tests for happy path, project vs global, escape, too_large.
 
+## Golden prompts
+
+Adding `web.fetch_file` changes the tool list offered to the model. Regenerated `packages/core/src/__tests__/golden/{memory-tools,compaction}.json` with `UPDATE_GOLDEN=1` (only `web__fetch_file` added to tool name lists).
+
 ## Out of scope
 
 - Scheduler / MCP curated (separate PRs).
