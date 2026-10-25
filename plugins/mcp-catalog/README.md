@@ -1,7 +1,13 @@
 # mcp-catalog
 
-Settings section **MCP**: list home/bundled plugins with `runtime: mcp-stdio` | `http`, enable/disable, and add a custom MCP via the core `POST /v1/plugins/mcp` API (same shape as `mcp.install`).
+Owns **Settings → MCP**.
 
-The Web UI pane lives in `apps/web` (`mcp-pane.tsx`) and is wired when the section id is `plugin.mcp-catalog`. This plugin only owns the settings section registration (and a `showDisabled` toggle).
+- **Установленные** — list/enable home & bundled MCP plugins (`mcp-stdio` / `http`)
+- **Каталог** — curated one-click cards (phase 4): GitHub, PostgreSQL, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX
+- **Добавить** — custom install via `POST /v1/plugins/mcp` (same as `mcp.install`)
 
-Out of scope here: curated one-click catalog (phase 4), OAuth. Skill `mcp-install` + `mcp.install` bind=agent|shared live in core/skills (phase 3).
+Install logic stays in core. Secrets only as secret://….
+
+Curated data: src/catalog.ts (mirrored in pps/web/src/mcp-curated.ts for the pane).
+
+Out of scope: OAuth. Skill mcp-install + mcp.install bind=agent|shared live in core/skills (phase 3).
