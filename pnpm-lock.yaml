@@ -163,6 +163,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/scheduler:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/server-a2a:
     dependencies:
       '@sinty/sdk':

@@ -140,8 +140,7 @@ The fallback check ([#14](https://github.com/maxseo/sinty/pull/14)) trims or ski
 - **Effect on the agent:** it can register a durable job (once or cron), get a wake event when it fires, and keep
   working while the human is away. Separate from `agent.task` background children (in-process, session-scoped) and
   from the kanban plugin (UI board only).
-- **Status:** not built. Responsive turns (background `agent.task`, `task.completed`, stop-all) landed without it;
-  do not stretch kanban into a scheduler.
+- **Status:** minimal opt-in plugin shipped (`plugins/scheduler`): tools `schedule.create` / `list` / `cancel`, tick while Sinty is up, journal wake via `message.user` `channel: schedule`. Still open: core `turn.started` trigger=`schedule`, Settings pane, catch-up for crons missed while the process was down.
 
 ## Security and limits
 

@@ -41,7 +41,7 @@ Work done on top of M6, outside the milestones. The plan behind it is [plan.md](
 
 ## Known gaps
 
-- Durable `scheduler` plugin (cron / fire-at) is still open; it is not the kanban board. See [backlog](backlog.md#scheduler-plugin-durable-timers--cron--not-kanban).
+- Durable `scheduler` plugin: minimal opt-in slice exists (`plugins/scheduler`); richer catch-up / trigger=`schedule` / Settings UI still open. See [backlog](backlog.md#scheduler-plugin-durable-timers--cron--not-kanban).
 - In `standard` mode the network allowlist is enforced by the plugin runtime (`fetch` is replaced), not by the OS. A malicious plugin could use `node:net` directly. OS-level control comes with `strict` mode (M5).
 - Budgets in USD are not enforced yet (no price table). The compaction point is capped in tokens (`memory.compactCapTokens`), not in money.
 - One active turn per session: a second message while the agent is working still returns `409 turn_active`. A message while the turn waits for approval is queued (responsive turns).
