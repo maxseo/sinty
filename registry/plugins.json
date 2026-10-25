@@ -116,6 +116,16 @@
       ]
     },
     {
+      "name": "scheduler",
+      "version": "0.1.0",
+      "description": "Durable cron and fire-at jobs that wake a session while Sinty is running",
+      "kinds": [
+        "schedule",
+        "tool",
+        "server"
+      ]
+    },
+    {
       "name": "server-a2a",
       "version": "0.1.0",
       "description": "A2A agent card and message/send: another agent can give Sinty a task and read the answer",
@@ -190,3 +200,4 @@
     }
   ]
 }
+
