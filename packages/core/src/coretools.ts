@@ -133,7 +133,7 @@ export const CORE_TOOLS: CoreToolDef[] = [
   {
     name: "mcp.install",
     description:
-      "Install an external MCP server as a home plugin under $SINTY_HOME/plugins/<name>. runtime mcp-stdio needs command (e.g. npx -y @modelcontextprotocol/server-github); http needs url. Secrets only as names or secret:// refs in permissions.secrets / env — never raw values. Needs human approval. After install, enable the plugin on the agent (MCP tab) if it is not shared.",
+      "Install an external MCP server as a home plugin under $SINTY_HOME/plugins/<name>. runtime mcp-stdio needs command (e.g. npx -y @modelcontextprotocol/server-github); http needs url. Secrets only as names or secret:// refs in permissions.secrets / env — never raw values. Needs human approval. By default binds the new MCP to the speaking agent so its tools are usable without flipping the agent MCP tab (pass bind shared|none to change).",
     input: z.object({
       name: z.string().min(2).max(64).describe("plugin id: lowercase letters, digits, hyphens"),
       description: z.string().max(300).optional(),
@@ -153,6 +153,11 @@ export const CORE_TOOLS: CoreToolDef[] = [
         .optional()
         .describe("MCP child env: values must be secret://<name>, never raw secrets"),
       replace: z.boolean().optional().describe("overwrite an existing home plugin folder; never overwrites bundled"),
+      bind: z
+        .enum(["agent", "shared", "none"])
+        .optional()
+        .describe("after install: agent (default from chat) = enable for speaking agent; shared = sharedPlugins; none = harness only"),
+      agentId: z.string().optional().describe("roster agent id when bind=agent; filled by the runtime for the speaking agent"),
     }),
     sideEffects: "external",
     idempotent: false,

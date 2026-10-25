@@ -5,6 +5,8 @@ import { test } from "node:test";
 import { createApp } from "../api/server.js";
 import { policySchema } from "../config.js";
 import { installMcpPlugin, McpInstallError } from "../mcp-install.js";
+import { agentHasPlugin, saveAgent, saveProject, setSharedPlugins, listAgents, sharedPlugins } from "../roster.js";
+import { DEFAULT_ON_PLUGINS } from "../config.js";
 import { FIXTURES, boot, find, tempHome } from "./helpers.js";
 
 const ECHO_SERVER = join(FIXTURES, "mcp-echo", "server.mjs");
@@ -177,6 +179,127 @@ test("mcp.install tool: policy ask blocks until approved, then tools appear", as
     const completed = events.filter((e) => e.type === "tool.call.completed").map((e) => e.data as { result: unknown });
     assert.ok(completed.some((c) => c.result && typeof c.result === "object" && (c.result as { name?: string }).name === "mcp-via-tool"));
     assert.ok(completed.some((c) => c.result === "hi"), "ping after install");
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+
+test("mcp.install: bind=agent appends plugin to speaking agent's explicit list", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [], { plugins: ["fake-provider"] });
+  try {
+    const agent = saveAgent(sinty.paths, { name: "Coder", plugins: ["tool-fs", "kanban"] });
+    assert.equal(agentHasPlugin(agent, "mcp-bound", DEFAULT_ON_PLUGINS, null), false);
+
+    const result = await installMcpPlugin(sinty.paths, sinty.config, sinty.host, {
+      name: "mcp-bound",
+      runtime: "mcp-stdio",
+      command: ["node", ECHO_SERVER],
+      bind: "agent",
+      agentId: agent.id,
+    });
+    assert.equal(result.started, true);
+    assert.equal(result.bound?.mode, "agent");
+    assert.equal(result.bound?.agentId, agent.id);
+    assert.match(result.next ?? "", /enabled for agent/);
+
+    const updated = listAgents(sinty.paths).find((a) => a.id === agent.id)!;
+    assert.ok(updated.plugins.includes("mcp-bound"));
+    assert.equal(agentHasPlugin(updated, "mcp-bound", DEFAULT_ON_PLUGINS, null), true);
+    assert.ok(sinty.host.toolOwner("mcp-bound.ping"));
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+test("mcp.install: bind=shared appends to sharedPlugins list", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [], { plugins: ["fake-provider"] });
+  try {
+    setSharedPlugins(sinty.paths, ["tool-fs"]);
+    const result = await installMcpPlugin(sinty.paths, sinty.config, sinty.host, {
+      name: "mcp-shared",
+      runtime: "mcp-stdio",
+      command: ["node", ECHO_SERVER],
+      bind: "shared",
+    });
+    assert.equal(result.bound?.mode, "shared");
+    assert.deepEqual(sharedPlugins(sinty.paths), ["tool-fs", "mcp-shared"]);
+    const agent = saveAgent(sinty.paths, { name: "UsesShared", plugins: [] });
+    assert.equal(agentHasPlugin(agent, "mcp-shared", DEFAULT_ON_PLUGINS, sharedPlugins(sinty.paths)), true);
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+test("mcp.install tool: default bind=agent enables tools for speaker without MCP tab", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(
+    home,
+    [
+      {
+        toolCalls: [
+          {
+            name: "mcp__install",
+            args: { name: "mcp-via-bind", runtime: "mcp-stdio", command: ["node", ECHO_SERVER] },
+          },
+        ],
+      },
+      { toolCalls: [{ name: "mcp-via-bind__ping", args: { text: "bound" } }] },
+      { text: "done" },
+    ],
+    {
+      plugins: ["fake-provider"],
+      policy: policySchema.parse({
+        defaults: { none: "allow", read: "allow", write: "allow", external: "allow" },
+        tools: { "mcp.install": "ask" },
+      }),
+    },
+  );
+  try {
+    const agent = saveAgent(sinty.paths, { name: "Speaker", plugins: ["tool-fs"] });
+    const project = saveProject(sinty.paths, { name: "p-speaker", agentIds: [agent.id], leadId: agent.id });
+    const s = sinty.agent.createSession({ projectId: project.id, metadata: { agentIds: [agent.id] } });
+    sinty.agent.send(s.id, "install echo mcp for me", { agentId: agent.id });
+    await sinty.agent.idle();
+    assert.equal(sinty.journal.activeTurn(s.id)?.status, "blocked");
+    const req = find<{ callId: string; tool: string }>(sinty.journal.events(s.id), "tool.call.approval_requested")!;
+    assert.equal(req.tool, "mcp.install");
+    sinty.agent.decide(s.id, req.callId, "approve", { kind: "human", id: "test" });
+    await sinty.agent.idle();
+
+    const updated = listAgents(sinty.paths).find((a) => a.id === agent.id)!;
+    assert.ok(updated.plugins.includes("mcp-via-bind"), `plugins=${updated.plugins.join(",")}`);
+    const completed = sinty.journal.events(s.id).filter((e) => e.type === "tool.call.completed").map((e) => e.data as { result: unknown });
+    const installResult = completed.find((c) => c.result && typeof c.result === "object" && (c.result as { name?: string }).name === "mcp-via-bind");
+    assert.equal((installResult?.result as { bound?: { mode: string } }).bound?.mode, "agent");
+    assert.ok(completed.some((c) => c.result === "bound"), "ping after bind");
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
+test("mcp.install: bind=none leaves agent list unchanged", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [], { plugins: ["fake-provider"] });
+  try {
+    const agent = saveAgent(sinty.paths, { name: "Strict", plugins: ["tool-fs"] });
+    const result = await installMcpPlugin(sinty.paths, sinty.config, sinty.host, {
+      name: "mcp-nobind",
+      runtime: "mcp-stdio",
+      command: ["node", ECHO_SERVER],
+      bind: "none",
+      agentId: agent.id,
+    });
+    assert.equal(result.bound?.mode, "none");
+    const updated = listAgents(sinty.paths).find((a) => a.id === agent.id)!;
+    assert.ok(!updated.plugins.includes("mcp-nobind"));
+    assert.equal(agentHasPlugin(updated, "mcp-nobind", DEFAULT_ON_PLUGINS, null), false);
   } finally {
     await sinty.stop();
     cleanup();
