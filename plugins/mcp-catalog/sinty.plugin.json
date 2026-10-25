@@ -14,7 +14,7 @@
   },
   "settings": {
     "title": "MCP",
-    "description": "Установленные MCP (mcp-stdio / http), вкладка «Каталог» с one-click шаблонами (GitHub, Postgres, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX) и форма «Добавить свой». Установка через POST /v1/plugins/mcp. Секреты только secret://….",
+    "description": "Установленные MCP (mcp-stdio / http), вкладка «Каталог» с one-click шаблонами (GitHub, Postgres, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX, Memory) и форма «Добавить свой». Установка через POST /v1/plugins/mcp. Секреты только secret://….",
     "fields": [
       {
         "key": "showDisabled",

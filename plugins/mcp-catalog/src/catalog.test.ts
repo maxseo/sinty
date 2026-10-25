@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CURATED_MCP, curatedById, curatedInstallBody } from "./catalog.ts";
 
-test("CURATED_MCP: Max-confirmed ids only, no excluded web/memory cards", () => {
+test("CURATED_MCP: Max-confirmed ids only, no excluded web cards", () => {
   const ids = CURATED_MCP.map((c) => c.id);
   assert.deepEqual(ids, [
     "github",
@@ -13,8 +13,9 @@ test("CURATED_MCP: Max-confirmed ids only, no excluded web/memory cards", () => 
     "filesystem",
     "telegram",
     "max-messenger",
+    "memory",
   ]);
-  for (const bad of ["fetch", "playwright", "brave", "slack", "calendar", "memory"]) {
+  for (const bad of ["fetch", "playwright", "brave", "slack", "calendar"]) {
     assert.equal(ids.some((id) => id.includes(bad)), false, `must not include ${bad}`);
   }
 });
@@ -58,4 +59,9 @@ test("max-messenger uses real @woyax package", () => {
 test("filesystem note documents UI split", () => {
   const f = curatedById("filesystem");
   assert.ok(f?.note && (f.note.includes("follow-up") || f.note.includes("браузер")));
+});
+
+test("memory uses @modelcontextprotocol/server-memory", () => {
+  const m = curatedById("memory");
+  assert.ok(m?.command?.includes("@modelcontextprotocol/server-memory"));
 });

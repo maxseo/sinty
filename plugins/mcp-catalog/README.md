@@ -3,7 +3,7 @@
 Owns **Settings → MCP**.
 
 - **Установленные** — list/enable home & bundled MCP plugins (`mcp-stdio` / `http`)
-- **Каталог** — curated one-click cards (phase 4): GitHub, PostgreSQL, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX
+- **Каталог** — curated one-click cards (phase 4): GitHub, PostgreSQL, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX, Memory
 - **Добавить** — custom install via `POST /v1/plugins/mcp` (same as `mcp.install`)
 
 Install logic stays in core. Secrets only as secret://….

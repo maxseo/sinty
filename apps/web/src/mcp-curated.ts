@@ -26,8 +26,8 @@ export interface CuratedMcp {
 }
 
 /**
- * Max-confirmed set (2026-10-25). Excludes Fetch/Playwright/Brave/Slack/Calendar/Memory —
- * web tools and memory already live in Sinty core.
+ * Max-confirmed set (2026-10-25). Excludes Fetch/Playwright/Brave/Slack/Calendar —
+ * web tools already live in Sinty core. Memory MCP included so Max can try the KG layer (per-agent toggle).
  */
 export const CURATED_MCP: readonly CuratedMcp[] = [
   {
@@ -114,7 +114,15 @@ export const CURATED_MCP: readonly CuratedMcp[] = [
     note: "Токен бота MAX → secret://max.token. Пакет @woyax/mcp-max-messenger (реальный npm, не выдуман).",
     docsUrl: "https://www.npmjs.com/package/@woyax/mcp-max-messenger",
   },
-] as const;
+  {
+    id: "memory",
+    title: "Memory",
+    summary: "Knowledge-graph memory (сущности + связи) — отдельный слой рядом с встроенной memory Sinty.",
+    runtime: "mcp-stdio",
+    command: ["npx", "-y", "@modelcontextprotocol/server-memory"],
+    note: "Официальный @modelcontextprotocol/server-memory. Опционально задайте MEMORY_FILE_PATH абсолютным путём к .jsonl (не secret:// — это путь, не токен). Вкл/выкл на агенте — вкладка MCP. Max хочет попробовать поверх ядра.",
+    docsUrl: "https://www.npmjs.com/package/@modelcontextprotocol/server-memory",
+  },] as const;
 
 export function curatedById(id: string): CuratedMcp | undefined {
   return CURATED_MCP.find((c) => c.id === id);

@@ -14,8 +14,9 @@ Phase 2 gave Settings → MCP with Установленные | Добавить
 ## Design
 
 - Third tab **Каталог** with cards. **Использовать** prefills the Добавить form (command/url + `secret://` env hints); user confirms install via existing `POST /v1/plugins/mcp`.
-- Curated set (only): GitHub, PostgreSQL, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX.
-- Explicitly excluded: Fetch/Playwright/Brave (core web tools), Slack, Google Calendar, Memory MCP.
+- Curated set: GitHub, PostgreSQL, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX, Memory.
+- Explicitly excluded: Fetch/Playwright/Brave (core web tools), Slack, Google Calendar.
+- Memory MCP (`@modelcontextprotocol/server-memory`) added after Max asked to try the KG layer; per-agent MCP tab covers enable/disable.
 
 ## Packages
 
@@ -29,6 +30,7 @@ Phase 2 gave Settings → MCP with Установленные | Добавить
 | Filesystem | `npx -y @modelcontextprotocol/server-filesystem .` | allow-list path in command |
 | Telegram | `npx -y @node2flow/telegram-bot-mcp` | `TELEGRAM_BOT_TOKEN=secret://telegram.bot` |
 | MAX | `npx -y @woyax/mcp-max-messenger` | `MAX_TOKEN=secret://max.token` |
+| Memory | `npx -y @modelcontextprotocol/server-memory` | optional `MEMORY_FILE_PATH` (path in note, not secret://) |
 
 ## Filesystem UI split
 
