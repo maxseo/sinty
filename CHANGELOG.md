@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Settings → **Модели**: named routes UI (`cheap`/`embed`/`vision`/`long`) for `models.routes`, plus `service.model`. Catalog list retitled «Включённые модели».
 - MCP install phase 3: skill `mcp-install` (when the user asks to add an MCP) and `mcp.install` **auto-bind** — default `bind: agent` adds the new home plugin to the speaking agent's roster list so tools work without the agent MCP tab; `bind: shared` / `none` supported. `POST /v1/plugins/mcp` still defaults to `none` (Settings UI).
 - Settings → **MCP** curated catalog (phase 4): tab **Каталог** with one-click cards (GitHub, PostgreSQL, MySQL, Supabase, SQLite, Filesystem, Telegram, MAX, Memory). Prefills Добавить with ready `command`/`url` + `secret://` env hints; install still `POST /v1/plugins/mcp`. Excludes Fetch/Playwright/Brave (core web). Includes Memory MCP for KG try-out. Filesystem card = MCP for agents; visual harness file browser is follow-up.
 - `web.fetch_file` (tool-web): download a public URL into a file under the session workspace (project chroot when `projectId` is set). Policy **ask** (`sideEffects: external`). Hard size limit default **20 MB** (`plugins.config.tool-web.maxFetchMb`, 1–20, no truncate). Optional request headers. Path escape refused.
@@ -27,6 +28,7 @@ All notable changes to this project are documented here. The format follows
 - Stacked approval cards for background children; skill `background-tasks` + tighter `responsive-turn` / `agent.task` background rules.
 
 ### Fixed
+- Settings saves no longer wipe `models.fallback` or `models.routes`: `PUT /v1/settings` omits fallback when unset; `saveNamedRoutes` deep-merges (omitted keys preserved). Regression tests in `named-routes.test.ts`.
 - Project chat attachments: files attached in the web UI are also written to `workspace/projects/<slug>/_inbox/` (same project root as #25). Content-addressed `data/blobs` remains the model source; sessions without a projectId are unchanged.
 - Settings → **Плагины**: tabs **Установленные | Добавить**. List shows the full harness catalog (install registry + `/plugins`, including opt-in-off like `scheduler`) with per-plugin enable/disable that writes `plugins.enabled` immediately (same as MCP). **Добавить** installs a local folder or npm package with `sinty.plugin.json` via `POST /v1/plugins/install` (copy into home plugins, enable, hot-start). `GET /v1/settings` uses `discoverPlugins` so disabled home plugins appear too.
 - `agent.task` children that inherit the parent's `projectId` also inherit the parent's speaker when the project has no `agentIds` (and the child has none of its own). Empty projects no longer fall through to `models.default` for child turns; project `agentIds` still win when set.
