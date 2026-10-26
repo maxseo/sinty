@@ -324,37 +324,125 @@ function TokenRow() {
   );
 }
 
-function PluginsSettings({ enabled, setEnabled }: { enabled: string[]; setEnabled: (v: string[]) => void }) {
+function PluginsSettings({
+  enabled,
+  setEnabled,
+  catalog,
+  model,
+  onCatalogChange,
+}: {
+  enabled: string[];
+  setEnabled: (v: string[]) => void;
+  catalog: SettingsPlugin[];
+  model: string;
+  onCatalogChange: () => void;
+}) {
   const { data, error, reload } = useLoad<{ plugins: PluginInfo[] }>("/v1/plugins", []);
-  const [tab, setTab] = useState<"config" | "list">("config");
+  const [tab, setTab] = useState<"list" | "add">("list");
   const [q, setQ] = useState("");
-  const rows = (data?.plugins ?? []).filter((p) => !q || p.name.includes(q) || p.description.toLowerCase().includes(q.toLowerCase()));
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [path, setPath] = useState("");
+  const [npm, setNpm] = useState("");
+  const [replace, setReplace] = useState(false);
+  // Settings→Plugins must list the install catalog (incl. opt-in off plugins like scheduler)
+  // and home installs. GET /v1/plugins only returns currently loaded plugins.enabled entries.
+  const loaded = new Map((data?.plugins ?? []).map((p) => [p.name, p]));
+  const all: PluginInfo[] = catalog.map((c) => {
+    const p = loaded.get(c.name);
+    return {
+      name: c.name,
+      version: p?.version || c.version,
+      description: p?.description || c.description,
+      kinds: p?.kinds?.length ? p.kinds : c.kinds,
+      location: p?.location ?? (c.version ? "bundled" : "home"),
+      editable: p?.editable ?? true,
+      disabled: p?.disabled ?? !enabled.includes(c.name),
+      tools: p?.tools ?? [],
+      routes: p?.routes ?? [],
+      ui: p?.ui ?? null,
+      permissions: p?.permissions ?? {},
+      forAll: p?.forAll,
+      defaultOn: p?.defaultOn,
+    };
+  });
+  for (const p of data?.plugins ?? []) {
+    if (!all.some((x) => x.name === p.name)) all.push(p);
+  }
+  const rows = all.filter((p) => !q || p.name.includes(q) || p.description.toLowerCase().includes(q.toLowerCase()));
+
   const setShared = async (name: string, on: boolean): Promise<void> => {
     const names = (data?.plugins ?? []).filter((p) => (p.name === name ? on : p.forAll !== false)).map((p) => p.name);
     await api("/v1/plugins/shared", { method: "PUT", body: { names } });
     reload();
   };
+
+  const setOn = async (name: string, on: boolean): Promise<void> => {
+    setLocalError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const enabledNow = on ? [...new Set([...enabled, name])] : enabled.filter((n) => n !== name);
+      await api("/v1/settings", { method: "PUT", body: { model, fallback: [], enabled: enabledNow } });
+      setEnabled(enabledNow);
+      setNotice(
+        on
+          ? "Включён в config.yaml. Подхватится после перезапуска sinty web (если ещё не загружен)."
+          : "Выключен в config.yaml. Действует после перезапуска sinty web.",
+      );
+      onCatalogChange();
+      reload();
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const install = async (): Promise<void> => {
+    setLocalError("");
+    setNotice("");
+    const body: Record<string, unknown> = { replace };
+    if (path.trim()) body.path = path.trim();
+    else if (npm.trim()) body.npm = npm.trim();
+    else {
+      setLocalError("Укажите путь к папке плагина или имя npm-пакета.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api<{ name: string; started: boolean; next?: string; startError?: string }>("/v1/plugins/install", {
+        method: "POST",
+        body,
+      });
+      setNotice(result.startError ? `${result.next ?? "Установлен."} Старт: ${result.startError}` : (result.next ?? `Плагин ${result.name} установлен.`));
+      setPath("");
+      setNpm("");
+      setTab("list");
+      onCatalogChange();
+      reload();
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div class="settings-sheet">
       <h3>Плагины</h3>
-      <p class="small muted">Настройка показывает, что умеет плагин. «У всех» включает его новому агенту сразу. В карточке агента этот набор можно изменить.</p>
+      <p class="small muted">
+        Список — все плагины харнеса (реестр установки и `$SINTY_HOME/plugins`), каждый можно включить или выключить.
+        «Добавить» копирует локальную папку или npm-пакет с `sinty.plugin.json` в home-плагины. MCP — в разделе MCP.
+      </p>
       <div class="tabs">
-        <button type="button" class={tab === "config" ? "on" : ""} onClick={() => setTab("config")}>Настройка</button>
-        <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Список</button>
+        <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Установленные</button>
+        <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>Добавить</button>
       </div>
-      {error && <p class="error">{error}</p>}
-      {tab === "config" ? (data?.plugins ?? []).map((p) => (
-        <details key={p.name} class="panel">
-          <summary>
-            <b>{p.name}</b> <span class="muted small">{p.version}</span>
-            <span class="small muted"> {p.kinds.join(", ")}</span>
-            <div class="small">{p.description}</div>
-          </summary>
-          {p.tools.length > 0 && <p class="small">Инструменты: {p.tools.map((t) => <code key={t}>{t} </code>)}</p>}
-          {p.routes.length > 0 && <p class="small">HTTP: {p.routes.map((r) => <code key={r.method + r.path}>{`${r.method} ${r.path}${r.public ? " (public)" : ""} `}</code>)}</p>}
-          <pre class="small">{JSON.stringify(p.permissions, null, 2)}</pre>
-        </details>
-      )) : (
+      {(error || localError) && <p class="error">{error || localError}</p>}
+      {notice && <p class="small">{notice}</p>}
+      {tab === "list" ? (
         <>
           <label class="search"><input placeholder="Поиск плагинов" value={q} onInput={(e) => setQ(e.currentTarget.value)} /></label>
           <div class="plugin-grid">
@@ -363,16 +451,39 @@ function PluginsSettings({ enabled, setEnabled }: { enabled: string[]; setEnable
               const everyone = p.forAll !== false;
               return (
                 <div key={p.name} class="plugin-tile">
-                  <b>{p.name}</b>
+                  <div>
+                    <b>{p.name}</b>
+                    <div class="small muted">{p.version} · {p.location} · {(p.kinds ?? []).join(", ") || "—"}</div>
+                    <div class="small">{p.description || "без описания"}</div>
+                  </div>
                   <span class="tile-actions">
-                    <button type="button" class={everyone ? "secondary sm" : "ghost sm"} disabled={p.defaultOn} title={p.defaultOn ? "Встроенный плагин: есть у всех агентов, убрать можно в карточке агента" : undefined} onClick={() => void setShared(p.name, !everyone)}>{everyone ? "у всех" : "не у всех"}</button>
-                    <button type="button" class={on ? "secondary sm" : "ghost sm"} disabled={p.name === "ui-web"} onClick={() => setEnabled(on ? enabled.filter((n) => n !== p.name) : [...enabled, p.name])}>{on ? "включён" : "выключен"}</button>
+                    <button type="button" class={everyone ? "secondary sm" : "ghost sm"} disabled={busy || p.defaultOn} title={p.defaultOn ? "Встроенный плагин: есть у всех агентов, убрать можно в карточке агента" : undefined} onClick={() => void setShared(p.name, !everyone)}>{everyone ? "у всех" : "не у всех"}</button>
+                    <button type="button" class={on ? "secondary sm" : "ghost sm"} disabled={busy || p.name === "ui-web"} onClick={() => void setOn(p.name, !on)}>{on ? "включён" : "выключен"}</button>
                   </span>
                 </div>
               );
             })}
           </div>
+          {rows.length === 0 && <p class="muted">Каталог пуст. Добавьте плагин вкладкой «Добавить».</p>}
         </>
+      ) : (
+        <section class="panel">
+          <p class="small muted">
+            Папка должна содержать sinty.plugin.json (и entry для runtime node). Копируется в каталог $SINTY_HOME/plugins, включается и hot-start через POST /v1/plugins/install.
+            Для внешних MCP используйте Settings → MCP.
+          </p>
+          <label class="field">Путь к папке плагина
+            <input value={path} placeholder="E:\plugins\my-tool" disabled={busy || Boolean(npm.trim())} onInput={(e) => setPath(e.currentTarget.value)} />
+          </label>
+          <label class="field">Или npm-пакет
+            <input value={npm} placeholder="@scope/sinty-plugin-x" disabled={busy || Boolean(path.trim())} onInput={(e) => setNpm(e.currentTarget.value)} />
+          </label>
+          <label class="field row">
+            <input type="checkbox" checked={replace} disabled={busy} onChange={(e) => setReplace(e.currentTarget.checked)} />
+            <span>Заменить, если уже есть в home</span>
+          </label>
+          <button type="button" disabled={busy || (!path.trim() && !npm.trim())} onClick={() => void install()}>Установить</button>
+        </section>
       )}
     </div>
   );
@@ -412,10 +523,13 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       {section !== "general" && section !== "models" && section !== "plugins" && <SectionPane key={section} id={section} />}
       {section === "models" && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
       {section === "plugins" && data && (
-        <>
-          <PluginsSettings enabled={enabled} setEnabled={setEnabled} />
-          <div class="settings-sheet"><button onClick={() => void save()}>Сохранить список</button>{notice && <p class="small">{notice}</p>}{saveError && <p class="error">{saveError}</p>}</div>
-        </>
+        <PluginsSettings
+          enabled={enabled}
+          setEnabled={setEnabled}
+          catalog={data.plugins}
+          model={model}
+          onCatalogChange={() => { onSaved(); reload(); }}
+        />
       )}
     </section>
   );

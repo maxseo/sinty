@@ -15,6 +15,8 @@ import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
 import { installMcpPlugin, McpInstallError, type McpInstallInput } from "../mcp-install.js";
+import { installHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
+import { discoverPlugins } from "../discover.js";
 import { loadRegistry } from "../registry.js";
 import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
 import { assignPolicy, listSections, saveSection } from "../settings-sections.js";
@@ -130,9 +132,12 @@ export function createApp(sinty: Sinty): Hono {
 
   app.get("/v1/settings", (c) => {
     const enabled = new Set(sinty.config.plugins.enabled);
-    const catalog = loadRegistry(sinty.paths);
+    // Registry + home (+ searchPaths) so Settings → Plugins lists opt-in-off and custom installs.
+    const catalog = discoverPlugins(sinty.paths, sinty.config.plugins.searchPaths);
     const known = new Set(catalog.map((p) => p.name));
-    const extra = sinty.config.plugins.enabled.filter((name) => !known.has(name)).map((name) => ({ name, version: "", description: "", kinds: [] as string[], enabled: true }));
+    const extra = sinty.config.plugins.enabled
+      .filter((name) => !known.has(name))
+      .map((name) => ({ name, version: "", description: "", kinds: [] as string[], enabled: true }));
     return c.json({
       model: sinty.config.models.default ?? "",
       fallback: sinty.config.models.fallback,
@@ -351,6 +356,24 @@ export function createApp(sinty: Sinty): Hono {
     return c.json({ ok: true });
   });
 
+
+  /** Install a custom/local (or npm) Sinty plugin into $SINTY_HOME/plugins (Settings → Plugins → Добавить). */
+  app.post("/v1/plugins/install", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as PluginInstallInput | null;
+    if (!body || typeof body !== "object") throw new AgentError("bad_request", "JSON body required");
+    try {
+      const result = await installHomePlugin(sinty.paths, sinty.config, sinty.host, body);
+      sinty.supervisor?.setTools(sinty.agent.supervisedTools());
+      return c.json(result, 201);
+    } catch (e) {
+      if (e instanceof PluginInstallError) {
+        const status = e.code === "exists" || e.code === "bundled" ? 409 : e.code === "not_found" ? 404 : 400;
+        const msg = e.hint ? `${e.message} (${e.hint})` : e.message;
+        throw new AgentError(e.code, msg, status);
+      }
+      throw e;
+    }
+  });
   /** Install an external MCP server as a home plugin (same as core tool mcp.install). */
   app.post("/v1/plugins/mcp", async (c) => {
     const body = (await c.req.json().catch(() => null)) as McpInstallInput | null;
