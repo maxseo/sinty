@@ -13,6 +13,8 @@ export { evaluateTool, globMatch, hostAllowed } from "./policy.js";
 export { detectPolicyTrustPhrase } from "./policy-trust.js";
 export { PROTOCOL_VERSION } from "@sinty/sdk";
 export { loadRegistry, type RegistryEntry } from "./registry.js";
+export { discoverPlugins } from "./discover.js";
+export { installHomePlugin, PluginInstallError, type PluginInstallInput, type PluginInstallResult } from "./plugin-install.js";
 export { resolvePaths, type SintyPaths } from "./paths.js";
 export { SecretStore } from "./secrets.js";
 export { bwrapArgs, decideSandbox, type SandboxDecision, type ShellSandboxConfig } from "./shell-sandbox.js";

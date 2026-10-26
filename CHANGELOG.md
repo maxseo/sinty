@@ -27,6 +27,7 @@ All notable changes to this project are documented here. The format follows
 - Stacked approval cards for background children; skill `background-tasks` + tighter `responsive-turn` / `agent.task` background rules.
 
 ### Fixed
+- Settings → **Плагины**: tabs **Установленные | Добавить**. List shows the full harness catalog (install registry + `/plugins`, including opt-in-off like `scheduler`) with per-plugin enable/disable that writes `plugins.enabled` immediately (same as MCP). **Добавить** installs a local folder or npm package with `sinty.plugin.json` via `POST /v1/plugins/install` (copy into home plugins, enable, hot-start). `GET /v1/settings` uses `discoverPlugins` so disabled home plugins appear too.
 - `agent.task` children that inherit the parent's `projectId` also inherit the parent's speaker when the project has no `agentIds` (and the child has none of its own). Empty projects no longer fall through to `models.default` for child turns; project `agentIds` still win when set.
 - `agent.task` tool lists accept wire names (`web__search`) as well as canonical (`web.search`);
   wire-only lists no longer auto-deny every child web call with `not in this child turn's tool list`.
@@ -252,6 +253,7 @@ All notable changes to this project are documented here. The format follows
 - `plugins/memory` and its registry entry. It was always shadowed by the core memory tools.
 
 ### Fixed
+- Settings → **Плагины**: tabs **Установленные | Добавить**. List shows the full harness catalog (install registry + `/plugins`, including opt-in-off like `scheduler`) with per-plugin enable/disable that writes `plugins.enabled` immediately (same as MCP). **Добавить** installs a local folder or npm package with `sinty.plugin.json` via `POST /v1/plugins/install` (copy into home plugins, enable, hot-start). `GET /v1/settings` uses `discoverPlugins` so disabled home plugins appear too.
 - `sinty doctor` printed the compaction point as 65% of the window ("summary at 681574" for DeepSeek's 1M window)
   although compaction folds at `memory.compactCapTokens` (150000 by default) when that is lower. It now prints the
   point from the core's `compactPoint()` and says whether the cap or 65% of the window applies (`describeCompaction`,
