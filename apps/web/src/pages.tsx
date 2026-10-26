@@ -324,11 +324,36 @@ function TokenRow() {
   );
 }
 
-function PluginsSettings({ enabled, setEnabled }: { enabled: string[]; setEnabled: (v: string[]) => void }) {
+function PluginsSettings({ enabled, setEnabled, catalog }: { enabled: string[]; setEnabled: (v: string[]) => void; catalog: SettingsPlugin[] }) {
   const { data, error, reload } = useLoad<{ plugins: PluginInfo[] }>("/v1/plugins", []);
-  const [tab, setTab] = useState<"config" | "list">("config");
+  const [tab, setTab] = useState<"config" | "list">("list");
   const [q, setQ] = useState("");
-  const rows = (data?.plugins ?? []).filter((p) => !q || p.name.includes(q) || p.description.toLowerCase().includes(q.toLowerCase()));
+  // Settings→Plugins must list the install catalog (incl. opt-in off plugins like scheduler).
+  // GET /v1/plugins only returns currently loaded plugins.enabled entries, so the tile grid
+  // previously hid everything that was off and could never be turned on from the UI.
+  const loaded = new Map((data?.plugins ?? []).map((p) => [p.name, p]));
+  const all: PluginInfo[] = catalog.map((c) => {
+    const p = loaded.get(c.name);
+    return {
+      name: c.name,
+      version: p?.version || c.version,
+      description: p?.description || c.description,
+      kinds: p?.kinds?.length ? p.kinds : c.kinds,
+      location: p?.location ?? "bundled",
+      editable: p?.editable ?? true,
+      disabled: p?.disabled ?? !enabled.includes(c.name),
+      tools: p?.tools ?? [],
+      routes: p?.routes ?? [],
+      ui: p?.ui ?? null,
+      permissions: p?.permissions ?? {},
+      forAll: p?.forAll,
+      defaultOn: p?.defaultOn,
+    };
+  });
+  for (const p of data?.plugins ?? []) {
+    if (!all.some((x) => x.name === p.name)) all.push(p);
+  }
+  const rows = all.filter((p) => !q || p.name.includes(q) || p.description.toLowerCase().includes(q.toLowerCase()));
   const setShared = async (name: string, on: boolean): Promise<void> => {
     const names = (data?.plugins ?? []).filter((p) => (p.name === name ? on : p.forAll !== false)).map((p) => p.name);
     await api("/v1/plugins/shared", { method: "PUT", body: { names } });
@@ -343,7 +368,7 @@ function PluginsSettings({ enabled, setEnabled }: { enabled: string[]; setEnable
         <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Список</button>
       </div>
       {error && <p class="error">{error}</p>}
-      {tab === "config" ? (data?.plugins ?? []).map((p) => (
+      {tab === "config" ? all.map((p) => (
         <details key={p.name} class="panel">
           <summary>
             <b>{p.name}</b> <span class="muted small">{p.version}</span>
@@ -413,7 +438,7 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       {section === "models" && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
       {section === "plugins" && data && (
         <>
-          <PluginsSettings enabled={enabled} setEnabled={setEnabled} />
+          <PluginsSettings enabled={enabled} setEnabled={setEnabled} catalog={data.plugins} />
           <div class="settings-sheet"><button onClick={() => void save()}>Сохранить список</button>{notice && <p class="small">{notice}</p>}{saveError && <p class="error">{saveError}</p>}</div>
         </>
       )}
