@@ -151,25 +151,54 @@ function ProviderCard({ p, models, setProviders, setModels }: {
 }
 
 function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel: (v: string) => void; saveInstall: () => Promise<void> }) {
-  const { data, error, reload } = useLoad<{ models: { route: string; enabled: boolean }[]; providers: { id: string; protocol: string; baseUrl: string; hasKey: boolean }[] }>("/v1/models", []);
+  const { data, error, reload } = useLoad<{
+    models: { route: string; enabled: boolean }[];
+    providers: { id: string; protocol: string; baseUrl: string; hasKey: boolean }[];
+    routes?: Record<string, string>;
+    namedRouteKeys?: string[];
+    serviceModel?: string;
+  }>("/v1/models", []);
   const [models, setModels] = useState<{ route: string; enabled: boolean }[]>([]);
   const [providers, setProviders] = useState<{ id: string; protocol: string; baseUrl: string; apiKey: string; hasKey: boolean; remove?: boolean }[]>([]);
+  const [namedRoutes, setNamedRoutes] = useState<Record<string, string>>({ cheap: "", embed: "", vision: "", long: "" });
+  const [serviceModel, setServiceModel] = useState("");
   const [custom, setCustom] = useState(false);
   const [draft, setDraft] = useState({ id: "", name: "", baseUrl: "https://", protocol: "openai-compat", apiKey: "", models: [{ id: "", title: "" }] });
   const [notice, setNotice] = useState("");
   const [saveError, setSaveError] = useState("");
+  const namedKeys = data?.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "long"];
+  const namedLabels: Record<string, string> = {
+    cheap: "cheap — дешёвые/служебные вызовы плагинов",
+    embed: "embed — эмбеддинги для памяти",
+    vision: "vision — описание картинок",
+    long: "long — длинный контекст",
+  };
   useEffect(() => {
     if (!data) return;
     setModels(data.models.filter((m) => m.enabled));
     setProviders(data.providers.map((p) => ({ id: p.id, protocol: p.protocol, baseUrl: p.baseUrl, apiKey: "", hasKey: p.hasKey })));
+    const keys = data.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "long"];
+    const next: Record<string, string> = {};
+    for (const k of keys) next[k] = data.routes?.[k] ?? "";
+    setNamedRoutes(next);
+    setServiceModel(data.serviceModel ?? "");
   }, [data]);
   const save = async (): Promise<void> => {
     setSaveError("");
     setNotice("");
     try {
+      // saveInstall updates models.default; must not wipe fallback (omit fallback in PUT /v1/settings).
       await saveInstall();
-      await api("/v1/models", { method: "PUT", body: { models, providers: providers.map((p) => ({ id: p.id, baseUrl: p.baseUrl, protocol: p.protocol, ...(p.remove ? { remove: true } : {}), ...(p.apiKey.trim() ? { apiKey: p.apiKey.trim() } : {}) })) } });
-      setNotice("Сохранено. Списки у агентов обновятся сразу.");
+      await api("/v1/models", {
+        method: "PUT",
+        body: {
+          models,
+          providers: providers.map((p) => ({ id: p.id, baseUrl: p.baseUrl, protocol: p.protocol, ...(p.remove ? { remove: true } : {}), ...(p.apiKey.trim() ? { apiKey: p.apiKey.trim() } : {}) })),
+          routes: namedRoutes,
+          serviceModel,
+        },
+      });
+      setNotice("Сохранено. Каталог, маршруты и провайдеры обновятся сразу.");
       reload();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -190,7 +219,19 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
       <h3>Модели</h3>
       <p class="small muted">Сверху модель установки. Ниже провайдеры и их ключи. Пустой ключ не затирает уже записанный.</p>
       <label class="field">Модель по умолчанию<input value={model} onInput={(e) => setModel(e.currentTarget.value)} placeholder="deepseek/deepseek-v4-pro" /></label>
-      <h3>Включённые маршруты</h3>
+      <h3>Именованные маршруты</h3>
+      <p class="small muted">Ключи models.routes в config.yaml. Пустое значение снимает маршрут (плагин падает на default/service). Поля, которых нет в форме, при сохранении не затираются.</p>
+      {namedKeys.map((key) => (
+        <ModelSelect
+          key={key}
+          label={namedLabels[key] ?? key}
+          value={namedRoutes[key] ?? ""}
+          onChange={(v) => setNamedRoutes({ ...namedRoutes, [key]: v })}
+          allowEmpty
+        />
+      ))}
+      <ModelSelect label="Служебная (service.model) — сжатие/факты" value={serviceModel} onChange={setServiceModel} allowEmpty />
+      <h3>Включённые модели</h3>
       <p class="small muted">Снятие галочки убирает модель из этого списка. В карточке провайдера её снова можно выбрать.</p>
       {models.filter((m) => providers.some((p) => !p.remove && m.route.startsWith(`${p.id}/`))).map((m) => (
         <label key={m.route} class="check">
@@ -384,7 +425,7 @@ function PluginsSettings({
     setBusy(true);
     try {
       const enabledNow = on ? [...new Set([...enabled, name])] : enabled.filter((n) => n !== name);
-      await api("/v1/settings", { method: "PUT", body: { model, fallback: [], enabled: enabledNow } });
+      await api("/v1/settings", { method: "PUT", body: { model, enabled: enabledNow } });
       setEnabled(enabledNow);
       setNotice(
         on
@@ -506,7 +547,8 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
     try {
       await api("/v1/settings", {
         method: "PUT",
-        body: { model, fallback: [], enabled },
+        // Omit fallback so Models/Plugins saves do not wipe models.fallback.
+        body: { model, enabled },
       });
       setNotice("Сохранено. Модель, персона и служебные задания действуют со следующего хода. Плагины подхватятся после перезапуска sinty web.");
       onSaved();

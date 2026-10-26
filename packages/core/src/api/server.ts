@@ -13,7 +13,7 @@ import { saveBlob } from "../blobs.js";
 import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
-import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, saveModelCatalog, saveSettings } from "../config.js";
+import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, NAMED_MODEL_ROUTES, saveModelCatalog, saveNamedRoutes, saveSettings } from "../config.js";
 import { installMcpPlugin, McpInstallError, type McpInstallInput } from "../mcp-install.js";
 import { installHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
 import { discoverPlugins } from "../discover.js";
@@ -156,14 +156,15 @@ export function createApp(sinty: Sinty): Hono {
     if (!body || typeof body.model !== "string" || !Array.isArray(body.enabled)) {
       throw new AgentError("bad_request", "model and enabled are required");
     }
-    const fallback = Array.isArray(body.fallback) ? body.fallback.filter((x): x is string => typeof x === "string") : [];
+    // Omit fallback → preserve models.fallback (Models tab used to send [] and wipe it).
+    const fallback = Array.isArray(body.fallback) ? body.fallback.filter((x): x is string => typeof x === "string") : undefined;
     const enabled = body.enabled.filter((x): x is string => typeof x === "string");
     try {
       saveSettings(
         sinty.paths,
         {
           model: body.model,
-          fallback,
+          ...(fallback !== undefined ? { fallback } : {}),
           enabled,
           ...(typeof body.agentsMd === "string" ? { agentsMd: body.agentsMd } : {}),
           ...(typeof body.serviceModel === "string" ? { serviceModel: body.serviceModel } : {}),
@@ -249,6 +250,10 @@ export function createApp(sinty: Sinty): Hono {
         baseUrl: p.baseUrl ?? "",
         hasKey: Boolean(p.apiKey && sinty.secrets.resolve(p.apiKey)),
       })),
+      // Named routes (models.routes) + service.model for Settings → Models.
+      routes: { ...(sinty.config.models.routes ?? {}) },
+      namedRouteKeys: [...NAMED_MODEL_ROUTES],
+      serviceModel: sinty.config.service.model ?? "",
     });
   });
 
@@ -256,12 +261,28 @@ export function createApp(sinty: Sinty): Hono {
     const body = (await c.req.json().catch(() => ({}))) as {
       models?: { route?: string; enabled?: boolean }[];
       providers?: { id?: string; baseUrl?: string; apiKey?: string; protocol?: string; remove?: boolean }[];
+      routes?: Record<string, unknown>;
+      serviceModel?: unknown;
     };
     // Only route and enabled are stored: GET also sends contextWindow, which a client may hand back.
     const models = (body.models ?? []).filter((m): m is { route: string; enabled: boolean } => typeof m.route === "string" && typeof m.enabled === "boolean").map((m) => ({ route: m.route, enabled: m.enabled }));
     const providers = (body.providers ?? []).filter((p): p is { id: string; baseUrl?: string; apiKey?: string; protocol?: string; remove?: boolean } => typeof p.id === "string");
     try {
       saveModelCatalog(sinty.paths, models, providers, sinty.config.providers);
+      // Reload so a provider added in this same PUT is visible to route validation.
+      let mid = loadConfig(sinty.paths);
+      // Deep-merge named routes: omitted keys preserved; only keys present in body.routes are written.
+      if (body.routes && typeof body.routes === "object" && !Array.isArray(body.routes)) {
+        const patch: Record<string, string> = {};
+        for (const [k, v] of Object.entries(body.routes)) {
+          if (typeof v === "string") patch[k] = v;
+        }
+        saveNamedRoutes(sinty.paths, patch, mid.providers);
+        mid = loadConfig(sinty.paths);
+      }
+      if (typeof body.serviceModel === "string") {
+        saveSettings(sinty.paths, { model: mid.models.default ?? "", enabled: mid.plugins.enabled, serviceModel: body.serviceModel }, mid.providers);
+      }
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
     }
@@ -271,9 +292,10 @@ export function createApp(sinty: Sinty): Hono {
     const next = loadConfig(sinty.paths);
     sinty.config.providers = next.providers;
     sinty.config.models = next.models;
+    sinty.config.service = next.service;
     // A provider that just got a key or a new base URL may now answer its model list.
     sinty.windows.reset();
-    return c.json({ ok: true });
+    return c.json({ ok: true, routes: next.models.routes ?? {}, serviceModel: next.service.model ?? "" });
   });
 
 

@@ -275,12 +275,12 @@ export const DEFAULT_FACTS_PROMPT = "List durable facts that should outlive the 
 
 export function saveSettings(
   paths: SintyPaths,
-  patch: { model: string; fallback: string[]; enabled: string[]; agentsMd?: string; serviceModel?: string; compress?: string; facts?: string; stallSeconds?: number },
+  patch: { model: string; fallback?: string[]; enabled: string[]; agentsMd?: string; serviceModel?: string; compress?: string; facts?: string; stallSeconds?: number },
   providers: Record<string, unknown>,
 ): void {
   const model = patch.model.trim();
-  const fallback = patch.fallback.map((r) => r.trim()).filter(Boolean);
-  for (const route of [model, ...fallback]) {
+  const fallback = patch.fallback === undefined ? undefined : patch.fallback.map((r) => r.trim()).filter(Boolean);
+  for (const route of [model, ...(fallback ?? [])]) {
     if (!MODEL_ROUTE.test(route)) throw new Error(`model must look like provider/model-id, got ${route}`);
     const provider = route.slice(0, route.indexOf("/"));
     if (!providers[provider]) throw new Error(`provider ${provider} is not in config.yaml`);
@@ -301,7 +301,7 @@ export function saveSettings(
 
   const doc = parseDocument(existsSync(paths.config) ? readFileSync(paths.config, "utf8") : "");
   doc.setIn(["models", "default"], model);
-  doc.setIn(["models", "fallback"], fallback);
+  if (fallback !== undefined) doc.setIn(["models", "fallback"], fallback);
   doc.setIn(["plugins", "enabled"], enabled);
   // A default-on plugin the human unticked goes to plugins.disabled; ticking it again takes it out.
   const disabledNode = doc.getIn(["plugins", "disabled"]);
@@ -353,6 +353,50 @@ export function saveModelCatalog(
   doc.setIn(["models", "catalog"], clean);
   writeFileSync(paths.config, String(doc));
   return clean;
+}
+
+/** Well-known named model routes shown in Settings → Models (docs: cheap/embed/vision/long). */
+export const NAMED_MODEL_ROUTES = ["cheap", "embed", "vision", "long"] as const;
+
+/**
+ * Deep-merge models.routes into config.yaml.
+ * Invariant: omitted keys are preserved; only keys present in `patch` are written.
+ * Empty string clears that named route. Never replaces the whole routes map with a partial UI payload.
+ * Extra custom keys already in config stay unless explicitly patched.
+ */
+export function saveNamedRoutes(
+  paths: SintyPaths,
+  patch: Record<string, string>,
+  providers: Record<string, unknown>,
+): Record<string, string> {
+  const doc = parseDocument(existsSync(paths.config) ? readFileSync(paths.config, "utf8") : "");
+  const existingNode = doc.getIn(["models", "routes"]);
+  const existingRaw =
+    existingNode && typeof (existingNode as { toJSON?: () => unknown }).toJSON === "function"
+      ? ((existingNode as { toJSON: () => unknown }).toJSON() as unknown)
+      : existingNode;
+  const next: Record<string, string> = {};
+  if (existingRaw && typeof existingRaw === "object" && !Array.isArray(existingRaw)) {
+    for (const [k, v] of Object.entries(existingRaw as Record<string, unknown>)) {
+      if (typeof k === "string" && typeof v === "string" && v.trim()) next[k] = v.trim();
+    }
+  }
+  for (const [key, raw] of Object.entries(patch)) {
+    const name = key.trim();
+    if (!name || name === "default") continue;
+    const value = (raw ?? "").trim();
+    if (!value) {
+      delete next[name];
+      continue;
+    }
+    if (!MODEL_ROUTE.test(value)) throw new Error("model must look like provider/model-id, got " + value);
+    const provider = value.slice(0, value.indexOf("/"));
+    if (!providers[provider]) throw new Error("provider " + provider + " is not in config.yaml");
+    next[name] = value;
+  }
+  doc.setIn(["models", "routes"], next);
+  writeFileSync(paths.config, String(doc));
+  return next;
 }
 
 function readYaml(file: string): unknown {
