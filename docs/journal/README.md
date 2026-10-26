@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-26 | [tool-vision: look at workspace images](2026-10-26-tool-vision.md) | (open) | `vision.look` side vision call for repo images; skill `vision-look`. |
 | 2026-10-19 | [Memory step 0: retire `plugins/memory`, reserve core tool names, fix scopes, one connection](2026-10-19-memory-step-0-cleanup.md) | [#1](https://github.com/maxseo/sinty/pull/1) | Golden prompt baseline and hygiene before the memory contract. |
 | 2026-10-19 | [Memory step 1: the memory contract](2026-10-19-memory-step-1-contract.md) | [#1](https://github.com/maxseo/sinty/pull/1) | `docs/spec/memory.md` and SDK types for providers, processors and `ctx.models`. |
 | 2026-10-19 | [Memory step 2: builtin:sqlite and MemoryRouter](2026-10-19-memory-step-2-router.md) | [#1](https://github.com/maxseo/sinty/pull/1) | Memory logic moves out of `Agent` behind one router, behaviour 1:1. |

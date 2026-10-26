@@ -109,6 +109,7 @@
       "skill__read_file",
       "skill__write",
       "skill__write_file",
+      "vision__look",
       "web__fetch_file",
       "web__interact",
       "web__links",

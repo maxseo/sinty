@@ -211,6 +211,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/tool-vision:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/tool-web:
     dependencies:
       '@sinty/sdk':

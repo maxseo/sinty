@@ -41,7 +41,7 @@ export default definePlugin({
   );
 }
 
-const OFF_DEFAULTS = { plugins: { disabled: ["tool-web", "skills", "mcp-catalog", "responsive-turn"] } } as const;
+const OFF_DEFAULTS = { plugins: { disabled: ["tool-web", "tool-vision", "skills", "mcp-catalog", "responsive-turn"] } } as const;
 
 test("discoverPlugins: includes home plugins that are not enabled", async () => {
   const { home, cleanup } = tempHome();

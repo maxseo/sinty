@@ -1,0 +1,73 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "tool-vision",
+  "version": "0.1.0",
+  "description": "Look at image files in the workspace: vision.look sends pixels to a vision model and returns text (describe / OCR / find)",
+  "kinds": [
+    "tool"
+  ],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": {
+      "read": [
+        "$WORKSPACE",
+        "$SKILLS"
+      ]
+    },
+    "models": [
+      "vision",
+      "default",
+      "*"
+    ]
+  },
+  "tools": [
+    {
+      "name": "vision.look",
+      "sideEffects": "external",
+      "idempotent": true,
+      "docs": "README.md",
+      "defaultPolicy": "ask"
+    }
+  ],
+  "config": {
+    "modelRoute": "",
+    "maxImageMb": 8,
+    "maxOutputTokens": 1200
+  },
+  "settings": {
+    "title": "Vision",
+    "description": "vision.look: look at workspace images via model route vision then default. Needs openai-compat vision; Anthropic/Responses ignore images in side calls today.",
+    "fields": [
+      {
+        "key": "modelRoute",
+        "label": "Model / route",
+        "type": "text",
+        "group": "Model",
+        "optional": true,
+        "help": "Empty = models.routes.vision, else models.default. Override with a models.routes key or provider/model-id (openai-compat vision)."
+      },
+      {
+        "key": "maxImageMb",
+        "label": "Max image size",
+        "type": "number",
+        "group": "Limits",
+        "min": 1,
+        "max": 8,
+        "integer": true,
+        "unit": "MB",
+        "help": "Same cap as chat blobs (8 MB)."
+      },
+      {
+        "key": "maxOutputTokens",
+        "label": "Max output tokens",
+        "type": "number",
+        "group": "Limits",
+        "min": 100,
+        "max": 4000,
+        "integer": true
+      }
+    ]
+  },
+  "editable": true
+}
