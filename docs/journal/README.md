@@ -48,6 +48,12 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-26 | [Stop stays available while a child is blocked](2026-10-26-stop-while-blocked.md) | (open) | «Стоп всё» while a child runs or waits; × on «Ждут ответа» interrupts that turn only. |
+| 2026-10-26 | [Settings → Лимиты and a higher plugin day budget](2026-10-26-limits-section.md) | (open) | `pluginTokensPerDay` default 2_000_000; four core caps editable without a restart. |
+| 2026-10-26 | [A stalled background child tells the parent](2026-10-26-background-stall-notify.md) | (open) | Supervisor or budget block wakes the parent once and the «Фон» line says it stopped. |
+| 2026-10-26 | [Background by size, not by an explicit request](2026-10-26-background-by-size.md) | (open) | Long or parallel `agent.task` goes to the background without the human asking. Revert note in the entry. |
+| 2026-10-26 | [vision.look batches](2026-10-26-vision-batch.md) | (open) | `paths` plus Settings Batch, default 4 images per model request. |
+| 2026-10-26 | [vision.look: no output cap, reasoning off by default](2026-10-26-vision-no-token-cap.md) | (open) | Side call omits `max_tokens`; DeepSeek thinking disabled unless the Vision switch is on. |
 | 2026-10-26 | [tool-vision: look at workspace images](2026-10-26-tool-vision.md) | (open) | `vision.look` side vision call for repo images; skill `vision-look`. |
 | 2026-10-19 | [Memory step 0: retire `plugins/memory`, reserve core tool names, fix scopes, one connection](2026-10-19-memory-step-0-cleanup.md) | [#1](https://github.com/maxseo/sinty/pull/1) | Golden prompt baseline and hygiene before the memory contract. |
 | 2026-10-19 | [Memory step 1: the memory contract](2026-10-19-memory-step-1-contract.md) | [#1](https://github.com/maxseo/sinty/pull/1) | `docs/spec/memory.md` and SDK types for providers, processors and `ctx.models`. |

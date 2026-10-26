@@ -98,7 +98,7 @@ export const CORE_TOOLS: CoreToolDef[] = [
   {
     name: "agent.task",
     description:
-      "Run a child turn with only the listed tools. Omit tools to allow web search, web read, memory recall and skill read. The child cannot start another child or use tools outside the list. Default: omit background (or false) and wait for the child in this parent turn. Set background: true only when the human asked to work in the background / keep chatting in parallel, or the task is long research and they need the parent free — never for a short factual answer. With background: true return {taskId,sessionId} immediately; when the child finishes the parent gets task.completed and a turn with trigger task if idle.",
+      "Run a child turn with only the listed tools. Omit tools to allow web search, web read, memory recall and skill read. The child cannot start another child or use tools outside the list. Omit background (or false) for a short answer or one or two quick calls, and wait in this turn. Set background: true yourself when the work is long or parallel (many steps, pages, files, or independent threads), even if the human did not say so. With background: true return {taskId,sessionId} immediately and end the parent turn; when the child finishes the parent gets task.completed and a turn with trigger task if idle.",
     input: z.object({
       task: z.string().min(1),
       tools: z.array(z.string()).max(12).optional().describe("tool names the child may call (canonical web.search or wire web__search)"),
@@ -106,7 +106,7 @@ export const CORE_TOOLS: CoreToolDef[] = [
         .boolean()
         .optional()
         .describe(
-          "Default false/omit: wait for the child in this turn. true ONLY if the human asked for background/parallel chat, or long research while they keep talking. Never background a short answer.",
+          "Omit or false: short work, wait in this turn. true: long or parallel work, decided by you, so the human can send the next message as its own turn.",
         ),
     }),
     sideEffects: "none",

@@ -6,15 +6,13 @@ import { definePlugin } from "@sinty/sdk";
  * Behaviour lives in a system section so it can be disabled without a core release.
  */
 const SECTION = `## Responsive turns
-- Answer the human immediately with a short acknowledgement of what you will do.
-- Default: do the work in this turn. Call agent.task with background omitted or false for short sub-steps where you need the answer before your next sentence.
-- Set agent.task background: true ONLY when:
-  1) the human explicitly asked to work in the background / keep chatting / not wait, OR
-  2) the task is clearly long research (many pages/sites) and they need the parent chat free to talk while it runs.
-- Never background a short factual answer, a single lookup, or anything that finishes in one or two quick tool calls.
-- When several independent long research threads fit the same request and background is appropriate, start several background agent.task calls (up to the configured parallel limit) instead of one huge child.
-- When you see a [task.completed …] message, summarise the result once for the human in plain language. If status is interrupted (Stop / «Стоп всё»), say it was stopped and do NOT restart the same work unless the human asks. If failed, say so and offer one next step.
-- Use agent.task_steer to correct or narrow a running child instead of starting a duplicate.`;
+- Answer the human immediately with a short acknowledgement of what you will do, then free the parent turn so the next human message can start its own turn.
+- Keep the work in this turn only when it is a short factual answer, one lookup, or one or two quick tool calls.
+- Set agent.task background: true yourself, without waiting for the human to say "in the background", when the work is long or parallel: many steps, many pages or files, or several independent threads. A short ack, then the background call, then end this turn.
+- When several independent threads fit the same request, start several background agent.task calls (up to the configured parallel limit) instead of one huge child.
+- When you see a [task.completed …] message, summarise the result once for the human in plain language. If status is interrupted (Stop / «Стоп всё»), say it was stopped and do NOT restart the same work unless the human asks. If failed, say so and offer one next step. A failure that says the child was stopped by the supervisor or the budget is a pause: the child turn is still open, so do NOT start a replacement task; tell the human and use agent.task_steer only if they ask to continue.
+- Use agent.task_steer to correct or narrow a running child instead of starting a duplicate.
+- Revert: this rule replaced the 2026-10-23 "background only if the human asked" line. Restore that sentence in plugins/responsive-turn/src/index.ts and skills/background-tasks/SKILL.md. See docs/journal/2026-10-26-background-by-size.md.`;
 
 export default definePlugin({
   name: "responsive-turn",

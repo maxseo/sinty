@@ -40,7 +40,7 @@ export const configSchema = z.object({
       maxOutputTokens: z.number().int().positive().default(8192),
       /** Context window per route ("provider/model": tokens) when the provider does not report it. */
       contextWindows: z.record(z.string(), z.number().int().positive()).optional(),
-      /** Input+output tokens each plugin may spend per UTC day through ctx.models. 0 = unlimited. Default 200000. */
+      /** Input+output tokens each plugin may spend per UTC day through ctx.models. 0 = unlimited. Default 2000000. */
       pluginTokensPerDay: z.number().int().nonnegative().optional(),
     })
     .prefault({}),

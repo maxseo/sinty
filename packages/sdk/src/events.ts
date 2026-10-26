@@ -92,7 +92,7 @@ export interface EventDataMap {
   "task.progress": {
     taskId: string;
     childSessionId: string;
-    phase: "tool.started" | "tool.completed" | "tool.denied" | "tool.failed" | "approval";
+    phase: "tool.started" | "tool.completed" | "tool.denied" | "tool.failed" | "approval" | "blocked";
     tool?: string;
     detail?: string;
   };

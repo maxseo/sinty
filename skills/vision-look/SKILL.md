@@ -18,11 +18,12 @@ binaries. Use **`vision.look`** instead.
 ## Do
 
 1. Call **`vision.look`** with:
-   - `path` — relative to the project/workspace (or `skills:…`)
+   - `path` — one file, relative to the project/workspace (or `skills:…`)
+   - `paths` — several files that share one prompt. The plugin sends at most `batch` images per model request (Settings → Vision, default **4**) and continues with the rest in the same call
    - `mode` — `describe` (default), `ocr`, or `find`
-   - `prompt` — extra instructions; for `find`, what to look for
+   - `prompt` — extra instructions applied to every image; for `find`, what to look for
 2. Wait for policy **ask** if prompted (local read + paid vision call).
-3. Use the returned `text` in your answer; cite `path` / `model` when useful.
+3. Use the returned `text`. For a batch, each section is headed by the file path. Cite `path` / `model` when useful. Do not send one `vision.look` per file when the prompt is the same: pass `paths`.
 
 ## Do not
 

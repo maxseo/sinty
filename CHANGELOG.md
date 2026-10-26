@@ -28,6 +28,14 @@ All notable changes to this project are documented here. The format follows
 - Chat live background status: one updating «Фон · …» line instead of a wall of `task.progress` notes (journal keeps all events).
 - Stacked approval cards for background children; skill `background-tasks` + tighter `responsive-turn` / `agent.task` background rules.
 
+### Changed
+- `vision.look` no longer sends `max_tokens`. Settings → Vision has a Reasoning switch, default off. Off sends DeepSeek `thinking: { type: "disabled" }`.
+- `vision.look` accepts `paths`. Settings → Vision **Batch** (default 4, max 16) is how many images share one model request; the same prompt is repeated for the rest of the list inside that tool call.
+- Long or parallel `agent.task` work goes to the background without an explicit human request. Short answers stay in the parent turn. Revert notes: `docs/journal/2026-10-26-background-by-size.md`.
+- A background child blocked by the supervisor or the budget notifies the parent once (`task.completed` failed, do not relaunch) and the chat line shows «Фон · стоит». Revert notes: `docs/journal/2026-10-26-background-stall-notify.md`.
+- Settings → **Лимиты**: plugin day budget (default 2_000_000), main-turn `maxOutputTokens`, background parallelism, tree token cap. Live, no restart. Revert notes: `docs/journal/2026-10-26-limits-section.md`.
+- «Стоп всё» stays while the chat or a background child is running or blocked. «Ждут ответа» has × to interrupt that one turn. Revert notes: `docs/journal/2026-10-26-stop-while-blocked.md`.
+
 ### Fixed
 - Settings saves no longer wipe `models.fallback` or `models.routes`: `PUT /v1/settings` omits fallback when unset; `saveNamedRoutes` deep-merges (omitted keys preserved). Regression tests in `named-routes.test.ts`.
 - Project chat attachments: files attached in the web UI are also written to `workspace/projects/<slug>/_inbox/` (same project root as #25). Content-addressed `data/blobs` remains the model source; sessions without a projectId are unchanged.

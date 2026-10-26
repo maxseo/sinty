@@ -46,6 +46,7 @@ export interface CompleteCall {
   messages: ChatMessage[];
   tools?: ToolSchema[];
   maxOutputTokens?: number | undefined;
+  reasoning?: "off" | "low" | "medium" | "high" | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -55,7 +56,7 @@ export interface EmbedCall {
   signal?: AbortSignal | undefined;
 }
 
-const DEFAULT_PLUGIN_TOKENS_PER_DAY = 200_000;
+const DEFAULT_PLUGIN_TOKENS_PER_DAY = 2_000_000;
 
 /**
  * Model calls that are not the main turn: compaction summaries, plugin side calls (ctx.models) and embeddings.
@@ -130,8 +131,9 @@ export class ModelGateway {
       let outputTokens = 0;
       if (op === "complete") {
         const messages = Array.isArray(req.messages) ? (req.messages as ChatMessage[]) : [];
-        const max = typeof req.maxOutputTokens === "number" ? Math.min(req.maxOutputTokens, this.d.config.models.maxOutputTokens) : Math.min(2000, this.d.config.models.maxOutputTokens);
-        const r = await this.complete({ route, messages, maxOutputTokens: max });
+        const requested = typeof req.maxOutputTokens === "number" && req.maxOutputTokens > 0 ? Math.min(req.maxOutputTokens, this.d.config.models.maxOutputTokens) : undefined;
+        const reasoning = req.reasoning === "off" || req.reasoning === "low" || req.reasoning === "medium" || req.reasoning === "high" ? req.reasoning : undefined;
+        const r = await this.complete({ route, messages, ...(requested ? { maxOutputTokens: requested } : {}), ...(reasoning ? { reasoning } : {}) });
         inputTokens = r.usage.inputTokens;
         outputTokens = r.usage.outputTokens;
         result = r;
@@ -163,7 +165,14 @@ export class ModelGateway {
     let text = "";
     let usage = { inputTokens: 0, outputTokens: 0 };
     const signal = call.signal ?? new AbortController().signal;
-    const req = { endpoint, model, messages: call.messages, tools: call.tools ?? [], ...(call.maxOutputTokens ? { maxOutputTokens: call.maxOutputTokens } : {}) };
+    const req = {
+      endpoint,
+      model,
+      messages: call.messages,
+      tools: call.tools ?? [],
+      ...(call.maxOutputTokens ? { maxOutputTokens: call.maxOutputTokens } : {}),
+      ...(call.reasoning ? { reasoning: call.reasoning } : {}),
+    };
     for await (const chunk of plugin.streamProvider(protocol, req, signal)) {
       if (chunk.type === "text") text += chunk.text;
       else if (chunk.type === "done") usage = { inputTokens: chunk.usage.inputTokens, outputTokens: chunk.usage.outputTokens };

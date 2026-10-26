@@ -448,16 +448,15 @@ export function createApp(sinty: Sinty): Hono {
     if (!s) throw new AgentError("not_found", "session not found", 404);
     // Background agent.task children keep their own blocked turns; surface those approvals on the parent
     // so the human can decide without opening a hidden child chat.
-    const childPending = sinty.journal
-      .activeTurns()
+    const childTurns = sinty.journal.activeTurns().filter((t) => {
+      const child = sinty.journal.getSession(t.sessionId);
+      return child?.metadata?.parentSessionId === s.id && (t.status === "running" || t.status === "blocked");
+    });
+    const childPending = childTurns
       .filter((t) => t.status === "blocked")
-      .map((t) => {
-        const child = sinty.journal.getSession(t.sessionId);
-        if (child?.metadata?.parentSessionId !== s.id) return null;
-        return sinty.agent.pending(t.sessionId);
-      })
+      .map((t) => sinty.agent.pending(t.sessionId))
       .filter((p): p is NonNullable<typeof p> => Boolean(p));
-    return c.json({ ...sessionInfo(sinty.journal, s), pending: sinty.agent.pending(s.id), childPending });
+    return c.json({ ...sessionInfo(sinty.journal, s), pending: sinty.agent.pending(s.id), childPending, childBusy: childTurns.length });
   });
 
   app.post("/v1/blobs", async (c) => {
@@ -599,6 +598,11 @@ export function createApp(sinty: Sinty): Hono {
       // Live: the agent reads config.supervisor on every step; the supervisor process gets the new limits now.
       sinty.config.supervisor = saved.config.supervisor;
       sinty.supervisor?.setSettings(sinty.supervisorSettings());
+    } else if (c.req.param("id") === "limits") {
+      sinty.config.models.pluginTokensPerDay = saved.config.models.pluginTokensPerDay;
+      sinty.config.models.maxOutputTokens = saved.config.models.maxOutputTokens;
+      sinty.config.agent.taskMaxParallel = saved.config.agent.taskMaxParallel;
+      sinty.config.agent.taskTreeTokens = saved.config.agent.taskTreeTokens;
     } else if (c.req.param("id") === "policy") {
       // Live: agent/host keep the same policy object; mutate in place so the next tool call sees it.
       assignPolicy(sinty.policy, saved.policy);

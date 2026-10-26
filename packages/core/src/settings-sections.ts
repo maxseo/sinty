@@ -65,6 +65,55 @@ export const SUPERVISOR_SECTION: SettingsSectionManifest = {
   ],
 };
 
+/** Caps that are not the per-turn supervisor budget: plugin side calls, the main reply, background children. */
+export const LIMITS_SECTION: SettingsSectionManifest = {
+  title: "Лимиты",
+  description:
+    "Потолки ядра вне бюджета одного хода. 0 у суточного лимита плагинов и у общего бюджета дерева — без ограничения. Суточные токены считаются по UTC и сбрасываются в 00:00 UTC. Значения действуют сразу.",
+  fields: [
+    {
+      key: "models.pluginTokensPerDay",
+      label: "Токенов плагина в сутки",
+      type: "number",
+      min: 0,
+      step: 100000,
+      integer: true,
+      optional: true,
+      unit: "ток.",
+      help: "Сумма входа и выхода всех вызовов ctx.models одного плагина за сутки UTC. Сюда входит vision.look. Пусто — 2000000, 0 — без потолка.",
+    },
+    {
+      key: "models.maxOutputTokens",
+      label: "Токенов ответа основного хода",
+      type: "number",
+      min: 1,
+      step: 1024,
+      integer: true,
+      unit: "ток.",
+      help: "max_tokens основного хода. Боковой вызов плагина с собственным лимитом не может превысить это число.",
+    },
+    {
+      key: "agent.taskMaxParallel",
+      label: "Фоновых задач сразу",
+      type: "number",
+      min: 1,
+      max: 32,
+      integer: true,
+      help: "Сколько agent.task с background: true могут идти под одним чатом.",
+    },
+    {
+      key: "agent.taskTreeTokens",
+      label: "Токенов на дерево задач",
+      type: "number",
+      min: 0,
+      step: 100000,
+      integer: true,
+      unit: "ток.",
+      help: "Общий потолок родителя и его детей. 0 — нет общего потолка, у каждого хода остаётся свой бюджет.",
+    },
+  ],
+};
+
 /** The core's memory section over config.yaml `memory:` (only the keys listed here). */
 export const MEMORY_SECTION: SettingsSectionManifest = {
   title: "Память и контекст",
@@ -178,6 +227,20 @@ function defs(src: SectionSources): Map<string, SectionDef> {
       "defaults.read": "allow",
       "defaults.write": "ask",
       "defaults.external": "ask",
+    },
+    restart: false,
+  });
+  out.set("limits", {
+    manifest: LIMITS_SECTION,
+    owner: "core",
+    path: [],
+    store: "config",
+    current: src.config as unknown as Record<string, unknown>,
+    defaults: {
+      "models.pluginTokensPerDay": 2_000_000,
+      "models.maxOutputTokens": 8192,
+      "agent.taskMaxParallel": 3,
+      "agent.taskTreeTokens": 0,
     },
     restart: false,
   });

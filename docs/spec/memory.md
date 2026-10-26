@@ -313,7 +313,7 @@ models:
   routes:
     cheap: openai/gpt-4o-mini        # side calls by plugins (and fact extraction)
     embed: openai/text-embedding-3-small
-  pluginTokensPerDay: 200000
+  pluginTokensPerDay: 2000000
 memory:
   contextTokens: auto                # or a number: the window for every model (see "Context window" below)
   compactCapTokens: 150000           # fold at min(65% of the window, this); 0 or null: no cap

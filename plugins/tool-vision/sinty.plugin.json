@@ -33,7 +33,8 @@
   "config": {
     "modelRoute": "",
     "maxImageMb": 8,
-    "maxOutputTokens": 1200
+    "reasoning": false,
+    "batch": 4
   },
   "settings": {
     "title": "Vision",
@@ -59,13 +60,21 @@
         "help": "Same cap as chat blobs (8 MB)."
       },
       {
-        "key": "maxOutputTokens",
-        "label": "Max output tokens",
+        "key": "reasoning",
+        "label": "Reasoning",
+        "type": "boolean",
+        "group": "Model",
+        "help": "Off by default. When on, a DeepSeek vision call may think before answering. The side call does not set max_tokens."
+      },
+      {
+        "key": "batch",
+        "label": "Batch",
         "type": "number",
         "group": "Limits",
-        "min": 100,
-        "max": 4000,
-        "integer": true
+        "min": 1,
+        "max": 16,
+        "integer": true,
+        "help": "Max images in one model request. Default 4. Extra paths in the same vision.look call go out in further requests with the same prompt."
       }
     ]
   },

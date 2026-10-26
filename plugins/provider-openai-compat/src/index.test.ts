@@ -33,6 +33,18 @@ test("openai-compat: prompt_cache_key is sent to api.openai.com and when enabled
   assert.ok(!("promptCacheKey" in on));
 });
 
+test("openai-compat: reasoning off disables DeepSeek thinking and sets no max_tokens", () => {
+  const off = buildBody({ ...req("https://api.deepseek.com/v1"), reasoning: "off" });
+  assert.deepEqual(off.thinking, { type: "disabled" });
+  assert.equal(off.reasoning_effort, undefined);
+  assert.equal(off.max_tokens, undefined);
+  const on = buildBody({ ...req("https://api.deepseek.com/v1"), reasoning: "medium" });
+  assert.deepEqual(on.thinking, { type: "enabled" });
+  assert.equal(on.reasoning_effort, "medium");
+  const openai = buildBody({ ...req("https://api.openai.com/v1"), reasoning: "off" });
+  assert.equal(openai.thinking, undefined);
+});
+
 test("openai-compat: usage reads DeepSeek hit/miss fields and OpenAI cached_tokens", () => {
   assert.deepEqual(usageOf({ prompt_tokens: 1000, completion_tokens: 5, prompt_cache_hit_tokens: 900, prompt_cache_miss_tokens: 100 }), {
     inputTokens: 1000,

@@ -11,7 +11,7 @@ Chat attachments already become `image_url` on openai-compat providers. Files si
 
 | Name | Policy | What it does |
 |------|--------|----------------|
-| `vision.look` | ask (`external`) | `path` + optional `mode` (`describe` \| `ocr` \| `find`) + optional `prompt` |
+| `vision.look` | ask (`external`) | `path` or `paths` + optional `mode` (`describe` \| `ocr` \| `find`) + optional `prompt` |
 
 ## Model route
 
@@ -29,7 +29,8 @@ side calls — descriptions will be empty or useless until those providers grow 
 |-----|---------|--------|
 | `modelRoute` | `""` | Named route or `provider/model` |
 | `maxImageMb` | `8` | Hard cap (same as chat blobs) |
-| `maxOutputTokens` | `1200` | Cap for the side call |
+| `reasoning` | `false` | When off, a DeepSeek call disables thinking. The side call does not send `max_tokens`. |
+| `batch` | `4` | Max images per model request (1–16). A longer `paths` list is split into further requests with the same prompt. |
 
 ## Skill
 

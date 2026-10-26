@@ -1034,6 +1034,9 @@ button.icon:hover:not(:disabled) {
 .set-field input, .set-field select { max-width: 360px; }
 .side-pending { margin: 4px 0 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
 .side-pending a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-row { display: flex; align-items: center; gap: 4px; }
+.pending-row a { flex: 1; min-width: 0; }
+.pending-row .icon { flex: none; }
 
 .child-approvals {
   margin: 0 16px 8px;

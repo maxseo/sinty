@@ -123,6 +123,7 @@ function progressLabel(phase: string): string {
   if (phase === "tool.denied") return "отказано";
   if (phase === "tool.failed") return "ошибка";
   if (phase === "approval") return "ждёт апрув";
+  if (phase === "blocked") return "стоит";
   return phase;
 }
 
@@ -139,7 +140,9 @@ function liveBgStatus(events: SintyEvent[]): { text: string; tone: "info" | "war
     }
     if (e.type === "message.agent" && lastCompleted) lastAgentAfterCompleted = true;
   }
-  if (lastCompleted && (!lastProgress || (lastCompleted.seq ?? 0) >= (lastProgress.seq ?? 0))) {
+  const progressPhase = (lastProgress?.data as { phase?: string } | undefined)?.phase;
+  const stalled = progressPhase === "blocked" && lastProgress && (!lastCompleted || (lastProgress.seq ?? 0) <= (lastCompleted.seq ?? 0)) && !lastAgentAfterCompleted;
+  if (!stalled && lastCompleted && (!lastProgress || (lastCompleted.seq ?? 0) >= (lastProgress.seq ?? 0))) {
     if (lastAgentAfterCompleted) return null;
     const d = lastCompleted.data as { status?: string };
     const status = d.status === "completed" ? "готово" : d.status === "failed" ? "ошибка" : "прервано";
@@ -149,7 +152,7 @@ function liveBgStatus(events: SintyEvent[]): { text: string; tone: "info" | "war
   const d = lastProgress.data as { phase?: string; tool?: string; detail?: string };
   const tool = d.tool ? ` ${d.tool}` : "";
   const detail = d.detail ? ` — ${d.detail}` : "";
-  const tone = d.phase === "tool.failed" || d.phase === "tool.denied" ? "warn" : "info";
+  const tone = d.phase === "tool.failed" || d.phase === "tool.denied" || d.phase === "blocked" ? "warn" : "info";
   return { text: `Фон · ${progressLabel(d.phase ?? "")}${tool}${detail}`, tone };
 }
 
@@ -169,7 +172,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   const [events, setEvents] = useState<SintyEvent[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
-  const [info, setInfo] = useState<SessionInfo & { pending: Pending | null; childPending?: Pending[] }>();
+  const [info, setInfo] = useState<SessionInfo & { pending: Pending | null; childPending?: Pending[]; childBusy?: number }>();
   const [childPending, setChildPending] = useState<Pending[]>([]);
   const [view, setView] = useState<string>(() => savedView(tabs));
   // /v1/plugins may answer after the chat mounted: restore a saved plugin view once its tab is known.
@@ -199,7 +202,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadInfo = async (): Promise<void> => {
-    const data = await api<SessionInfo & { pending: Pending | null; childPending?: Pending[] }>(`/v1/sessions/${encodeURIComponent(sessionId)}`);
+    const data = await api<SessionInfo & { pending: Pending | null; childPending?: Pending[]; childBusy?: number }>(`/v1/sessions/${encodeURIComponent(sessionId)}`);
     setInfo(data);
     setChildPending(data.childPending ?? []);
   };
@@ -303,6 +306,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   const childApprovalCount = childApprovals.reduce((n, p) => n + p.approvals.length, 0);
   const parentApprovalCount = pending?.reason === "approval" ? pending.approvals.length : 0;
   const running = info?.activeTurn?.status === "running";
+  const canStop = running || info?.activeTurn?.status === "blocked" || (info?.childBusy ?? 0) > 0;
   const policyTrust = info?.metadata?.policyTrust === true;
 
   const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number }[]>([]);
@@ -406,8 +410,8 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
             </button>
           ))}
         </div>
-        {running && (
-          <button class="danger" title="Прервать этот ход и все дочерние agent.task" onClick={() => void interrupt()}>
+        {canStop && (
+          <button class="danger" title="Прервать этот ход и все дочерние agent.task, в том числе уже остановленные супервизором" onClick={() => void interrupt()}>
             Стоп всё
           </button>
         )}

@@ -152,6 +152,8 @@ export interface CompleteRequest {
   route?: string;
   messages: ChatMessage[];
   maxOutputTokens?: number;
+  /** "off" asks a DeepSeek side call to disable thinking. Omitted maxOutputTokens sends no max_tokens. */
+  reasoning?: "off" | "low" | "medium" | "high";
   /** Lets the core account usage to a session and journal the call there. */
   sessionId?: string;
 }

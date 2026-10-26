@@ -134,6 +134,8 @@ export class Agent {
   private readonly taskSessions = new Map<string, string>();
   /** Background starts in flight (before the child turn is active), for taskMaxParallel under Promise.all. */
   private readonly pendingBackground = new Map<string, number>();
+  /** Child turns already reported to the parent as stalled (supervisor or budget). Cleared on resume. */
+  private readonly stalledTurns = new Set<string>();
   /** Parent sessions that got task.completed while busy; flush after their turn leaves `running`. */
   private readonly pendingTaskTurns = new Set<string>();
   /** Unsubscribe handlers that mirror background child tool activity onto the parent as task.progress. */
@@ -556,6 +558,7 @@ export class Agent {
   // ---- loop ----
 
   private resume(sessionId: string, turnId: string): void {
+    this.stalledTurns.delete(turnId);
     this.d.journal.setTurnStatus(turnId, "running");
     this.record({ sessionId, turnId, type: "turn.resumed", actor: SYSTEM, data: { fromSeq: this.d.journal.getSession(sessionId)!.lastSeq } });
     this.launch(sessionId, turnId);
@@ -731,11 +734,56 @@ export class Agent {
     if (status === "interrupted") return;
     // Idle parent: open a turn so the model can report the result (trigger "task").
     // Busy parent: remember and flush when its turn leaves `running` (see launch finally).
-    if (!parentTurn && !this.runningHasSession(parentId)) {
+    this.wakeParentForTask(parentId);
+  }
+
+  /** Idle parent reports the task now. A busy parent reports when its turn leaves `running`. */
+  private wakeParentForTask(parentId: string): void {
+    if (!this.d.journal.activeTurn(parentId) && !this.runningHasSession(parentId)) {
       this.launchTaskTurn(parentId);
     } else {
       this.pendingTaskTurns.add(parentId);
     }
+  }
+
+  /**
+   * A background child stopped without ending the turn (supervisor or budget). The parent status line
+   * and one task.completed wake say so. The child stays registered so agent.task_steer can resume it.
+   * The prompt rule tells the parent model not to launch a duplicate.
+   */
+  private notifyParentStalled(sessionId: string, turnId: string, reason: string, detail?: string): void {
+    if (reason !== "supervisor" && reason !== "budget") return;
+    const child = this.d.journal.getSession(sessionId);
+    const parentId = typeof child?.metadata?.parentSessionId === "string" ? child.metadata.parentSessionId : undefined;
+    const taskId = typeof child?.metadata?.taskId === "string" ? child.metadata.taskId : undefined;
+    if (!parentId || !taskId || child?.metadata?.background !== true) return;
+    if (this.stalledTurns.has(turnId)) return;
+    this.stalledTurns.add(turnId);
+    const events = this.d.journal.turnEvents(turnId);
+    const failed = [...events].reverse().find((e) => e.type === "tool.call.failed");
+    const fail = failed?.data as { callId?: string; code?: string; message?: string } | undefined;
+    const requested = fail?.callId
+      ? [...events].reverse().find((e) => e.type === "tool.call.requested" && (e.data as { callId?: string }).callId === fail.callId)
+      : undefined;
+    const tool = (requested?.data as { tool?: string } | undefined)?.tool;
+    const why = reason === "budget" ? "бюджет хода" : "супервизор";
+    const err = fail?.code ? `${fail.code}${fail.message ? `: ${fail.message}` : ""}` : detail ?? "";
+    this.record({
+      sessionId: parentId,
+      type: "task.progress",
+      actor: SYSTEM,
+      data: strip({ taskId, childSessionId: sessionId, phase: "blocked" as const, tool, detail: `${why}${err ? `: ${err}` : ""}` }),
+    });
+    const summary = `Фоновая задача остановлена (${why}) и ждёт человека. Не запускай её заново: ход всё ещё открыт, его можно поправить через agent.task_steer.${err ? ` Ошибка: ${err}.` : ""}`;
+    const parentTurn = this.d.journal.activeTurn(parentId);
+    this.record({
+      sessionId: parentId,
+      turnId: parentTurn?.id,
+      type: "task.completed",
+      actor: SYSTEM,
+      data: { taskId, childSessionId: sessionId, status: "failed", text: summary },
+    });
+    this.wakeParentForTask(parentId);
   }
 
   /** Start a trigger=task turn on an idle parent so it can report background child results. */
@@ -762,6 +810,7 @@ export class Agent {
     this.d.journal.setTurnStatus(turnId, "blocked");
     this.record({ sessionId, turnId, type: "turn.blocked", actor: SYSTEM, data: strip({ reason, detail }) });
     this.record({ sessionId, turnId, type: "agent.state", actor: SYSTEM, data: { state: "blocked" } });
+    this.notifyParentStalled(sessionId, turnId, reason, detail);
     return "blocked";
   }
 

@@ -225,14 +225,27 @@ function Shell() {
                         const why = p.reason === "approval" ? "одобрение" : p.reason === "ask_human" ? "вопрос" : p.reason === "budget" ? "бюджет" : "супервизор";
                         const childNote = parentId ? "фон" : why;
                         return (
-                          <a
-                            key={p.turnId}
-                            class={route.page === "chat" && route.sessionId === openId ? "on" : ""}
-                            href={href({ page: "chat", sessionId: openId })}
-                            title={p.detail ?? why}
-                          >
-                            {label} <span class="small muted">· {childNote}</span>
-                          </a>
+                          <div key={p.turnId} class="pending-row">
+                            <a
+                              class={route.page === "chat" && route.sessionId === openId ? "on" : ""}
+                              href={href({ page: "chat", sessionId: openId })}
+                              title={p.detail ?? why}
+                            >
+                              {label} <span class="small muted">· {childNote}</span>
+                            </a>
+                            <button
+                              type="button"
+                              class="icon"
+                              title="Снять с ожидания. Этот ход прервётся, новый ответ модели не запустится."
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void api(`/v1/sessions/${encodeURIComponent(p.sessionId)}/interrupt`, { method: "POST" }).then(() => refresh());
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
                         );
                       })}
                     </div>

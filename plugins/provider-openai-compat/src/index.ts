@@ -107,7 +107,13 @@ export function buildBody(req: ProviderRequest): Record<string, unknown> {
   if (req.tools.length) {
     body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.inputSchema } }));
   }
-  if (req.reasoning && req.reasoning !== "off") body.reasoning_effort = req.reasoning;
+  const deepseek = /api\.deepseek\.com(\/|$)/.test(baseUrl);
+  if (req.reasoning === "off") {
+    if (deepseek) body.thinking = { type: "disabled" };
+  } else if (req.reasoning) {
+    body.reasoning_effort = req.reasoning;
+    if (deepseek) body.thinking = { type: "enabled" };
+  }
   return body;
 }
 
