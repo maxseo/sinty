@@ -68,6 +68,14 @@
       ]
     },
     {
+      "name": "mcp-catalog",
+      "version": "0.2.0",
+      "description": "Settings → MCP: installed list, curated catalog cards, and custom add via POST /v1/plugins/mcp",
+      "kinds": [
+        "ui"
+      ]
+    },
+    {
       "name": "memory-obsidian",
       "version": "0.1.0",
       "description": "Read-only memory provider: searches an Obsidian (Markdown) vault with its own index in $DATA",
@@ -183,9 +191,17 @@
       ]
     },
     {
+      "name": "tool-vision",
+      "version": "0.1.0",
+      "description": "Look at image files in the workspace: vision.look sends pixels to a vision model and returns text (describe / OCR / find)",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
       "name": "tool-web",
       "version": "0.1.0",
-      "description": "Web tools: web.search, web.read, web.links, web.screenshot, web.interact. Public internet only; the core checks every address",
+      "description": "Web tools: web.search, web.read, web.links, web.screenshot, web.interact, web.fetch_file. Public internet only; the core checks every address",
       "kinds": [
         "tool"
       ]
@@ -200,4 +216,3 @@
     }
   ]
 }
-
