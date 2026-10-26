@@ -131,6 +131,54 @@ function unzip(buf: Buffer): Map<string, Buffer> {
   return out;
 }
 
+/** Write chat attachments into a project `_inbox` (or any dir). Blob store stays the model source of truth. */
+export function materializeAttachmentsToDir(
+  dataDir: string,
+  destDir: string,
+  refs: BlobRef[],
+): { path: string; name: string }[] {
+  mkdirSync(destDir, { recursive: true });
+  const out: { path: string; name: string }[] = [];
+  for (const ref of refs) {
+    const file = readBlob(dataDir, ref);
+    if (!file) continue;
+    const base = safeFileName(file.name || ref.name || ref.blob.replace(/^sha256:/, "").slice(0, 12) || "file");
+    const target = uniqueInboxPath(destDir, base, file.bytes);
+    if (!target.skipped) writeFileSync(target.path, file.bytes);
+    out.push({ path: target.path, name: target.name });
+  }
+  return out;
+}
+
+function safeFileName(name: string): string {
+  const cleaned = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/^\.+/, "_").trim() || "file";
+  return cleaned.slice(0, 180);
+}
+
+function uniqueInboxPath(dir: string, base: string, bytes: Buffer): { path: string; name: string; skipped?: boolean } {
+  const first = join(dir, base);
+  if (!existsSafe(first)) return { path: first, name: base };
+  try {
+    if (Buffer.compare(readFileSync(first), bytes) === 0) return { path: first, name: base, skipped: true };
+  } catch {
+    /* compare failed — write under a new name */
+  }
+  const dot = base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : "";
+  for (let i = 2; i < 1000; i++) {
+    const name = stem + "-" + i + ext;
+    const path = join(dir, name);
+    if (!existsSafe(path)) return { path, name };
+    try {
+      if (Buffer.compare(readFileSync(path), bytes) === 0) return { path, name, skipped: true };
+    } catch {
+      /* continue */
+    }
+  }
+  const name = stem + "-" + createHash("sha256").update(bytes).digest("hex").slice(0, 8) + ext;
+  return { path: join(dir, name), name };
+}
 function existsSafe(file: string): boolean {
   try {
     readFileSync(file);

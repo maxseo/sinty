@@ -20,7 +20,7 @@ import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
 import { compactCap, compactPoint, ContextWindows, ratioFromEvents, tokenRatio, type ContextWindow } from "./context-window.js";
 import { runShell, ShellSandboxError } from "./shell.js";
-import { renderAttachment } from "./blobs.js";
+import { materializeAttachmentsToDir, renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
 import { detectPolicyTrustPhrase } from "./policy-trust.js";
@@ -195,6 +195,7 @@ export class Agent {
   send(sessionId: string, text: string, opts: { idempotencyKey?: string | undefined; channel?: string | undefined; actor?: Actor | undefined; attachments?: BlobRef[] | undefined; agentId?: string | undefined } = {}): { turnId: string } {
     const j = this.d.journal;
     if (!j.getSession(sessionId)) throw new AgentError("not_found", `session ${sessionId} not found`, 404);
+    if (opts.attachments?.length) this.depositChatAttachments(sessionId, opts.attachments);
     if (opts.idempotencyKey) {
       const hit = j.idempotentTurn(opts.idempotencyKey);
       if (hit) return { turnId: hit.turnId };
@@ -1437,6 +1438,16 @@ export class Agent {
     const tool = this.allTools().find((t) => toWire(t.name) === wireName || t.name === wireName);
     if (!tool?.plugin) return true;
     return agentHasPlugin(speaker, tool.plugin, DEFAULT_ON_PLUGINS, sharedPlugins(this.d.paths));
+  }
+
+  /** Copy chat attachments into the project `_inbox` when the session has a projectId (prompt already documents this). */
+  private depositChatAttachments(sessionId: string, attachments: BlobRef[]): void {
+    const projectId = this.d.journal.getSession(sessionId)?.projectId;
+    if (!projectId) return;
+    const project = listProjects(this.d.paths).find((p) => p.id === projectId);
+    if (!project) return;
+    ensureProjectDirs(this.d.paths, project);
+    materializeAttachmentsToDir(this.d.paths.data, join(projectDir(this.d.paths, project), "_inbox"), attachments);
   }
 
   /** Workspace root for a session: project dir when the chat has a projectId, else the global workspace. */
