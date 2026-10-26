@@ -242,12 +242,12 @@ export const policySchema = z.object({
 export type SintyPolicy = z.infer<typeof policySchema>;
 
 /**
- * Bundled plugins that are enabled unless config.yaml lists them in `plugins.disabled`. tool-web carries web.search, tool-vision carries vision.look,
+ * Bundled plugins that are enabled unless config.yaml lists them in `plugins.disabled`. tool-web carries web.search,
  * web.read, web.links, web.screenshot and web.interact; skills carries the skill.* tools and the skills catalog of
  * the prompt; mcp-catalog owns Settings → MCP. All of them were core before plan step 7: an existing config.yaml whose plugins.enabled predates the
  * move keeps them without being rewritten.
  */
-export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "tool-vision", "skills", "responsive-turn", "mcp-catalog"];
+export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "skills", "responsive-turn", "mcp-catalog"];
 
 /** Appends DEFAULT_ON_PLUGINS that are neither enabled nor disabled, in memory. Idempotent. */
 export function withDefaultPlugins<T extends { plugins: { enabled: string[]; disabled?: string[] | undefined } }>(config: T): T {
