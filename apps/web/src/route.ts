@@ -7,7 +7,7 @@ export type Route =
   | { page: "agents"; agentId?: string }
   /** `general`, `models`, `plugins`, or a settings section id from /v1/settings/sections (`supervisor`, `policy`, `memory`, `plugin.<name>`). */
   | { page: "settings"; section: string }
-  | { page: "kit" }
+  | { page: "calendar" }
   | { page: "tab"; plugin: string; tab: string };
 
 export function parse(hash: string): Route {
@@ -18,11 +18,12 @@ export function parse(hash: string): Route {
     // The global «Журнал» (#/pending) and «Супервизор» (#/supervisor) pages are now chat-header tabs; old links open the chat list.
     case "board":
     case "plugins":
+    case "calendar":
       return { page };
     case "agents":
       return { page: "agents", ...(id ? { agentId: decodeURIComponent(id) } : {}) };
     case "kit":
-      return { page };
+      return { page: "settings", section: "uikit" };
     case "t":
       return id && sub ? { page: "tab", plugin: decodeURIComponent(id), tab: decodeURIComponent(sub) } : { page: "chat" };
     case "settings":

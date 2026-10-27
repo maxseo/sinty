@@ -5,7 +5,7 @@ import { Board } from "./board.js";
 import { Chat } from "./chat.js";
 import { AgentsPage, SettingsPage } from "./pages.js";
 import { useSections } from "./supervisor-ui.js";
-import { KitPage } from "./kit.js";
+import { CalendarPage } from "./calendar.js";
 import { PluginTab, type PluginTabInfo } from "./plugin-tab.js";
 import { go, href, useRoute } from "./route.js";
 import { IconBack, IconChevron, IconDots, IconFolder, IconGear, IconMoon, IconPanelLeft, IconPin, IconPlus, IconSun, IconTrash } from "./icons.js";
@@ -108,6 +108,7 @@ function Shell() {
   const [pickedAgents, setPickedAgents] = useState<string[]>([]);
   const [projectId, setProjectId] = useState(localStorage.getItem("sinty.project") ?? "");
   const hasKanban = agent?.plugins.some((p) => p.name === "kanban" && !p.disabled) ?? false;
+  const hasScheduler = agent?.plugins.some((p) => p.name === "scheduler" && !p.disabled) ?? false;
   const [tabs, setTabs] = useState<PluginTabInfo[]>([]);
   useEffect(() => {
     void api<{ plugins: { name: string; tabs?: { id: string; title: string; src: string; placement?: "sidebar" | "session" }[] }[] }>("/v1/plugins")
@@ -206,7 +207,7 @@ function Shell() {
                   <nav>
                     <a class={route.page === "agents" ? "on" : ""} href={href({ page: "agents" })}>Агенты</a>
                     {hasKanban && <a class={route.page === "board" ? "on" : ""} href={href({ page: "board" })}>Канбан</a>}
-                    <a class={route.page === "kit" ? "on" : ""} href={href({ page: "kit" })}>Набор</a>
+                    {hasScheduler && <a class={route.page === "calendar" ? "on" : ""} href={href({ page: "calendar" })}>Календарь</a>}
                     {sideTabs.map((t) => (
                       <a key={`${t.plugin}/${t.id}`} class={route.page === "tab" && route.plugin === t.plugin && route.tab === t.id ? "on" : ""} href={href({ page: "tab", plugin: t.plugin, tab: t.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>
                     ))}
@@ -281,6 +282,7 @@ function Shell() {
                       <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>
                       <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>
                       <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>
+                      <a class={settingsOn && route.section === "uikit" ? "on" : ""} href={href({ page: "settings", section: "uikit" })}>UI Kit</a>
                       {sections.map((x) => (
                         <a key={x.id} class={settingsOn && route.section === x.id ? "on" : ""} href={href({ page: "settings", section: x.id })} title={x.owner === "plugin" ? `Настройки плагина ${x.plugin}` : undefined}>{x.title}</a>
                       ))}
@@ -313,7 +315,7 @@ function Shell() {
         {route.page === "board" && <Board />}
         {route.page === "agents" && <AgentsPage agentId={route.agentId} />}
         {route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
-        {route.page === "kit" && <KitPage />}
+        {route.page === "calendar" && <CalendarPage />}
         {route.page === "tab" && (openTab ? <PluginTab key={`${openTab.plugin}/${openTab.id}`} tab={openTab} /> : <div class="empty"><p>Вкладка плагина {route.plugin} не найдена: плагин выключен или не запущен.</p></div>)}
       </main>
       <aside class="dock" />

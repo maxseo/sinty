@@ -48,6 +48,9 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-27 | [One-shot delay in seconds](2026-10-27-scheduler-delay-seconds.md) | (open) | `delaySeconds` wakes this chat; cron stays the repeat. Policy allows the tool. |
+| 2026-10-26 | [Scheduler month calendar and UI Kit in Settings](2026-10-26-scheduler-calendar.md) | (open) | Month grid from cron expansion. «Набор» moved to Settings → UI Kit. |
+| 2026-10-26 | [Kanban rebuilt around a project team](2026-10-26-kanban-team-board.md) | (open) | Assignee, reviewer, dependencies, team-chat notes. No accept column or dispatcher. |
 | 2026-10-26 | [Stop stays available while a child is blocked](2026-10-26-stop-while-blocked.md) | (open) | «Стоп всё» while a child runs or waits; × on «Ждут ответа» interrupts that turn only. |
 | 2026-10-26 | [Settings → Лимиты and a higher plugin day budget](2026-10-26-limits-section.md) | (open) | `pluginTokensPerDay` default 2_000_000; four core caps editable without a restart. |
 | 2026-10-26 | [A stalled background child tells the parent](2026-10-26-background-stall-notify.md) | (open) | Supervisor or budget block wakes the parent once and the «Фон» line says it stopped. |

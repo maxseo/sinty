@@ -1,23 +1,26 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { cronDue, parseCron } from "./cron.js";
+import { cronBetween, cronDue, parseCron } from "./cron.js";
 import { computeNext, JobStore, newJobId, type ScheduleJob } from "./store.js";
 
 const createInput = z
   .object({
     name: z.string().min(1).max(80).optional(),
-    sessionId: z.string().min(1).max(80),
+    sessionId: z.string().min(1).max(80).optional(),
     text: z.string().min(1).max(20_000),
     cron: z.string().min(9).max(64).optional(),
     at: z.string().min(10).max(40).optional(),
+    delaySeconds: z.number().int().min(1).max(60 * 60 * 24 * 30).optional(),
   })
-  .refine((v) => Boolean(v.cron) !== Boolean(v.at), { message: "provide exactly one of cron or at" });
+  .refine((v) => [Boolean(v.cron), Boolean(v.at), v.delaySeconds != null].filter(Boolean).length === 1, {
+    message: "provide exactly one of delaySeconds, at, or cron",
+  });
 
 function wakeText(job: ScheduleJob, when: Date): string {
   const whenIso = when.toISOString();
   const kind = job.kind === "cron" ? `cron ${job.cron}` : `at ${job.at}`;
-  return `[scheduler] Job "${job.name}" (${job.id}, ${kind}) fired at ${whenIso}.\n\n${job.text}`;
+  return `[scheduler] Сработало «${job.name}» (${job.id}, ${kind}) в ${whenIso}. Выполни указание ниже в этом чате и не рассказывай про планировщик.\n\n${job.text}`;
 }
 
 function appendWake(dir: string, row: Record<string, unknown>): void {
@@ -31,7 +34,7 @@ export default definePlugin({
   name: "scheduler",
   setup(ctx) {
     const store = new JobStore(ctx.paths.data);
-    const tickRaw = Number(ctx.config.tickMs ?? 10_000);
+    const tickRaw = Number(ctx.config.tickMs ?? 1_000);
     const tickMs = Number.isFinite(tickRaw) ? Math.min(60_000, Math.max(1_000, Math.floor(tickRaw))) : 10_000;
     let timer: ReturnType<typeof setInterval> | undefined;
     let pumping = false;
@@ -122,10 +125,10 @@ export default definePlugin({
     ctx.tool({
       name: "schedule.create",
       description:
-        "Register a durable cron or fire-at job that wakes a session with the given text while Sinty is running. Cron is 5 fields (minute hour dom month dow). Fire-at is an ISO-8601 timestamp.",
+        "Поставь напоминание в этот чат. Это и есть таймер: разовая задача и повтор. «Через N секунд/минут» — delaySeconds (38 = через 38 секунд). Точное время — at, ISO с поясом, например 2026-10-27T15:00:00+03:00. Повтор — cron из 5 полей, локальные минуты: «0 9 * * 1-5» по будням в 09:00, «*/5 * * * *» каждые 5 минут. Секунды в cron нет. sessionId не передавай, если будить этот же чат. text — что сделать в момент срабатывания, дословно, например «Напиши одно слово: привет».",
       input: createInput,
       sideEffects: "write",
-      async run(input) {
+      async run(input, call) {
         if (input.cron) {
           try {
             parseCron(input.cron);
@@ -136,16 +139,18 @@ export default definePlugin({
           }
         }
         let atIso: string | undefined;
-        if (input.at) {
+        if (input.delaySeconds != null) atIso = new Date(Date.now() + input.delaySeconds * 1000).toISOString();
+        else if (input.at) {
           const t = new Date(input.at);
           if (Number.isNaN(t.getTime())) {
-            throw new ToolError("bad_at", "at must be a valid ISO-8601 timestamp", { hint: "Example: 2026-10-25T21:30:00+03:00" });
+            throw new ToolError("bad_at", "at must be a valid ISO-8601 timestamp", { hint: "Example: 2026-10-27T15:00:00+03:00. For 'in 38 seconds' use delaySeconds: 38." });
           }
           atIso = t.toISOString();
         }
-        const session = await ctx.agent.getSession(input.sessionId);
+        const sessionId = input.sessionId ?? call.sessionId;
+        const session = await ctx.agent.getSession(sessionId);
         if (!session) {
-          throw new ToolError("not_found", `session ${input.sessionId} not found`, { hint: "Create a chat first, then pass its session id." });
+          throw new ToolError("not_found", `session ${sessionId} not found`, { hint: "Omit sessionId to wake this chat." });
         }
         const now = new Date();
         const kind = input.cron ? "cron" : "at";
@@ -155,7 +160,7 @@ export default definePlugin({
           kind,
           ...(input.cron ? { cron: input.cron.trim() } : {}),
           ...(atIso ? { at: atIso } : {}),
-          sessionId: input.sessionId,
+          sessionId,
           text: input.text,
           enabled: true,
           createdAt: now.toISOString(),
@@ -199,6 +204,35 @@ export default definePlugin({
       path: "/jobs",
       handler() {
         return Response.json({ jobs: store.list().map(publicJob), tickMs });
+      },
+    });
+
+    ctx.http({
+      method: "GET",
+      path: "/occurrences",
+      handler(req) {
+        const url = new URL(req.url);
+        const from = new Date(url.searchParams.get("from") ?? "");
+        const to = new Date(url.searchParams.get("to") ?? "");
+        if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+          return Response.json({ error: { code: "bad_request", message: "from and to must be dates" } }, { status: 400 });
+        }
+        const items: { jobId: string; name: string; at: string; kind: string }[] = [];
+        for (const job of store.list()) {
+          if (!job.enabled) continue;
+          if (job.kind === "at" && job.at) {
+            const t = new Date(job.at);
+            if (t >= from && t <= to) items.push({ jobId: job.id, name: job.name, at: t.toISOString(), kind: "at" });
+          } else if (job.kind === "cron" && job.cron) {
+            try {
+              for (const hit of cronBetween(job.cron, from, to)) items.push({ jobId: job.id, name: job.name, at: hit.toISOString(), kind: "cron" });
+            } catch {
+              /* skip a cron the calendar cannot expand */
+            }
+          }
+        }
+        items.sort((a, b) => (a.at < b.at ? -1 : 1));
+        return Response.json({ items });
       },
     });
 

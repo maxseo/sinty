@@ -11,12 +11,12 @@
     "agent": ["sessions.read", "sessions.write"]
   },
   "tools": [
-    { "name": "schedule.create", "sideEffects": "write", "idempotent": false, "docs": "README.md", "defaultPolicy": "ask" },
+    { "name": "schedule.create", "sideEffects": "write", "idempotent": false, "docs": "README.md", "defaultPolicy": "allow" },
     { "name": "schedule.list", "sideEffects": "read", "idempotent": true, "docs": "README.md" },
     { "name": "schedule.cancel", "sideEffects": "write", "idempotent": true, "docs": "README.md" }
   ],
   "config": {
-    "tickMs": { "type": "integer", "default": 10000, "description": "How often to check due jobs (ms), 1000–60000" }
+    "tickMs": { "type": "integer", "default": 1000, "description": "How often to check due jobs (ms), 1000–60000" }
   },
   "editable": true
 }

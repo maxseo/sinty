@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
 import { go, href } from "./route.js";
+import { KitPage } from "./kit.js";
 import { SectionPane } from "./supervisor-ui.js";
 
 function useLoad<T>(path: string, deps: unknown[]): { data: T | undefined; error: string; reload: () => void } {
@@ -562,7 +563,8 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       <h2>Настройки</h2>
       {error && <p class="error">{error}</p>}
       {section === "general" && <GeneralPane />}
-      {section !== "general" && section !== "models" && section !== "plugins" && <SectionPane key={section} id={section} />}
+      {section === "uikit" && <KitPage />}
+      {section !== "general" && section !== "models" && section !== "plugins" && section !== "uikit" && <SectionPane key={section} id={section} />}
       {section === "models" && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
       {section === "plugins" && data && (
         <PluginsSettings

@@ -134,7 +134,7 @@ export function KitPage() {
   const [open, setOpen] = useState(false);
   return (
     <section class="page kit">
-      <h2>Набор интерфейса</h2>
+      <h2>UI Kit</h2>
       <h3>Как на Oversight</h3>
       <p class="small muted">Светлая панель, выбранный пункт серой плашкой, чёрная и белая кнопки, переключатель на серой дорожке, меню группами. Близкие готовые наборы в этом духе: shadcn/ui и Radix Themes. Здесь образец на наших стилях, без чужой библиотеки.</p>
       <OversightDemo />

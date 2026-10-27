@@ -54,6 +54,19 @@ function matches(fields: CronFields, d: Date): boolean {
   );
 }
 
+/** Fires in [from, to], at most `limit` hits. A every-minute cron stops at the cap. */
+export function cronBetween(expr: string, from: Date, to: Date, limit = 48): Date[] {
+  const out: Date[] = [];
+  let cursor = new Date(from.getTime() - 60_000);
+  while (out.length < limit) {
+    const next = nextCronAfter(expr, cursor);
+    if (next.getTime() > to.getTime()) break;
+    if (next.getTime() >= from.getTime()) out.push(next);
+    cursor = next;
+  }
+  return out;
+}
+
 /** Next fire strictly after `from` (ms), searching minute by minute up to ~1 year. */
 export function nextCronAfter(expr: string, from: Date = new Date()): Date {
   const fields = parseCron(expr);

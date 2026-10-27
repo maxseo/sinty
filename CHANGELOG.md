@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Scheduler: `schedule.create` takes `delaySeconds` for a one-shot delay, `at` for a clock time, and `cron` for a repeat. `sessionId` defaults to the current chat. Tick default is 1s.
+- Scheduler calendar: month grid in the sidebar («Календарь») reads `GET /p/scheduler/occurrences`. Settings sidebar holds **UI Kit** (was the main-nav «Набор»). Old `#/kit` opens Settings → UI Kit.
+- Kanban is a project board: columns Бэклог / К выполнению / В работе / Проверка / Готово, roster assignee and reviewer, dependencies, priority, label, and `notify` `chat` or `none`. Dragging a running card out of «В работе» interrupts it. Skill `kanban-lead`.
+
 ### Added
 - Settings → **Модели**: named routes UI (`cheap`/`embed`/`vision`/`long`) for `models.routes`, plus `service.model`. Catalog list retitled «Включённые модели».
 - Plugin **`tool-vision`** (default-on): tool `vision.look` reads an image under the session workspace (project chroot when set), calls `ctx.models.complete` with `ChatMessage.images` (route `vision` → `default`, override `plugins.config.tool-vision.modelRoute`), returns text. Policy **ask**. Cap 8 MB (chat blob parity). Companion skill `skills/vision-look` via `sinty skills add`. Needs openai-compat vision; Anthropic/Responses ignore images on side calls today.

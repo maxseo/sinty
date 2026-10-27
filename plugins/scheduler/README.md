@@ -22,11 +22,11 @@ Or Settings → Plugins → enable **scheduler**. Restart / hot-reload as usual.
 
 | Tool | Purpose |
 |---|---|
-| `schedule.create` | `cron` **or** `at` + `sessionId` + `text` (policy **ask**) |
+| `schedule.create` | one of `delaySeconds`, `at`, or `cron`, plus `text`. `sessionId` defaults to the current chat. Policy **allow**. |
 | `schedule.list` | jobs with `lastRunAt` / `nextRunAt` |
 | `schedule.cancel` | remove by id |
 
-Cron is five fields: `minute hour dom month dow` (local wall clock). Examples: `*/5 * * * *`, `0 9 * * 1-5`.
+`delaySeconds` is a one-shot offset from now (1 second to 30 days). `at` is a one-shot ISO timestamp. Cron is five fields, minute resolution, local wall clock: `*/5 * * * *`, `0 9 * * 1-5`. The tick default is 1 second.
 
 ## HTTP (plugin routes)
 

@@ -2,7 +2,7 @@
   "$schema": "../../schemas/plugin-manifest.schema.json",
   "name": "kanban",
   "version": "0.1.0",
-  "description": "Kanban board: each card the human gives to the agent runs as its own session; the agent comments and moves cards",
+  "description": "Kanban board for a project: assignee, reviewer, dependencies, and notes in the team chat",
   "kinds": ["tool", "server", "event"],
   "runtime": "node",
   "entry": "dist/index.js",

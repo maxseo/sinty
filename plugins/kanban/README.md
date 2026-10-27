@@ -1,35 +1,9 @@
-# kanban
+# Kanban
 
-A board with columns **Backlog → To do → In progress → Review → Done**. Stored in `$SINTY_HOME/data/kanban/board.json`.
+One board. Columns: Бэклог → К выполнению → В работе → Проверка → Готово.
 
-- A card assigned to the **agent** in *To do* is a queued task. Up to `maxParallel` (default 3) cards run at the same time, each in its own session.
-- When the turn finishes, the card moves to *Review*. A human comment on a card in *Review* sends it back to *To do* with the comment as feedback.
-- Moving a running card out of *In progress* interrupts the agent.
-- The agent can list cards, create cards and comment on them. Cards it creates are assigned to the human: only a human can give work to the agent.
+A card stores a roster `assigneeId`, a `reviewerId`, a `projectId` taken from the project it was created in, a priority, a label, `dependsOn`, and `notify` (`chat` or `none`). It starts only when it is in the queue or dragged to «В работе», it has an assignee, and every dependency is in «Готово». Up to `maxParallel` (default 3) run at once, each in its own session. Dragging a running card out of «В работе» interrupts that session. A finished turn moves the card to «Проверка». The reviewer (when set and not the author) gets a review session and may move it to «Готово» or back to «К выполнению». The author cannot accept their own card.
 
-## Tools
+`notify: chat` copies comments into the latest team chat of the card's project. `none` stays on the board. Messenger connectors are not part of this plugin.
 
-| Tool | Arguments |
-|---|---|
-| `kanban.list` | `column?` — one of `backlog`, `todo`, `doing`, `review`, `done`; `id?` — one card with description and comments |
-| `kanban.create` | `title`, `description?`, `column?` (default `backlog`) |
-| `kanban.update` | `id`, `comment?`, `column?` — the agent cannot move a card to `doing` |
-
-## HTTP (`/p/kanban`, bearer token)
-
-| Route | Does |
-|---|---|
-| `GET /board` | columns and cards |
-| `GET /stream` | SSE: `board` event with a full snapshot on every change |
-| `POST /cards` | `{ title, description?, column?, assignee? }` |
-| `PATCH /cards/:id` | `{ title?, description?, column?, assignee?, order?, comment? }` |
-| `DELETE /cards/:id` | delete; interrupts the agent if it is working on the card |
-| `POST /cards/:id/start` | assign to the agent and start now |
-
-## Config
-
-```yaml
-plugins:
-  config:
-    kanban: { maxParallel: 3 }
-```
+Tools: `kanban.list`, `kanban.create`, `kanban.update`. The lead procedure is the skill `kanban-lead`.
