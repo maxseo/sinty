@@ -16,7 +16,10 @@ export const TAB_HTML = String.raw`<!doctype html>
 <style>
 :root { --bg:#fff; --fg:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --soft:#f5f5f7; --accent:#3a5bd9; --warn:#b54708; }
 :root[data-theme=dark] { --bg:#16161a; --fg:#ececf1; --muted:#9a9aa5; --line:#2c2c33; --soft:#1f1f25; --accent:#8ea2ff; --warn:#f5a524; }
-* { box-sizing:border-box; }
+* { box-sizing:border-box; scrollbar-width:thin; scrollbar-color:color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+*::-webkit-scrollbar { width:8px; height:8px; background:transparent; }
+*::-webkit-scrollbar-track { background:transparent; }
+*::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--muted) 45%, transparent); border-radius:8px; }
 body { margin:0; font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--fg); background:var(--bg); }
 .top { display:flex; gap:12px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
 .top h1 { font-size:14px; margin:0 8px 0 0; }
@@ -172,6 +175,8 @@ tr.div td { border-bottom:2px dashed var(--warn); color:var(--warn); font-size:1
       b.addEventListener("click", function () { state.step = s.id; drawSteps(); open(s.id); });
       box.appendChild(b);
     });
+    var current = box.querySelector(".step.on");
+    if (current && current.scrollIntoView) current.scrollIntoView({ block: "nearest" });
   }
 
   function open(id) {

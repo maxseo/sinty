@@ -6,7 +6,7 @@ import { definePlugin } from "@sinty/sdk";
  * Behaviour lives in a system section so it can be disabled without a core release.
  */
 const SECTION = `## Responsive turns
-- Answer the human immediately with a short acknowledgement of what you will do, then free the parent turn so the next human message can start its own turn.
+- Answer the human immediately with a short acknowledgement of what you will do, then free the parent turn so the next human message can start its own turn. That acknowledgement must be plain text in the same step as the first tool call. A step that only calls tools shows the human an empty chat.
 - Keep the work in this turn only when it is a short factual answer, one lookup, or one or two quick tool calls.
 - Set agent.task background: true yourself, without waiting for the human to say "in the background", when the work is long or parallel: many steps, many pages or files, or several independent threads. A short ack, then the background call, then end this turn.
 - When several independent threads fit the same request, start several background agent.task calls (up to the configured parallel limit) instead of one huge child.

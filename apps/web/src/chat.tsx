@@ -37,7 +37,6 @@ const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "tur
 
 function build(events: SintyEvent[]): Item[] {
   const items: Item[] = [];
-  const calls = new Map<string, ToolCall>();
   for (const e of events) {
     const d = e.data as Record<string, any>;
     const key = String(e.seq ?? e.id);
@@ -49,40 +48,14 @@ function build(events: SintyEvent[]): Item[] {
         if (d.text) items.push({ kind: "agent", key, text: d.text, ts: e.ts, name: d.agentName });
         break;
       case "model.response":
-        if (d.text && d.toolCalls?.length) items.push({ kind: "agent", key, text: d.text, ts: e.ts, interim: true });
-        break;
-      case "tool.call.requested": {
-        const call: ToolCall = { callId: d.callId, tool: d.tool, args: d.args, state: "requested" };
-        calls.set(d.callId, call);
-        items.push({ kind: "tool", key, call });
-        break;
-      }
-      case "tool.call.approval_requested": {
-        const c = calls.get(d.callId);
-        if (c) Object.assign(c, { state: "approval", reason: d.reason });
-        break;
-      }
+      case "tool.call.requested":
+      case "tool.call.approval_requested":
       case "tool.call.approved":
-      case "tool.call.started": {
-        const c = calls.get(d.callId);
-        if (c && c.state !== "done" && c.state !== "failed") c.state = "running";
+      case "tool.call.started":
+      case "tool.call.completed":
+      case "tool.call.failed":
+      case "tool.call.denied":
         break;
-      }
-      case "tool.call.completed": {
-        const c = calls.get(d.callId);
-        if (c) Object.assign(c, { state: "done", result: d.result });
-        break;
-      }
-      case "tool.call.failed": {
-        const c = calls.get(d.callId);
-        if (c) Object.assign(c, { state: "failed", error: { code: d.code, message: d.message, hint: d.hint } });
-        break;
-      }
-      case "tool.call.denied": {
-        const c = calls.get(d.callId);
-        if (c) Object.assign(c, { state: "denied", reason: d.note ?? c.reason });
-        break;
-      }
       case "supervisor.notice":
         items.push({ kind: "note", key, tone: "warn", text: `Супервизор (${d.detector}): ${d.text}` });
         break;
@@ -127,33 +100,55 @@ function progressLabel(phase: string): string {
   return phase;
 }
 
-/** One live background status for the chat (journal keeps every task.progress event). */
-function liveBgStatus(events: SintyEvent[]): { text: string; tone: "info" | "warn" } | null {
-  let lastProgress: SintyEvent | undefined;
-  let lastCompleted: SintyEvent | undefined;
-  let lastAgentAfterCompleted = false;
+/** Open turn: the latest short reply (replaced in one bubble) and the tool line under it. */
+function liveTurn(events: SintyEvent[]): { text: string; tool: string; warn: boolean } | null {
+  let open = false;
+  let text = "";
+  let tool = "";
+  let warn = false;
+  const stateWord: Record<string, string> = {
+    "tool.call.requested": "запрошен",
+    "tool.call.approval_requested": "ждёт разрешения",
+    "tool.call.approved": "выполняется",
+    "tool.call.started": "выполняется",
+    "tool.call.completed": "готово",
+    "tool.call.failed": "ошибка",
+    "tool.call.denied": "отклонён",
+  };
   for (const e of events) {
-    if (e.type === "task.progress") lastProgress = e;
-    if (e.type === "task.completed") {
-      lastCompleted = e;
-      lastAgentAfterCompleted = false;
+    const d = e.data as Record<string, any>;
+    if (e.type === "turn.started") {
+      open = true;
+      text = "";
+      tool = "";
+      warn = false;
     }
-    if (e.type === "message.agent" && lastCompleted) lastAgentAfterCompleted = true;
+    if (e.type === "turn.completed" || e.type === "turn.failed" || e.type === "turn.interrupted") {
+      open = false;
+      tool = "";
+      text = "";
+    }
+    if (e.type === "model.response" && open && typeof d.text === "string" && d.text.trim()) text = d.text.trim();
+    if (e.type === "message.agent") {
+      text = "";
+      if (!open) tool = "";
+    }
+    if (open && e.type.startsWith("tool.call.")) {
+      tool = `${d.tool ?? "инструмент"} · ${stateWord[e.type] ?? ""}`;
+      warn = e.type === "tool.call.failed" || e.type === "tool.call.denied";
+    }
+    if (e.type === "task.progress") {
+      tool = `Фон · ${progressLabel(String(d.phase ?? ""))}${d.tool ? ` ${d.tool}` : ""}`;
+      warn = d.phase === "tool.failed" || d.phase === "tool.denied" || d.phase === "blocked";
+    }
+    if (e.type === "task.completed" && !open) {
+      const status = d.status === "completed" ? "готово" : d.status === "failed" ? "ошибка" : "прервано";
+      tool = `Фон · ${status}`;
+      warn = d.status !== "completed";
+    }
   }
-  const progressPhase = (lastProgress?.data as { phase?: string } | undefined)?.phase;
-  const stalled = progressPhase === "blocked" && lastProgress && (!lastCompleted || (lastProgress.seq ?? 0) <= (lastCompleted.seq ?? 0)) && !lastAgentAfterCompleted;
-  if (!stalled && lastCompleted && (!lastProgress || (lastCompleted.seq ?? 0) >= (lastProgress.seq ?? 0))) {
-    if (lastAgentAfterCompleted) return null;
-    const d = lastCompleted.data as { status?: string };
-    const status = d.status === "completed" ? "готово" : d.status === "failed" ? "ошибка" : "прервано";
-    return { text: `Фон · ${status}`, tone: d.status === "completed" ? "info" : "warn" };
-  }
-  if (!lastProgress) return null;
-  const d = lastProgress.data as { phase?: string; tool?: string; detail?: string };
-  const tool = d.tool ? ` ${d.tool}` : "";
-  const detail = d.detail ? ` — ${d.detail}` : "";
-  const tone = d.phase === "tool.failed" || d.phase === "tool.denied" || d.phase === "blocked" ? "warn" : "info";
-  return { text: `Фон · ${progressLabel(d.phase ?? "")}${tool}${detail}`, tone };
+  if (!text && !tool && !open) return null;
+  return { text, tool, warn };
 }
 
 function toBase64(buf: ArrayBuffer): string {
@@ -199,6 +194,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
   const [replyAgent, setReplyAgent] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadInfo = async (): Promise<void> => {
@@ -298,8 +294,14 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   }, [sessionId]);
 
   const items = useMemo(() => build(events), [events]);
-  const bgStatus = useMemo(() => liveBgStatus(events), [events]);
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [items.length, streaming, bgStatus?.text]);
+  const presence = useMemo(() => liveTurn(events), [events]);
+  const liveText = streaming || presence?.text || "";
+  const toolLine = presence?.tool ?? "";
+  useEffect(() => {
+    if (tab !== "chat") return;
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [tab, items.length, liveText, presence?.tool, streaming, info?.pending, childPending.length]);
 
   const pending = info?.pending ?? null;
   const childApprovals = childPending.filter((p) => p.reason === "approval" && p.approvals.length > 0);
@@ -436,7 +438,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
           <SupervisorView sessionId={sessionId} tick={supCount} />
         </div>
       ) : (
-        <div class="log">
+        <div class="log" ref={logRef}>
           {items.map((it) => {
             switch (it.kind) {
               case "user":
@@ -466,13 +468,13 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
                   </div>
                 );
               case "tool":
-                return <ToolCard key={it.key} call={it.call} onDecide={pending?.approvals.some((a) => a.callId === it.call.callId) ? decide : undefined} />;
+                return null;
             }
           })}
-          {streaming && <div class="msg agent live">{streaming}</div>}
-          {!streaming && (bgStatus || running) && (
-            <div class={`typing${bgStatus?.tone === "warn" ? " warn" : ""}`} aria-live="polite">
-              {bgStatus ? bgStatus.text : "Агент думает…"}
+          {liveText && <div class="msg agent interim">{liveText}</div>}
+          {(toolLine || (running && !liveText)) && (
+            <div class={`typing shimmer${presence?.warn ? " warn" : ""}`} aria-live="polite">
+              {toolLine || "Агент думает…"}
             </div>
           )}
           <div ref={bottom} />
@@ -485,24 +487,14 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
             Фоновая задача ждёт одобрения
             {childApprovalCount > 1 && <span class="badge">{childApprovalCount}</span>}
           </div>
-          <div class={`approval-stack${childApprovalCount > 1 ? " stacked" : ""}`}>
-            {childApprovals
-              .flatMap((p) => p.approvals.map((a) => ({ p, a })))
-              .map(({ p, a }, flatIndex, all) => {
-                const depth = all.length - 1 - flatIndex;
-                return (
-                  <div
-                    key={`${p.sessionId}:${a.callId}`}
-                    class="approval-stack-card"
-                    style={all.length > 1 ? { zIndex: flatIndex + 1, transform: `translate(${depth * 6}px, ${depth * 8}px)` } : undefined}
-                  >
-                    <ToolCard
-                      call={{ callId: a.callId, tool: a.tool, args: a.args, state: "approval", reason: a.reason }}
-                      onDecide={(callId, d) => decide(callId, d, p.sessionId)}
-                    />
-                  </div>
-                );
-              })}
+          <div class="approval-list">
+            {childApprovals.flatMap((p) => p.approvals.map((a) => (
+              <ToolCard
+                key={`${p.sessionId}:${a.callId}`}
+                call={{ callId: a.callId, tool: a.tool, args: a.args, state: "approval", reason: a.reason }}
+                onDecide={(callId, d) => decide(callId, d, p.sessionId)}
+              />
+            )))}
           </div>
           <div class="approvals">
             {childApprovalCount > 1 && <span>Ждут решения: {childApprovalCount}</span>}
@@ -521,16 +513,27 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
       )}
 
       {pending?.reason === "approval" && parentApprovalCount > 0 && tab === "chat" && !pluginTab && (
-        <div class="approvals parent-approvals-bar">
-          {parentApprovalCount > 1 && <span>Ждут решения: {parentApprovalCount}</span>}
-          {parentApprovalCount > 1 && (
-            <button onClick={() => pending.approvals.forEach((a) => void decide(a.callId, "approve"))}>Одобрить все</button>
-          )}
-          {!policyTrust && (
-            <button title="Больше не спрашивать разрешения в этом чате" onClick={() => void grantTrust()}>
-              Больше не спрашивать в этом чате
-            </button>
-          )}
+        <div class="child-approvals">
+          <div class="menu-label">Нужно разрешение{parentApprovalCount > 1 ? ` · ${parentApprovalCount}` : ""}</div>
+          <div class="approval-list">
+            {pending.approvals.map((a) => (
+              <ToolCard
+                key={a.callId}
+                call={{ callId: a.callId, tool: a.tool, args: a.args, state: "approval", reason: a.reason }}
+                onDecide={(callId, d) => decide(callId, d)}
+              />
+            ))}
+          </div>
+          <div class="approvals">
+            {parentApprovalCount > 1 && (
+              <button onClick={() => pending.approvals.forEach((a) => void decide(a.callId, "approve"))}>Одобрить все</button>
+            )}
+            {!policyTrust && (
+              <button title="Больше не спрашивать разрешения в этом чате" onClick={() => void grantTrust()}>
+                Больше не спрашивать в этом чате
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -634,6 +637,11 @@ function eventPreview(data: Record<string, unknown>): string {
 }
 
 function Journal({ events }: { events: SintyEvent[] }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [events.length]);
   const [showDuration, setShowDuration] = useState(true);
   const [showTurns, setShowTurns] = useState(true);
   const [showCalls, setShowCalls] = useState(true);
@@ -684,7 +692,7 @@ function Journal({ events }: { events: SintyEvent[] }) {
         </div>
       )}
       <div class="trace-body">
-        <div class="trace-list">
+        <div class="trace-list" ref={listRef}>
           {[...turns.entries()].map(([turn, list], index) => (
             <div key={turn}>
               {showTurns && <div class="trace-turn">Ход {index + 1}</div>}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { SkillsPane } from "./skills-pane";
 import { McpPane } from "./mcp-pane";
 import { api, shortTime, type SintyEvent } from "./api.js";
@@ -28,6 +28,7 @@ function Long({ text }: { text: string }) {
 
 /** Remarks, stops, incidents and patches of this chat; «Все чаты» widens it to the whole install. */
 export function SupervisorView({ sessionId, tick }: { sessionId: string; tick: number }) {
+  const viewRef = useRef<HTMLDivElement>(null);
   const [all, setAll] = useState(false);
   const [data, setData] = useState<SupervisorData>();
   const [error, setError] = useState("");
@@ -39,8 +40,12 @@ export function SupervisorView({ sessionId, tick }: { sessionId: string; tick: n
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [sessionId, all, tick]);
+  useEffect(() => {
+    const el = viewRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [data, all]);
   return (
-    <div class="sup-view">
+    <div class="sup-view" ref={viewRef}>
       <div class="sup-tools">
         <span class={`status ${data?.enabled ? "running" : "idle"}`}>{data?.enabled ? "супервизор включён" : "супервизор выключен"}</span>
         <div class="tabs">
