@@ -2,12 +2,19 @@ import { useEffect, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
 import { go, href } from "./route.js";
 import { KitPage } from "./kit.js";
+import { StaffPage } from "./staff.js";
 import { SectionPane } from "./supervisor-ui.js";
+import { useAccess } from "./access.js";
+
+export function Denied() {
+  return <div class="empty"><p>Этот раздел закрыт для вашей роли.</p></div>;
+}
 
 function useLoad<T>(path: string, deps: unknown[]): { data: T | undefined; error: string; reload: () => void } {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
   const reload = (): void => {
+    if (!path) return;
     api<T>(path)
       .then((d) => {
         setData(d);
@@ -532,7 +539,8 @@ function PluginsSettings({
 }
 
 export function SettingsPage({ onSaved, section }: { onSaved: () => void; section: string }) {
-  const { data, error, reload } = useLoad<SettingsData>("/v1/settings", []);
+  const { can } = useAccess();
+  const { data, error, reload } = useLoad<SettingsData>(can("nav:settings") || can("nav:plugins") ? "/v1/settings" : "", []);
   const [model, setModel] = useState("");
   const [enabled, setEnabled] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
@@ -562,11 +570,13 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
     <section class="page settings-page">
       <h2>Настройки</h2>
       {error && <p class="error">{error}</p>}
-      {section === "general" && <GeneralPane />}
+      {section !== "uikit" && !can(settingsResource(section)) ? <Denied /> : null}
+      {section === "general" && can("nav:settings") && <GeneralPane />}
+      {section === "staff" && can("nav:staff") && <StaffPage />}
       {section === "uikit" && <KitPage />}
-      {section !== "general" && section !== "models" && section !== "plugins" && section !== "uikit" && <SectionPane key={section} id={section} />}
-      {section === "models" && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
-      {section === "plugins" && data && (
+      {section !== "general" && section !== "models" && section !== "plugins" && section !== "uikit" && section !== "staff" && can(settingsResource(section)) && <SectionPane key={section} id={section} />}
+      {section === "models" && can("nav:settings") && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
+      {section === "plugins" && can("nav:plugins") && data && (
         <PluginsSettings
           enabled={enabled}
           setEnabled={setEnabled}
@@ -577,6 +587,15 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       )}
     </section>
   );
+}
+
+/** Same mapping as the server: skills and MCP sections follow their panel items, the rest is install-wide. */
+function settingsResource(section: string): string {
+  if (section === "staff") return "nav:staff";
+  if (section === "plugins") return "nav:plugins";
+  if (section === "plugin.skills") return "nav:skills";
+  if (section === "plugin.mcp-catalog") return "nav:mcp";
+  return "nav:settings";
 }
 
 interface AgentRecord {

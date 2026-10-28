@@ -38,6 +38,14 @@ export interface Pending {
 }
 
 const TOKEN_KEY = "sinty.token";
+const USER_KEY = "sinty.user";
+
+/** Session of a signed-in employee. Preferred over the machine token. */
+export const userSession = {
+  get: (): string => localStorage.getItem(USER_KEY) ?? "",
+  set: (t: string): void => localStorage.setItem(USER_KEY, t),
+  clear: (): void => localStorage.removeItem(USER_KEY),
+};
 
 /** `#token=…` from `sinty web` is moved to localStorage and removed from the address bar. */
 export function takeTokenFromUrl(): void {
@@ -48,7 +56,8 @@ export function takeTokenFromUrl(): void {
 }
 
 export const token = {
-  get: (): string => localStorage.getItem(TOKEN_KEY) ?? "",
+  /** Employee session if there is one, otherwise the machine token from `sinty web`. */
+  get: (): string => localStorage.getItem(USER_KEY) || localStorage.getItem(TOKEN_KEY) || "",
   set: (t: string): void => localStorage.setItem(TOKEN_KEY, t),
   clear: (): void => localStorage.removeItem(TOKEN_KEY),
 };

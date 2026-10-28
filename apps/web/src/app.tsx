@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
-import { api, ApiError, setUnauthorizedHandler, shortTime, subscribe, token, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
+import { api, ApiError, setUnauthorizedHandler, shortTime, subscribe, token, userSession, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { Board } from "./board.js";
 import { Chat } from "./chat.js";
-import { AgentsPage, SettingsPage } from "./pages.js";
+import { AgentsPage, Denied, SettingsPage } from "./pages.js";
 import { useSections } from "./supervisor-ui.js";
 import { CalendarPage } from "./calendar.js";
 import { PluginTab, type PluginTabInfo } from "./plugin-tab.js";
 import { go, href, useRoute } from "./route.js";
+import { AccessContext, firstSection, type AccessAction, type Me } from "./access.js";
 import { IconBack, IconChevron, IconDots, IconFolder, IconGear, IconMoon, IconPanelLeft, IconPin, IconPlus, IconSun, IconTrash } from "./icons.js";
 
 interface AgentInfo {
@@ -24,9 +25,25 @@ export function App() {
 }
 
 function Login({ onDone }: { onDone: () => void }) {
+  const reset = /^#\/reset\/([^&]+)/.exec(location.hash);
+  const [mode, setMode] = useState<"email" | "token" | "forgot" | "reset">(reset ? "reset" : "email");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
-  const submit = async (e: Event): Promise<void> => {
+  const [notice, setNotice] = useState("");
+  const submitEmail = async (e: Event): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    try {
+      const r = await api<{ token: string }>("/v1/auth/login", { body: { email, password } });
+      userSession.set(r.token);
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+  const submitToken = async (e: Event): Promise<void> => {
     e.preventDefault();
     token.set(value.trim());
     try {
@@ -37,16 +54,63 @@ function Login({ onDone }: { onDone: () => void }) {
       setError(err instanceof ApiError && err.status === 401 ? "Неверный токен" : String(err));
     }
   };
+  const submitForgot = async (e: Event): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    try {
+      await api("/v1/auth/forgot", { body: { email } });
+      setNotice("Если почта есть в списке, ссылку выдаёт суперадмин в карточке сотрудника. Письма с сервера пока не отправляются.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const submitReset = async (e: Event): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    try {
+      await api("/v1/auth/reset", { body: { token: decodeURIComponent(reset?.[1] ?? ""), password } });
+      setNotice("Пароль обновлён. Войдите по почте.");
+      setMode("email");
+      history.replaceState(null, "", `${location.pathname}${location.search}#/`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  };
   return (
-    <form class="login" onSubmit={submit}>
+    <form class="login" onSubmit={mode === "email" ? submitEmail : mode === "token" ? submitToken : mode === "forgot" ? submitForgot : submitReset}>
       <h1>Sinty</h1>
-      <p class="muted">
-        Токен API: <code>sinty token</code> или ссылка из <code>sinty web</code>.
-      </p>
-      <input type="password" autoFocus placeholder="snt_…" value={value} onInput={(e) => setValue(e.currentTarget.value)} />
-      <button type="submit" disabled={!value.trim()}>
-        Войти
-      </button>
+      {mode === "email" && (
+        <>
+          <input type="email" autoFocus placeholder="Почта" value={email} onInput={(e) => setEmail(e.currentTarget.value)} />
+          <input type="password" placeholder="Пароль" value={password} onInput={(e) => setPassword(e.currentTarget.value)} />
+          <button type="submit" disabled={!email.trim() || password.length < 8}>Войти</button>
+          <button type="button" onClick={() => { setMode("forgot"); setError(""); }}>Забыли пароль</button>
+          <button type="button" onClick={() => setMode("token")}>Войти токеном машины</button>
+        </>
+      )}
+      {mode === "token" && (
+        <>
+          <p class="muted">Токен API: <code>sinty token</code> или ссылка из <code>sinty web</code>.</p>
+          <input type="password" autoFocus placeholder="snt_…" value={value} onInput={(e) => setValue(e.currentTarget.value)} />
+          <button type="submit" disabled={!value.trim()}>Войти</button>
+          <button type="button" onClick={() => setMode("email")}>Войти по почте</button>
+        </>
+      )}
+      {mode === "forgot" && (
+        <>
+          <input type="email" autoFocus placeholder="Почта" value={email} onInput={(e) => setEmail(e.currentTarget.value)} />
+          <button type="submit" disabled={!email.trim()}>Запросить ссылку</button>
+          <button type="button" onClick={() => setMode("email")}>Назад</button>
+        </>
+      )}
+      {mode === "reset" && (
+        <>
+          <p class="muted">Новый пароль по ссылке восстановления.</p>
+          <input type="password" autoFocus placeholder="Новый пароль" value={password} onInput={(e) => setPassword(e.currentTarget.value)} />
+          <button type="submit" disabled={password.length < 8}>Сохранить</button>
+        </>
+      )}
+      {notice && <p class="muted">{notice}</p>}
       {error && <p class="error">{error}</p>}
     </form>
   );
@@ -72,8 +136,12 @@ function Shell() {
     setPending(p.pending);
   }, []);
 
+  const [me, setMe] = useState<Me>();
+  const can = (resource: string, action: AccessAction = "view"): boolean => Boolean(me?.can[resource]?.[action]);
+
   useEffect(() => {
     void api<AgentInfo>("/v1/agent").then(setAgent);
+    void api<Me>("/v1/auth/me").then(setMe);
     void refresh();
     return subscribe(
       () => "/v1/stream",
@@ -192,6 +260,7 @@ function Shell() {
   const loose = chats.filter((s) => !s.projectId);
 
   return (
+    <AccessContext.Provider value={me}>
     <div class={`shell ${leftOpen ? "" : "left-closed"}`}>
       <aside class="side">
         {leftOpen ? (
@@ -205,10 +274,10 @@ function Shell() {
               <div class={`side-track ${settingsOn || agentsOn ? "settings" : ""}`}>
                 <div class="side-pane">
                   <nav>
-                    <a class={route.page === "agents" ? "on" : ""} href={href({ page: "agents" })}>Агенты</a>
-                    {hasKanban && <a class={route.page === "board" ? "on" : ""} href={href({ page: "board" })}>Канбан</a>}
-                    {hasScheduler && <a class={route.page === "calendar" ? "on" : ""} href={href({ page: "calendar" })}>Календарь</a>}
-                    {sideTabs.map((t) => (
+                    {can("nav:agents") && <a class={route.page === "agents" ? "on" : ""} href={href({ page: "agents" })}>Агенты</a>}
+                    {hasKanban && can("nav:board") && <a class={route.page === "board" ? "on" : ""} href={href({ page: "board" })}>Канбан</a>}
+                    {hasScheduler && can("nav:calendar") && <a class={route.page === "calendar" ? "on" : ""} href={href({ page: "calendar" })}>Календарь</a>}
+                    {sideTabs.filter((t) => can(sideTabResource(t.plugin))).map((t) => (
                       <a key={`${t.plugin}/${t.id}`} class={route.page === "tab" && route.plugin === t.plugin && route.tab === t.id ? "on" : ""} href={href({ page: "tab", plugin: t.plugin, tab: t.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>
                     ))}
                   </nav>
@@ -251,13 +320,13 @@ function Shell() {
                       })}
                     </div>
                   )}
-                  <div class="proj-head">
-                    <button class="nav-item" onClick={() => toggleProjectOpen("__all")}><IconChevron /> Проекты</button>
-                    <button class="icon" title="Новый проект" onClick={() => setProjectDraft("")}><IconPlus /></button>
-                  </div>
+                  {(can("nav:projects") || can("nav:chats")) && <div class="proj-head">
+                    <button class="nav-item" onClick={() => toggleProjectOpen("__all")}><IconChevron /> {can("nav:projects") ? "Проекты" : "Чаты"}</button>
+                    {can("nav:projects", "add") && <button class="icon" title="Новый проект" onClick={() => setProjectDraft("")}><IconPlus /></button>}
+                  </div>}
                   {openProjects.includes("__all") && (
                     <div class="projects">
-                      {projects.map((p) => (
+                      {can("nav:projects") && projects.map((p) => (
                         <div key={p.id}>
                           <div class="proj-line">
                             <button class="nav-item" onClick={() => { toggleProjectOpen(p.id); chooseProject(p.id); }}><IconFolder /> <span class="title">{p.name}</span></button>
@@ -268,8 +337,8 @@ function Shell() {
                           ))}
                         </div>
                       ))}
-                      <button class="nav-item" onClick={() => toggleProjectOpen("__loose")}><IconFolder /> Вне проекта</button>
-                      {openProjects.includes("__loose") && loose.map((s) => (
+                      {can("nav:chats") && <button class="nav-item" onClick={() => toggleProjectOpen("__loose")}><IconFolder /> Вне проекта</button>}
+                      {can("nav:chats") && openProjects.includes("__loose") && loose.map((s) => (
                         <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
                       ))}
                     </div>
@@ -279,10 +348,11 @@ function Shell() {
                   <button class="nav-item" onClick={() => go({ page: "chat" })}><IconBack /> Назад</button>
                   {agentsOn ? <AgentNav current={route.page === "agents" ? route.agentId : undefined} /> : (
                     <nav>
-                      <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>
-                      <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>
-                      <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>
+                      {can("nav:settings") && <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>}
+                      {can("nav:settings") && <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>}
+                      {can("nav:plugins") && <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>}
                       <a class={settingsOn && route.section === "uikit" ? "on" : ""} href={href({ page: "settings", section: "uikit" })}>UI Kit</a>
+                      {can("nav:staff") && <a class={settingsOn && route.section === "staff" ? "on" : ""} href={href({ page: "settings", section: "staff" })}>Сотрудники</a>}
                       {sections.map((x) => (
                         <a key={x.id} class={settingsOn && route.section === x.id ? "on" : ""} href={href({ page: "settings", section: x.id })} title={x.owner === "plugin" ? `Настройки плагина ${x.plugin}` : undefined}>{x.title}</a>
                       ))}
@@ -293,8 +363,8 @@ function Shell() {
             </div>
             <footer class="side-foot">
               <button class="icon" title="Тема" onClick={toggleTheme}>{theme === "dark" ? <IconSun /> : <IconMoon />}</button>
-              <button onClick={() => { token.clear(); location.reload(); }}>Выйти</button>
-              <button class="icon" title="Настройки" onClick={() => go({ page: "settings", section: "general" })}><IconGear /></button>
+              <button onClick={() => { if (userSession.get()) userSession.clear(); else token.clear(); location.reload(); }}>Выйти</button>
+              <button class="icon" title="Настройки" onClick={() => go({ page: "settings", section: firstSection(can) })}><IconGear /></button>
             </footer>
           </>
         ) : (
@@ -312,11 +382,11 @@ function Shell() {
       </aside>
       <main class="main">
         {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} tabs={sessionTabs} /> : <Empty onNew={newChat} />)}
-        {route.page === "board" && <Board />}
-        {route.page === "agents" && <AgentsPage agentId={route.agentId} />}
-        {route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
-        {route.page === "calendar" && <CalendarPage />}
-        {route.page === "tab" && (openTab ? <PluginTab key={`${openTab.plugin}/${openTab.id}`} tab={openTab} /> : <div class="empty"><p>Вкладка плагина {route.plugin} не найдена: плагин выключен или не запущен.</p></div>)}
+        {me && route.page === "board" && (can("nav:board") ? <Board /> : <Denied />)}
+        {me && route.page === "agents" && (can("nav:agents") ? <AgentsPage agentId={route.agentId} /> : <Denied />)}
+        {me && route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
+        {me && route.page === "calendar" && (can("nav:calendar") ? <CalendarPage /> : <Denied />)}
+        {me && route.page === "tab" && (!can(sideTabResource(route.plugin)) ? <Denied /> : openTab ? <PluginTab key={`${openTab.plugin}/${openTab.id}`} tab={openTab} /> : <div class="empty"><p>Вкладка плагина {route.plugin} не найдена: плагин выключен или не запущен.</p></div>)}
       </main>
       <aside class="dock" />
       {projectDraft !== null && (
@@ -363,9 +433,14 @@ function Shell() {
         </div>
       )}
     </div>
+    </AccessContext.Provider>
   );
 }
 
+/** Plugin pages follow the panel item that shows them; the server applies the same mapping. */
+function sideTabResource(plugin: string): string {
+  return ({ kanban: "nav:board", scheduler: "nav:calendar", skills: "nav:skills", "mcp-catalog": "nav:mcp", "context-inspector": "nav:chats" } as Record<string, string>)[plugin] ?? "nav:plugins";
+}
 function AgentNav({ current }: { current?: string }) {
   const [rows, setRows] = useState<{ id: string; name: string; specialization: string; summary: string; avatar: string }[]>([]);
   const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);

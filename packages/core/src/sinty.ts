@@ -7,6 +7,7 @@ import { scrubText, type SupervisorSettings } from "@sinty/supervisor";
 import { DEFAULT_AGENTS_MD, DEFAULT_CONFIG_YAML, DEFAULT_POLICY_YAML, effectiveBudget, loadConfig, loadPolicy, withDefaultPlugins, type SintyConfig, type SintyPolicy } from "./config.js";
 import { PluginHost } from "./host/host.js";
 import { newId } from "./ids.js";
+import { Accounts } from "./accounts.js";
 import { Journal } from "./journal.js";
 import { MemoryRouter } from "./memory-router.js";
 import { ModelGateway } from "./models.js";
@@ -71,6 +72,7 @@ export class Sinty {
   readonly policy: SintyPolicy;
   readonly secrets: SecretStore;
   readonly journal: Journal;
+  readonly accounts: Accounts;
   readonly bus = new Bus();
   readonly host: PluginHost;
   readonly patches: PatchManager;
@@ -89,6 +91,7 @@ export class Sinty {
     this.policy = { ...loadPolicy(this.paths), ...opts.policy };
     this.secrets = new SecretStore(this.paths);
     this.journal = new Journal(this.paths.journal, (t) => this.secrets.redact(t));
+    this.accounts = new Accounts(this.paths.accounts);
     this.host = new PluginHost(this.paths, this.config, this.policy, this.secrets, {
       log: (plugin, level, msg, data) => this.log(level, `[${plugin}] ${msg}`, data),
       loaded: (plugin, version) => this.log("info", `plugin ${plugin}@${version} ready`),
@@ -232,6 +235,7 @@ export class Sinty {
     this.host.stop();
     await this.memory.close();
     this.journal.close();
+    this.accounts.close();
   }
 
   private reembed: { controller: AbortController; done: Promise<void> } | undefined;

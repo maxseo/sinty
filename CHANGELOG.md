@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Staff accounts: the first person created in Settings → Сотрудники is the superadmin. Roles grant view/add/edit/delete on panel sections and on each project. Sign-in is email and password; a one-hour reset link is issued from the employee row, and `sinty user password` sets a password from the server. The machine token from `sinty web` still has full access. A role with the «Сотрудники» box manages staff but cannot assign or touch a superadmin or widen its own rights; panel items without «Смотреть» are hidden, and the API refuses them too.
 ### Changed
 - Stop bumps the turn generation before aborting. A tool result that arrives afterwards is journaled as `tool.call.failed` (`stale_turn`) without its payload, so the next turn does not treat it as success.
 - Chat composer: one click or a retry of the same text reuses one idempotency key, so a double-click does not open a second turn.

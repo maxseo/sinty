@@ -12,6 +12,8 @@ export interface SintyPaths {
   secrets: string;
   secretKey: string;
   journal: string;
+  /** Staff, roles and grants. Not the event journal. */
+  accounts: string;
   blobs: string;
   plugins: string;
   bundledPlugins: string;
@@ -23,7 +25,7 @@ export interface SintyPaths {
 
 /** Files only the core may touch. A plugin permission covering any of them is rejected. */
 export function coreOwnedPaths(p: SintyPaths): string[] {
-  return [p.config, p.policy, p.agents, p.secrets, p.secretKey, p.journal, p.blobs, p.install];
+  return [p.config, p.policy, p.agents, p.secrets, p.secretKey, p.journal, p.accounts, p.blobs, p.install];
 }
 
 /** Install root: `SINTY_INSTALL_ROOT`, else the nearest parent that has `integrity.json` or the repo workspace file. */
@@ -51,6 +53,7 @@ export function resolvePaths(home?: string): SintyPaths {
     secrets: join(h, "secrets.json"),
     secretKey: join(h, "secret.key"),
     journal: join(h, "journal.db"),
+    accounts: join(h, "accounts.db"),
     blobs: join(h, "blobs"),
     plugins: join(h, "plugins"),
     bundledPlugins: join(install, "plugins"),
