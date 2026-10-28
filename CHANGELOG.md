@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Chat composer: one click or a retry of the same text reuses one idempotency key, so a double-click does not open a second turn.
 - Scheduler: `schedule.create` takes `delaySeconds` for a one-shot delay, `at` for a clock time, and `cron` for a repeat. `sessionId` defaults to the current chat. Tick default is 1s.
 - Scheduler calendar: month grid in the sidebar («Календарь») reads `GET /p/scheduler/occurrences`. Settings sidebar holds **UI Kit** (was the main-nav «Набор»). Old `#/kit` opens Settings → UI Kit.
 - Kanban is a project board: columns Бэклог / К выполнению / В работе / Проверка / Готово, roster assignee and reviewer, dependencies, priority, label, and `notify` `chat` or `none`. Dragging a running card out of «В работе» interrupts it. Skill `kanban-lead`.
