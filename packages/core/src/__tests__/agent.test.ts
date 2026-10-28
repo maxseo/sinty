@@ -181,6 +181,30 @@ test("a crashing plugin fails only the call; the plugin restarts", async () => {
   }
 });
 
+test("a result that arrives after Stop is discarded and is not a successful tool result", async () => {
+  const { home, cleanup } = tempHome();
+  const sinty = await boot(home, [{ toolCalls: [{ name: "sleep__long", args: { ms: 30_000 } }] }, { text: "should not run" }], { policy: allowAll });
+  try {
+    const s = sinty.agent.createSession();
+    const { turnId } = sinty.agent.send(s.id, "sleep");
+    await sleep(300);
+    assert.ok(await sinty.agent.interrupt(s.id));
+    const events = sinty.journal.events(s.id);
+    assert.equal(sinty.journal.getTurn(turnId)?.status, "interrupted");
+    assert.equal(events.some((e) => e.type === "tool.call.completed"), false);
+    assert.equal(find<{ code: string; message: string }>(events, "tool.call.failed")?.code, "stale_turn");
+    assert.equal(events.some((e) => e.type === "message.agent"), false);
+    sinty.agent.send(s.id, "next");
+    await sinty.agent.idle();
+    const again = sinty.journal.events(s.id);
+    assert.equal(again.filter((e) => e.type === "tool.call.completed").length, 0);
+    assert.equal(again.filter((e) => e.type === "turn.started").length, 2);
+  } finally {
+    await sinty.stop();
+    cleanup();
+  }
+});
+
 test("interrupt stops a running tool and ends the turn", async () => {
   const { home, cleanup } = tempHome();
   const sinty = await boot(home, [{ toolCalls: [{ name: "sleep__long", args: { ms: 30_000 } }] }], { policy: allowAll });
