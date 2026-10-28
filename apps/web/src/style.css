@@ -1201,3 +1201,46 @@ button.icon:hover:not(:disabled) {
   margin: 0 16px 8px;
 }
 
+/* Settings → Сотрудники */
+.seg-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 16px; }
+.seg-tabs button {
+  height: 40px;
+  padding: 0 14px;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  font-weight: 500;
+}
+.seg-tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
+.seg-tabs button.on { color: var(--text); font-weight: 650; border-bottom-color: var(--accent); }
+.staff-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.staff-toolbar input { flex: 1; max-width: 360px; }
+.staff-table { border: 1px solid var(--line); border-radius: 12px; border-collapse: separate; border-spacing: 0; overflow: hidden; background: var(--panel); }
+.staff-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--hover); }
+.staff-table td { padding: 10px 12px; vertical-align: middle; }
+.staff-table tbody tr:last-child td { border-bottom: none; }
+.staff-table .center { text-align: center; }
+.staff-table select { height: 32px; min-width: 160px; }
+.staff-actions { text-align: right; white-space: nowrap; }
+.staff-actions button + button { margin-left: 6px; }
+.staff-person { display: flex; align-items: center; gap: 10px; }
+.staff-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex: none; display: inline-flex; align-items: center; justify-content: center; background: var(--hover); border: 1px solid var(--line); font-size: 12px; font-weight: 650; }
+.staff-role { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; }
+.staff-card { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.staff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.file-pick { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; }
+.file-pick:hover { background: var(--hover); }
+.rights { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; align-items: start; }
+.rights-roles { display: grid; gap: 2px; border: 1px solid var(--line); border-radius: 12px; padding: 6px; background: var(--panel); }
+.rights-roles button { justify-content: flex-start; height: 36px; padding: 0 10px; background: transparent; color: var(--text); font-weight: 500; }
+.rights-roles button:hover:not(:disabled) { background: var(--hover); }
+.rights-roles button.on { background: var(--hover); font-weight: 650; box-shadow: inset 2px 0 0 var(--accent); }
+.rights-body { display: grid; gap: 16px; }
+.rights-table th:not(:first-child), .rights-table td:not(:first-child) { width: 92px; }
+@media (max-width: 720px) {
+  .rights, .staff-grid { grid-template-columns: 1fr; }
+}
+

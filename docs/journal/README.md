@@ -48,6 +48,8 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-28 | [Staff access fix](2026-10-28-staff-access-fix.md) | (open) | Admins run staff without superadmin powers; hidden sections; rotate, plugin, settings and stream routes check roles. |
+| 2026-10-28 | [Staff accounts](2026-10-28-staff-accounts.md) | (open) | Superadmin, roles, per-project grants, reset link. Machine token unchanged. |
 | 2026-10-27 | [Turn generation on Stop](2026-10-27-turn-generation.md) | (open) | A tool result after Stop is `stale_turn`, without its payload. |
 | 2026-10-27 | [One send, one turn](2026-10-27-send-once.md) | (open) | Composer reuses one idempotency key and ignores a second click. |
 | 2026-10-27 | [One-shot delay in seconds](2026-10-27-scheduler-delay-seconds.md) | (open) | `delaySeconds` wakes this chat; cron stays the repeat. Policy allows the tool. |

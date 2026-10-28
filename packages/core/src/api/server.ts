@@ -10,6 +10,7 @@ import { scrubText } from "@sinty/supervisor";
 import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
 import { saveBlob } from "../blobs.js";
+import { AccountError, NAV_RESOURCES, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
 import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
@@ -86,7 +87,7 @@ export function createApp(sinty: Sinty): Hono {
   const guard = (c: Context) => {
     const t = given(c);
     return {
-      valid: () => valid(t),
+      valid: () => valid(t) || Boolean(sinty.accounts.userByToken(t)),
       register: (check: () => void) => {
         streams.add(check);
         return () => void streams.delete(check);
@@ -97,15 +98,216 @@ export function createApp(sinty: Sinty): Hono {
 
   app.onError((err, c) => {
     if (err instanceof AgentError) return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
+    if (err instanceof AccountError) return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
     return c.json({ error: { code: "internal", message: err.message } }, 500);
   });
+
+  type ActorAuth = { kind: "machine" } | { kind: "user"; user: AccountUser };
+  const actors = new WeakMap<Context, ActorAuth>();
+  const OPEN_AUTH = new Set(["/v1/auth/login", "/v1/auth/forgot", "/v1/auth/reset", "/v1/auth/setup"]);
+  const actorOf = (c: Context): ActorAuth | undefined => actors.get(c);
+  /** A project box counts only while the role still sees «Проекты» in the panel. */
+  const allows = (c: Context, resource: string, action: AccessAction): boolean => {
+    const a = actorOf(c);
+    if (!a || a.kind === "machine") return true;
+    if (resource.startsWith("project:") && !sinty.accounts.allows(a.user, "nav:projects", "view")) return false;
+    return sinty.accounts.allows(a.user, resource, action);
+  };
+  const forbid = (c: Context): Response => c.json({ error: { code: "forbidden", message: "Недостаточно прав." } }, 403);
+  const superadmin = (c: Context): boolean => {
+    const a = actorOf(c);
+    return !a || a.kind === "machine" || a.user.system;
+  };
+  const sessionResource = (sessionId: string): string | undefined => {
+    const s = sinty.journal.getSession(sessionId);
+    if (!s) return undefined;
+    return s.projectId ? `project:${s.projectId}` : "nav:chats";
+  };
+  const seesSession = (c: Context, sessionId: string): boolean => {
+    const r = sessionResource(sessionId);
+    return r ? allows(c, r, "view") : superadmin(c);
+  };
+  /** Settings sections that are not install-wide belong to the panel item they configure. */
+  const sectionResource = (id: string): string => (id === "plugin.skills" ? "nav:skills" : id === "plugin.mcp-catalog" ? "nav:mcp" : "nav:settings");
+  /** Plugin HTTP routes follow the sidebar item that shows them. */
+  const pluginResource = (name: string): string =>
+    ({ kanban: "nav:board", scheduler: "nav:calendar", skills: "nav:skills", "mcp-catalog": "nav:mcp", "context-inspector": "nav:chats" } as Record<string, string>)[name] ?? "nav:plugins";
+  const methodAction = (method: string): AccessAction => (method === "GET" || method === "HEAD" ? "view" : method === "DELETE" ? "delete" : method === "POST" ? "add" : "edit");
+
+  /** Route-level rules for signed-in people. Session and project routes check their own resource further down. */
+  const ROUTE_RULES: { method: string; path: RegExp; need: { resource: string; action: AccessAction } | "superadmin" }[] = [
+    { method: "POST", path: /^\/v1\/auth\/rotate$/, need: "superadmin" },
+    { method: "GET", path: /^\/v1\/registry$/, need: { resource: "nav:plugins", action: "view" } },
+    { method: "POST", path: /^\/v1\/models\/discover$/, need: { resource: "nav:settings", action: "edit" } },
+    { method: "PUT", path: /^\/v1\/models$/, need: { resource: "nav:settings", action: "edit" } },
+    { method: "POST", path: /^\/v1\/skills\/install$/, need: { resource: "nav:skills", action: "add" } },
+    { method: "POST", path: /^\/v1\/roster\/agents$/, need: { resource: "nav:agents", action: "add" } },
+    { method: "PUT", path: /^\/v1\/roster\/agents\/[^/]+$/, need: { resource: "nav:agents", action: "edit" } },
+    { method: "DELETE", path: /^\/v1\/roster\/agents\/[^/]+$/, need: { resource: "nav:agents", action: "delete" } },
+    { method: "POST", path: /^\/v1\/plugins\/install$/, need: { resource: "nav:plugins", action: "add" } },
+    { method: "POST", path: /^\/v1\/plugins\/mcp$/, need: { resource: "nav:mcp", action: "add" } },
+    { method: "PUT", path: /^\/v1\/plugins\/shared$/, need: { resource: "nav:plugins", action: "edit" } },
+  ];
 
   app.get("/v1/health", (c) => c.json({ ok: true, protocol: PROTOCOL_VERSION }));
 
   app.use("/v1/*", async (c, next) => {
     if (c.req.path === "/v1/health") return next();
-    if (!authorized(c)) return unauthorized(c);
+    if (OPEN_AUTH.has(c.req.path)) return next();
+    const t = given(c);
+    if (valid(t)) {
+      actors.set(c, { kind: "machine" });
+      return next();
+    }
+    const user = sinty.accounts.userByToken(t);
+    if (!user) return unauthorized(c);
+    actors.set(c, { kind: "user", user });
+    if (!user.system) {
+      const rule = ROUTE_RULES.find((r) => r.method === c.req.method && r.path.test(c.req.path));
+      if (rule && (rule.need === "superadmin" || !allows(c, rule.need.resource, rule.need.action))) return forbid(c);
+    }
     return next();
+  });
+
+  /** Staff screens: superadmin, or a role with that box on «Сотрудники». */
+  const staffMay = (c: Context, action: AccessAction): boolean => superadmin(c) || allows(c, "nav:staff", action);
+  const actorUser = (c: Context): AccountUser | undefined => {
+    const a = actorOf(c);
+    return a?.kind === "user" ? a.user : undefined;
+  };
+  /** A non-superadmin may not hand out the superadmin role or touch a superadmin account. */
+  const guardStaffTarget = (c: Context, opts: { userId?: string; roleId?: string }): void => {
+    if (superadmin(c)) return;
+    if (opts.roleId && sinty.accounts.roleIsSystem(opts.roleId)) throw new AccountError("forbidden", "Роль суперадмина назначает только суперадмин.", 403);
+    if (opts.userId && sinty.accounts.user(opts.userId).system) throw new AccountError("forbidden", "Учётку суперадмина меняет только суперадмин.", 403);
+  };
+
+  app.get("/v1/auth/setup", (c) => c.json({ needed: !sinty.accounts.hasUsers() }));
+
+  app.post("/v1/auth/setup", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string; password?: string; firstName?: string; lastName?: string };
+    const created = sinty.accounts.setup({ email: body.email ?? "", password: body.password ?? "", ...(body.firstName !== undefined ? { firstName: body.firstName } : {}), ...(body.lastName !== undefined ? { lastName: body.lastName } : {}) });
+    c.header("cache-control", "no-store");
+    return c.json(created, 201);
+  });
+
+  app.post("/v1/auth/login", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string; password?: string };
+    const session = sinty.accounts.login(body.email ?? "", body.password ?? "");
+    c.header("cache-control", "no-store");
+    return c.json(session);
+  });
+
+  app.post("/v1/auth/logout", (c) => {
+    sinty.accounts.logout(given(c));
+    return c.json({ ok: true });
+  });
+
+  app.post("/v1/auth/forgot", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string };
+    sinty.accounts.forgot(body.email ?? "");
+    return c.json({ ok: true, delivery: "admin" as const });
+  });
+
+  app.post("/v1/auth/reset", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { token?: string; password?: string };
+    sinty.accounts.resetPassword(body.token ?? "", body.password ?? "");
+    return c.json({ ok: true });
+  });
+
+  app.get("/v1/auth/me", (c) => {
+    const a = actorOf(c);
+    const all = Object.fromEntries(NAV_RESOURCES.map((n) => [n.id, { resource: n.id, view: true, add: true, edit: true, delete: true }]));
+    if (!a || a.kind === "machine") return c.json({ kind: "machine", superadmin: true, can: all, nav: NAV_RESOURCES });
+    return c.json({ kind: "user", superadmin: a.user.system, user: a.user, can: sinty.accounts.capabilities(a.user), nav: NAV_RESOURCES });
+  });
+
+  app.get("/v1/accounts/users", (c) => {
+    if (!staffMay(c, "view")) return forbid(c);
+    return c.json({ users: sinty.accounts.listUsers() });
+  });
+  app.post("/v1/accounts/users", async (c) => {
+    if (!staffMay(c, "add")) return forbid(c);
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string; password?: string; firstName?: string; lastName?: string; avatar?: string; roleId?: string; enabled?: boolean };
+    guardStaffTarget(c, { roleId: body.roleId ?? "" });
+    return c.json(sinty.accounts.createUser({
+      email: body.email ?? "",
+      password: body.password ?? "",
+      roleId: body.roleId ?? "",
+      ...(body.firstName !== undefined ? { firstName: body.firstName } : {}),
+      ...(body.lastName !== undefined ? { lastName: body.lastName } : {}),
+      ...(body.avatar !== undefined ? { avatar: body.avatar } : {}),
+      ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+    }), 201);
+  });
+  app.patch("/v1/accounts/users/:id", async (c) => {
+    if (!staffMay(c, "edit")) return forbid(c);
+    const body = (await c.req.json().catch(() => ({}))) as { firstName?: string; lastName?: string; avatar?: string; roleId?: string; enabled?: boolean; password?: string };
+    guardStaffTarget(c, { userId: c.req.param("id"), ...(body.roleId ? { roleId: body.roleId } : {}) });
+    const self = actorUser(c);
+    if (self && !self.system && self.id === c.req.param("id") && (body.roleId !== undefined || body.enabled !== undefined)) {
+      throw new AccountError("forbidden", "Свою роль и включение меняет другой администратор.", 403);
+    }
+    const patch: { firstName?: string; lastName?: string; avatar?: string; roleId?: string; enabled?: boolean; password?: string } = {};
+    if (body.firstName !== undefined) patch.firstName = body.firstName;
+    if (body.lastName !== undefined) patch.lastName = body.lastName;
+    if (body.avatar !== undefined) patch.avatar = body.avatar;
+    if (body.roleId !== undefined) patch.roleId = body.roleId;
+    if (body.enabled !== undefined) patch.enabled = body.enabled;
+    if (body.password !== undefined) patch.password = body.password;
+    return c.json(sinty.accounts.updateUser(c.req.param("id"), patch));
+  });
+  app.delete("/v1/accounts/users/:id", (c) => {
+    if (!staffMay(c, "delete")) return forbid(c);
+    guardStaffTarget(c, { userId: c.req.param("id") });
+    if (actorUser(c)?.id === c.req.param("id")) throw new AccountError("forbidden", "Себя удалить нельзя.", 403);
+    sinty.accounts.deleteUser(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  app.post("/v1/accounts/users/:id/reset-link", (c) => {
+    if (!staffMay(c, "edit")) return forbid(c);
+    guardStaffTarget(c, { userId: c.req.param("id") });
+    const token = sinty.accounts.resetLink(c.req.param("id"));
+    c.header("cache-control", "no-store");
+    return c.json({ token, path: `#/reset/${token}` });
+  });
+
+  app.get("/v1/accounts/roles", (c) => {
+    if (!staffMay(c, "view")) return forbid(c);
+    return c.json({ roles: sinty.accounts.listRoles(), nav: NAV_RESOURCES });
+  });
+  app.post("/v1/accounts/roles", async (c) => {
+    if (!staffMay(c, "add")) return forbid(c);
+    const body = (await c.req.json().catch(() => ({}))) as { name?: string };
+    return c.json(sinty.accounts.createRole(body.name ?? ""), 201);
+  });
+  app.delete("/v1/accounts/roles/:id", (c) => {
+    if (!staffMay(c, "delete")) return forbid(c);
+    if (actorUser(c)?.roleId === c.req.param("id") && !superadmin(c)) throw new AccountError("forbidden", "Свою роль удалить нельзя.", 403);
+    sinty.accounts.deleteRole(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  app.get("/v1/accounts/roles/:id/grants", (c) => {
+    if (!staffMay(c, "view")) return forbid(c);
+    return c.json({ grants: sinty.accounts.grants(c.req.param("id")) });
+  });
+  app.put("/v1/accounts/roles/:id/grants", async (c) => {
+    if (!staffMay(c, "edit")) return forbid(c);
+    const roleId = c.req.param("id");
+    const body = (await c.req.json().catch(() => ({}))) as { grants?: Grant[] };
+    const self = actorUser(c);
+    if (self && !self.system) {
+      if (self.roleId === roleId) throw new AccountError("forbidden", "Права своей роли меняет другой администратор.", 403);
+      for (const g of body.grants ?? []) {
+        for (const action of ["view", "add", "edit", "delete"] as const) {
+          if (g[action] && !sinty.accounts.allows(self, g.resource, action)) {
+            throw new AccountError("forbidden", "Нельзя выдать право, которого нет у вас.", 403);
+          }
+        }
+      }
+    }
+    sinty.accounts.saveGrants(roleId, body.grants ?? []);
+    return c.json({ ok: true });
   });
 
   /** New login token; the caller (already signed in with the old one) gets it once in the answer. */
@@ -131,6 +333,7 @@ export function createApp(sinty: Sinty): Hono {
   });
 
   app.get("/v1/settings", (c) => {
+    if (!allows(c, "nav:settings", "view") && !allows(c, "nav:plugins", "view")) return forbid(c);
     const enabled = new Set(sinty.config.plugins.enabled);
     // Registry + home (+ searchPaths) so Settings → Plugins lists opt-in-off and custom installs.
     const catalog = discoverPlugins(sinty.paths, sinty.config.plugins.searchPaths);
@@ -156,6 +359,13 @@ export function createApp(sinty: Sinty): Hono {
     if (!body || typeof body.model !== "string" || !Array.isArray(body.enabled)) {
       throw new AgentError("bad_request", "model and enabled are required");
     }
+    const pluginsChanged =
+      body.enabled.length !== sinty.config.plugins.enabled.length || body.enabled.some((x) => !sinty.config.plugins.enabled.includes(String(x)));
+    const installChanged =
+      body.model !== (sinty.config.models.default ?? "") ||
+      ["fallback", "agentsMd", "serviceModel", "compress", "facts", "stallSeconds"].some((k) => (body as Record<string, unknown>)[k] !== undefined);
+    if (pluginsChanged && !allows(c, "nav:plugins", "edit")) return forbid(c);
+    if (installChanged && !allows(c, "nav:settings", "edit")) return forbid(c);
     // Omit fallback → preserve models.fallback (Models tab used to send [] and wipe it).
     const fallback = Array.isArray(body.fallback) ? body.fallback.filter((x): x is string => typeof x === "string") : undefined;
     const enabled = body.enabled.filter((x): x is string => typeof x === "string");
@@ -353,9 +563,12 @@ export function createApp(sinty: Sinty): Hono {
     return c.json({ ok: true });
   });
 
-  app.get("/v1/roster/projects", (c) => c.json({ projects: listProjects(sinty.paths) }));
+  app.get("/v1/roster/projects", (c) =>
+    c.json({ projects: allows(c, "nav:projects", "view") ? listProjects(sinty.paths).filter((p) => allows(c, `project:${p.id}`, "view")) : [] }),
+  );
 
   app.post("/v1/roster/projects", async (c) => {
+    if (!allows(c, "nav:projects", "add")) return forbid(c);
     const body = (await c.req.json().catch(() => ({}))) as { name?: string; leadId?: string; agentIds?: string[] };
     try {
       return c.json(saveProject(sinty.paths, { name: body.name ?? "", ...(body.leadId !== undefined ? { leadId: body.leadId } : {}), ...(body.agentIds ? { agentIds: body.agentIds } : {}) }), 201);
@@ -365,6 +578,7 @@ export function createApp(sinty: Sinty): Hono {
   });
 
   app.put("/v1/roster/projects/:id", async (c) => {
+    if (!allows(c, `project:${c.req.param("id")}`, "edit")) return forbid(c);
     const body = (await c.req.json().catch(() => ({}))) as { name?: string; leadId?: string; agentIds?: string[] };
     try {
       return c.json(saveProject(sinty.paths, { id: c.req.param("id"), name: body.name ?? "", ...(body.leadId !== undefined ? { leadId: body.leadId } : {}), ...(body.agentIds ? { agentIds: body.agentIds } : {}) }));
@@ -374,6 +588,7 @@ export function createApp(sinty: Sinty): Hono {
   });
 
   app.delete("/v1/roster/projects/:id", (c) => {
+    if (!allows(c, `project:${c.req.param("id")}`, "delete")) return forbid(c);
     deleteProject(sinty.paths, c.req.param("id"));
     return c.json({ ok: true });
   });
@@ -423,10 +638,28 @@ export function createApp(sinty: Sinty): Hono {
 
   app.post("/v1/sessions", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { title?: string; projectId?: string; metadata?: Record<string, unknown> };
+    const resource = body.projectId ? `project:${body.projectId}` : "nav:chats";
+    if (!allows(c, resource, "add")) return forbid(c);
     return c.json(sessionInfo(sinty.journal, sinty.agent.createSession(body)), 201);
   });
 
-  app.get("/v1/sessions", (c) => c.json({ sessions: sinty.journal.listSessions(Number(c.req.query("limit") ?? 100)).map((s) => sessionInfo(sinty.journal, s)) }));
+  app.get("/v1/sessions", (c) => c.json({
+    sessions: sinty.journal.listSessions(Number(c.req.query("limit") ?? 100))
+      .filter((s) => allows(c, s.projectId ? `project:${s.projectId}` : "nav:chats", "view"))
+      .map((s) => sessionInfo(sinty.journal, s)),
+  }));
+
+  app.use("/v1/sessions/:id", async (c, next) => {
+    const s = sinty.journal.getSession(c.req.param("id"));
+    const action: AccessAction = c.req.method === "GET" ? "view" : c.req.method === "DELETE" ? "delete" : "edit";
+    if (s && !allows(c, s.projectId ? `project:${s.projectId}` : "nav:chats", action)) return forbid(c);
+    return next();
+  });
+  app.use("/v1/sessions/:id/*", async (c, next) => {
+    const s = sinty.journal.getSession(c.req.param("id"));
+    if (s && !allows(c, s.projectId ? `project:${s.projectId}` : "nav:chats", c.req.method === "GET" ? "view" : "edit")) return forbid(c);
+    return next();
+  });
 
   app.delete("/v1/sessions/:id", (c) => {
     if (!sinty.journal.deleteSession(c.req.param("id"))) throw new AgentError("not_found", "session not found", 404);
@@ -524,7 +757,7 @@ export function createApp(sinty: Sinty): Hono {
     c.json({
       pending: sinty.journal
         .activeTurns()
-        .filter((t) => t.status === "blocked")
+        .filter((t) => t.status === "blocked" && seesSession(c, t.sessionId))
         .map((t) => {
           const p = sinty.agent.pending(t.sessionId);
           if (!p) return null;
@@ -547,6 +780,7 @@ export function createApp(sinty: Sinty): Hono {
    */
   app.get("/v1/supervisor", (c) => {
     const sessionId = c.req.query("sessionId");
+    if (sessionId ? !seesSession(c, sessionId) : !allows(c, "nav:settings", "view")) return forbid(c);
     const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 100) || 100, 1), 500);
     const clean = (t: string): string => sinty.secrets.redact(scrubText(t));
     const events = (sessionId ? sinty.journal.events(sessionId, { types: SUPERVISOR_EVENTS }).slice(-limit).reverse() : sinty.journal.recentEvents(SUPERVISOR_EVENTS, limit)).map((e) => {
@@ -578,9 +812,10 @@ export function createApp(sinty: Sinty): Hono {
     plugins: [...sinty.host.plugins.values()].map((p) => ({ name: p.name, ...(p.loaded.manifest.settings ? { settings: p.loaded.manifest.settings } : {}), ...(p.loaded.manifest.config ? { config: p.loaded.manifest.config } : {}) })),
   });
 
-  app.get("/v1/settings/sections", (c) => c.json({ sections: listSections(sectionSources()) }));
+  app.get("/v1/settings/sections", (c) => c.json({ sections: listSections(sectionSources()).filter((s) => allows(c, sectionResource(s.id), "view")) }));
 
   app.put("/v1/settings/sections/:id", async (c) => {
+    if (!allows(c, sectionResource(c.req.param("id")), "edit")) return forbid(c);
     const body = (await c.req.json().catch(() => null)) as { values?: unknown } | null;
     if (!body || !body.values || typeof body.values !== "object" || Array.isArray(body.values)) throw new AgentError("bad_request", "values is required");
     let saved: ReturnType<typeof saveSection>;
@@ -616,7 +851,7 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/v1/stream", (c) =>
     sse(c, (push) =>
       sinty.bus.subscribe((m) => {
-        if (m.kind === "journal" && OVERVIEW.has(m.event.type)) push(m.event);
+        if (m.kind === "journal" && OVERVIEW.has(m.event.type) && seesSession(c, m.event.sessionId)) push(m.event);
       }),
       guard(c),
     ),
@@ -641,7 +876,14 @@ export function createApp(sinty: Sinty): Hono {
       }
     }
     if (!found) return c.json({ error: { code: "not_found", message: `${method} ${rel} is not a route of ${name}` } }, 404);
-    if (!found.public && !authorized(c)) return unauthorized(c);
+    if (!found.public && !authorized(c)) {
+      const user = sinty.accounts.userByToken(given(c));
+      if (!user) return unauthorized(c);
+      const resource = pluginResource(name);
+      // Plugin POST routes both create and act on things, so either box lets them through.
+      const ok = method === "POST" ? sinty.accounts.allows(user, resource, "add") || sinty.accounts.allows(user, resource, "edit") : sinty.accounts.allows(user, resource, methodAction(method));
+      if (!ok) return forbid(c);
+    }
     const url = new URL(c.req.url);
     url.searchParams.delete("token");
     const search = url.searchParams.toString();

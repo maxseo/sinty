@@ -10,7 +10,7 @@ process.removeAllListeners("warning");
 process.on("warning", (w) => {
   if (!(w.name === "ExperimentalWarning" && /SQLite/.test(w.message))) console.warn(w);
 });
-const { decideSandbox, describeCompaction, evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadConfig, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, rotateApiToken, SecretStore, Sinty, startServer, TokenRotationError } = await import("@sinty/core");
+const { AccountError, Accounts, decideSandbox, describeCompaction, evalMemory, formatEval, checkIntegrity, hashInstall, initHome, loadConfig, loadRegistry, PROTOCOL_VERSION, readIntegrity, resolvePaths, rotateApiToken, SecretStore, Sinty, startServer, TokenRotationError } = await import("@sinty/core");
 
 const HELP = `sinty — thin-core AI agent
 
@@ -22,6 +22,7 @@ Usage:
                                    HTTP API and Web UI; prints a login URL with #token=
   sinty secret set <name> [value]  value from stdin when omitted
   sinty secret list | rm <name>
+  sinty user password <email> <new>  set an employee password from the server (no mail required)
   sinty token                      print the login token (for scripts: Authorization: Bearer …)
   sinty token rotate [--print]     new login token; the old one stops working at once, also in a
                                    running server; --print writes the new token to stdout
@@ -85,6 +86,8 @@ async function main(): Promise<number> {
       return secret(rest);
     case "token":
       return tokenCmd(rest);
+    case "user":
+      return userCmd(rest);
     case "doctor":
       return doctor();
     case "upgrade":
@@ -253,6 +256,25 @@ async function secret(args: string[]): Promise<number> {
   }
   console.error("usage: sinty secret set <name> [value] | list | rm <name>");
   return 2;
+}
+
+function userCmd(args: string[]): number {
+  const [sub, email, password] = args;
+  if (sub !== "password" || !email || !password) {
+    console.error("usage: sinty user password <email> <new-password>");
+    return 2;
+  }
+  const accounts = new Accounts(resolvePaths(values.home).accounts);
+  try {
+    accounts.setPassword(email, password);
+    console.log("password updated; old sessions for this person are closed");
+    return 0;
+  } catch (e) {
+    console.error(e instanceof AccountError ? e.message : e instanceof Error ? e.message : e);
+    return 1;
+  } finally {
+    accounts.close();
+  }
 }
 
 function tokenCmd(args: string[]): number {
