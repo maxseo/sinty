@@ -127,7 +127,7 @@ export interface AgentDeps {
 
 /** The turn loop. All state is derived from the journal, so the same code serves normal work, approvals and crash recovery. */
 export class Agent {
-  private readonly running = new Map<string, { controller: AbortController; done: Promise<void>; sessionId: string; pulseStall?: () => void }>();
+  private readonly running = new Map<string, { controller: AbortController; done: Promise<void>; sessionId: string; generation: number; pulseStall?: () => void }>();
   /** Live child sessions started by agent.task, keyed by parent session id. */
   private readonly childrenByParent = new Map<string, Set<string>>();
   /** Background taskId -> child session id (for agent.task_steer). */
@@ -324,6 +324,8 @@ export class Agent {
     // Snapshot children before abort: the blocking agent.task finally may unregister them as we unwind.
     const children = this.childSessionIds(sessionId);
     // Abort the parent first so a blocking agent.task cannot resume after its child ends, then cascade.
+    // Bump before abort so a tool result that lands after Stop is not journaled as success.
+    if (r) r.generation += 1;
     if (r) r.controller.abort();
     let any = Boolean(r);
     for (const childId of children) {
@@ -567,11 +569,13 @@ export class Agent {
   private launch(sessionId: string, turnId: string): void {
     if (this.running.has(turnId)) return;
     const controller = new AbortController();
-    const entry: { controller: AbortController; done: Promise<void>; sessionId: string; pulseStall?: () => void } = {
+    const entry: { controller: AbortController; done: Promise<void>; sessionId: string; generation: number; pulseStall?: () => void } = {
       controller,
       sessionId,
+      generation: 1,
       done: Promise.resolve(),
     };
+    this.running.set(turnId, entry);
     entry.done = this.advance(sessionId, turnId, controller.signal)
       .catch((e: unknown) => {
         this.d.log?.("error", `turn ${turnId} crashed`, e instanceof Error ? e.stack : e);
@@ -580,7 +584,6 @@ export class Agent {
         this.running.delete(turnId);
         this.flushPendingTaskTurn(sessionId);
       });
-    this.running.set(turnId, entry);
   }
 
   private async advance(sessionId: string, turnId: string, signal: AbortSignal): Promise<void> {
@@ -1129,17 +1132,47 @@ export class Agent {
     return p?.permissionsChanged ? `patch ${p.id} changes the permissions of plugin ${p.plugin}` : undefined;
   }
 
+  /** Generation captured when the call began. Stop increments it, so a late result no longer matches. */
+  private turnGeneration(turnId: string): number {
+    return this.running.get(turnId)?.generation ?? 0;
+  }
+
+  /** Journal a discard and tell the caller to stop the turn. The tool payload is not stored. */
+  private discardStale(sessionId: string, turnId: string, stepId: string, callId: string, gen: number): boolean {
+    if (this.turnGeneration(turnId) === gen) return false;
+    this.record({
+      sessionId,
+      turnId,
+      stepId,
+      type: "tool.call.failed",
+      actor: SYSTEM,
+      data: {
+        callId,
+        code: "stale_turn",
+        message: "Result discarded: it arrived after this turn was stopped.",
+        durationMs: 0,
+      },
+    });
+    return true;
+  }
+
   private async execute(sessionId: string, turnId: string, stepId: string, call: ToolCallRef, tool: Tool, signal: AbortSignal, alreadyStarted = false): Promise<"done"> {
     const base = { sessionId, turnId, stepId };
     const idempotencyKey = this.key(turnId, stepId, call.callId);
     if (!alreadyStarted) this.record({ ...base, type: "tool.call.started", actor: SYSTEM, data: { callId: call.callId, tool: tool.name, idempotencyKey } });
+    const gen = this.turnGeneration(turnId);
     const t0 = Date.now();
+    const stopped = (): never => {
+      throw new DOMException("interrupted", "AbortError");
+    };
 
     if (CORE_TOOL_NAMES.has(tool.name)) {
       try {
         const result = await this.runCoreTool(sessionId, tool.name, call.args, signal);
+        if (this.turnGeneration(turnId) !== gen || signal.aborted) stopped();
         this.record({ ...base, type: "tool.call.completed", actor: SYSTEM, data: { callId: call.callId, result, durationMs: Date.now() - t0 } });
       } catch (e) {
+        if (this.discardStale(sessionId, turnId, stepId, call.callId, gen)) stopped();
         if (signal.aborted || (e instanceof Error && e.name === "AbortError")) throw e instanceof Error ? e : new DOMException("interrupted", "AbortError");
         const err =
           e instanceof CoreToolError || e instanceof PatchError || e instanceof McpInstallError ? { code: e.code, message: e.message, hint: e.hint } : { code: "internal", message: e instanceof Error ? e.message : String(e), hint: undefined };
@@ -1159,7 +1192,8 @@ export class Agent {
       signal,
       onProgress: (p) => this.streamEvent({ type: "tool.call.progress", sessionId, turnId, ts: new Date().toISOString(), data: { callId: call.callId, ...p } }),
     });
-    if (signal.aborted) throw new DOMException("interrupted", "AbortError");
+    if (this.discardStale(sessionId, turnId, stepId, call.callId, gen)) stopped();
+    if (signal.aborted) stopped();
     const durationMs = Date.now() - t0;
     const actor: Actor = { kind: "plugin", id: owner.name };
     if (outcome.ok) this.record({ ...base, type: "tool.call.completed", actor, data: { callId: call.callId, result: outcome.content, durationMs } });

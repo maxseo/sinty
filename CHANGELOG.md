@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Stop bumps the turn generation before aborting. A tool result that arrives afterwards is journaled as `tool.call.failed` (`stale_turn`) without its payload, so the next turn does not treat it as success.
 - Chat composer: one click or a retry of the same text reuses one idempotency key, so a double-click does not open a second turn.
 - Scheduler: `schedule.create` takes `delaySeconds` for a one-shot delay, `at` for a clock time, and `cron` for a repeat. `sessionId` defaults to the current chat. Tick default is 1s.
 - Scheduler calendar: month grid in the sidebar («Календарь») reads `GET /p/scheduler/occurrences`. Settings sidebar holds **UI Kit** (was the main-nav «Набор»). Old `#/kit` opens Settings → UI Kit.
