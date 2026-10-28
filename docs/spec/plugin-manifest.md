@@ -1,5 +1,7 @@
 # Plugin manifest and patch pipeline
 
+Rules for writing a plugin, and how its screens become access rights: [plugin-rules.md](plugin-rules.md).
+
 Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-manifest.schema.json`](../../schemas/plugin-manifest.schema.json). Types: [`packages/sdk/src/plugin.ts`](../../packages/sdk/src/plugin.ts).
 
 ## Manifest
@@ -49,7 +51,7 @@ Every plugin is a folder with `sinty.plugin.json`. Schema: [`schemas/plugin-mani
 | `permissions.models` | model routes the plugin may call through `ctx.models` (`default`, `cheap`, `embed`, a `models.routes` key, or `*`) |
 | `permissions.context` | `["inspect"]`: receive a context snapshot of every model step through `ctx.onContextSnapshot`; also needs the plugin in config `plugins.inspect` (see `docs/spec/context-inspect.md`) |
 | `ui.static` | folder of static files served at `/ui/<name>/`, **only** when `editable` is `false` |
-| `ui.tabs` | up to 8 Web UI tabs `{ id, title, path, placement? }`; `placement` is `sidebar` (default: a page in the left navigation) or `session` (a view toggle in an open chat's header next to Чат/Журнал, told the chat's `sessionId`); `path` is a public GET route of the plugin shown in a sandboxed iframe; data only through the UI's `tab/1` postMessage bridge to the plugin's own routes (see `docs/spec/context-inspect.md`). `ui` needs `static`, `tabs` or both |
+| `ui.tabs` | up to 8 Web UI tabs `{ id, title, path \| builtin, placement? }`; each tab is an access right `ui:<plugin>/<id>` (see [plugin-rules.md](plugin-rules.md)); `placement` is `sidebar` (default: a page in the left navigation), `session` (a view toggle in an open chat's header next to Чат/Журнал, told the chat's `sessionId`) or `project` (a tab inside an open project, told its `projectId`); `path` is a public GET route of the plugin shown in a sandboxed iframe; `builtin` (`board`, `calendar`) names a page of the core Web UI instead; data only through the UI's `tab/1` postMessage bridge to the plugin's own routes (see `docs/spec/context-inspect.md`). `ui` needs `static`, `tabs` or both |
 | `settings` | a section of the Web UI settings (Settings → under Основные / Модели / Плагины) for this plugin's `config`: `{ title, description?, fields[] }`. A field is `{ key, label, type: number \| boolean \| select \| text, help?, group?, min?, max?, step?, integer?, optional?, options?, unit? }`; `key` is a dot path inside the config. Defaults are the manifest `config`; saved values go to `config.yaml` `plugins.config.<name>` and reach `ctx.config` after `sinty web` restarts. The core's own **Супервизор** section uses the same format (`GET /v1/settings/sections`, `PUT /v1/settings/sections/:id`) |
 | `tools[].sideEffects` | `none`, `read`, `write`, `external`; drives default policy and resume behaviour |
 | `tools[].idempotent` | safe to repeat with the same arguments |
@@ -87,7 +89,7 @@ Input schemas are declared in code (zod) and exported by the plugin at load time
 - Agent cards (`roster.json`): a default-on plugin is on every agent, whatever the card's `plugins` list says (cards
   saved before the plugin existed have a list without it), unless the card lists it in `excludedPlugins`. Every other
   plugin follows the card's `plugins`, else the shared list. An `agent.task` child turn uses its parent's agent card.
-- `ctx.http({ method, path, public?, handler })` registers a route under `/p/<plugin>`. `:param` is one segment, a trailing `*` the rest. The core strips `Authorization`, `Cookie` and hop-by-hop headers, and removes `token` from the query, before the plugin sees the request. `public: true` skips the bearer check.
+- `ctx.http({ method, path, public?, surface?, access?, handler })` registers a route under `/p/<plugin>`. For a signed-in person the route needs the right of `surface` (a tab id or `settings`; default the first tab, else settings) and `access` (default by method: GET view, POST add, PUT/PATCH edit, DELETE delete); a plugin with no screen has no routes for people, only for the machine token. `:param` is one segment, a trailing `*` the rest. The core strips `Authorization`, `Cookie` and hop-by-hop headers, and removes `token` from the query, before the plugin sees the request. `public: true` skips the bearer check.
 - `ctx.agent` is the same session API the HTTP clients use. Arguments are validated in the core (`plugin-bridge.ts`); write ops need `sessions.write`; idempotency keys are prefixed with the plugin name; the actor is `{ kind: "plugin" }`.
 - `createSSE` / `runTurn` in `@sinty/sdk` are helpers for streaming servers (MCP, OpenAI API, AG-UI).
 

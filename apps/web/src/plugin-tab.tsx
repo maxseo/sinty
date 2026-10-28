@@ -6,11 +6,16 @@ export interface PluginTabInfo {
   plugin: string;
   id: string;
   title: string;
-  /** `/p/<plugin><path>`: a public route of the plugin that serves the static page. */
-  src: string;
-  /** `sidebar`: own page in the left nav. `session`: a view toggle in the open chat's header. */
-  placement: "sidebar" | "session";
+  /** `/p/<plugin><path>`: a public route of the plugin that serves the static page. Absent for a `builtin` page. */
+  src?: string;
+  /** A page of this Web UI build (`board`, `calendar`) instead of an iframe. */
+  builtin?: string;
+  /** `sidebar`: own page in the left nav. `session`: a view toggle in the open chat's header. `project`: a tab inside a project. */
+  placement: "sidebar" | "session" | "project";
 }
+
+/** Access right of a tab, as in docs/spec/plugin-rules.md. */
+export const tabRight = (t: Pick<PluginTabInfo, "plugin" | "id">): string => `ui:${t.plugin}/${t.id}`;
 
 /** Key of a session tab among the chat views ("chat", "journal", "tab:<plugin>/<id>"). */
 export const tabViewKey = (t: Pick<PluginTabInfo, "plugin" | "id">): string => `tab:${t.plugin}/${t.id}`;
@@ -40,7 +45,7 @@ export function safeTabPath(path: unknown): string | undefined {
   return path;
 }
 
-export function PluginTab({ tab, sessionId }: { tab: PluginTabInfo; sessionId?: string }) {
+export function PluginTab({ tab, sessionId, projectId }: { tab: PluginTabInfo; sessionId?: string; projectId?: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [error, setError] = useState("");
   const session = useRef(sessionId);
@@ -56,7 +61,7 @@ export function PluginTab({ tab, sessionId }: { tab: PluginTabInfo; sessionId?: 
       if (!m || m.sinty !== PROTO) return;
       if (m.op === "ready") {
         ready.current = true;
-        reply({ op: "init", plugin: tab.plugin, tab: tab.id, theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", ...(session.current ? { sessionId: session.current } : {}) });
+        reply({ op: "init", plugin: tab.plugin, tab: tab.id, theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", ...(session.current ? { sessionId: session.current } : {}), ...(projectId ? { projectId } : {}) });
         return;
       }
       if (m.op !== "get" || typeof m.id !== "number") return;
@@ -95,12 +100,12 @@ export function PluginTab({ tab, sessionId }: { tab: PluginTabInfo; sessionId?: 
     if (ready.current) frame.current?.contentWindow?.postMessage({ sinty: PROTO, op: "session", ...(sessionId ? { sessionId } : {}) }, "*");
   }, [sessionId]);
 
-  useEffect(() => setError(safeTabPath(tab.src.replace(/^\/p\/[^/]+/, "")) ? "" : "bad tab path"), [tab.src]);
+  useEffect(() => setError(tab.src && safeTabPath(tab.src.replace(/^\/p\/[^/]+/, "")) ? "" : "bad tab path"), [tab.src]);
 
   return (
     <div class="plugin-tab">
-      {error ? (
-        <p class="error">{error}</p>
+      {error || !tab.src ? (
+        <p class="error">{error || "bad tab path"}</p>
       ) : (
         <iframe ref={frame} key={tab.src} title={tab.title} src={tab.src} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />
       )}

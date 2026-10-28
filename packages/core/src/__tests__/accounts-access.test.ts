@@ -28,8 +28,8 @@ test("an admin with «Сотрудники» runs staff but cannot reach superad
     assert.equal(asSuper.status, 403, "superadmin role is not for admins to hand out");
     assert.equal((await app.request(`/v1/accounts/users/${root.id}`, { method: "PATCH", headers: h, body: JSON.stringify({ enabled: false }) })).status, 403);
     assert.equal((await app.request(`/v1/accounts/users/${root.id}/reset-link`, { method: "POST", headers: h })).status, 403);
-    assert.equal((await app.request(`/v1/accounts/roles/${adminRole.id}/grants`, { method: "PUT", headers: h, body: JSON.stringify({ grants: [{ resource: "nav:skills", ...all }] }) })).status, 403, "not own role");
-    assert.equal((await app.request(`/v1/accounts/roles/${other.id}/grants`, { method: "PUT", headers: h, body: JSON.stringify({ grants: [{ resource: "nav:skills", ...all }] }) })).status, 403, "not a box the admin lacks");
+    assert.equal((await app.request(`/v1/accounts/roles/${adminRole.id}/grants`, { method: "PUT", headers: h, body: JSON.stringify({ grants: [{ resource: "settings:policy", ...all }] }) })).status, 403, "not own role");
+    assert.equal((await app.request(`/v1/accounts/roles/${other.id}/grants`, { method: "PUT", headers: h, body: JSON.stringify({ grants: [{ resource: "settings:policy", ...all }] }) })).status, 403, "not a box the admin lacks");
     assert.equal((await app.request(`/v1/accounts/roles/${other.id}/grants`, { method: "PUT", headers: h, body: JSON.stringify({ grants: [{ resource: "nav:chats", view: true, add: false, edit: false, delete: false }] }) })).status, 200);
 
     assert.equal((await app.request("/v1/auth/rotate", { method: "POST", headers: h })).status, 403, "machine token stays with superadmin");
@@ -40,7 +40,7 @@ test("an admin with «Сотрудники» runs staff but cannot reach superad
 
     const me = (await (await app.request("/v1/auth/me", { headers: h })).json()) as { can: Record<string, { view: boolean }> };
     assert.equal(me.can["nav:staff"]?.view, true);
-    assert.equal(me.can["nav:skills"]?.view, false);
+    assert.equal(me.can["settings:policy"]?.view, false);
   } finally {
     await sinty.stop();
     cleanup();

@@ -1,4 +1,5 @@
 export { AccountError, Accounts, NAV_RESOURCES, type AccessAction, type AccountRole, type AccountUser, type Grant } from "./accounts.js";
+export { accessRegistry, pluginSurfaces, registryIds, routeRight, sectionResource, type AccessGroup, type AccessItem, type RegistryPlugin } from "./access-registry.js";
 export { Agent, AgentError, eventsToMessages, fromWire, toWire } from "./agent.js";
 export { createApp, startServer } from "./api/server.js";
 export { apiTokenSecretName, newApiToken, rotateApiToken, TokenRotationError } from "./api-token.js";

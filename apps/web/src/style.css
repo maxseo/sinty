@@ -1240,6 +1240,9 @@ button.icon:hover:not(:disabled) {
 .rights-roles button.on { background: var(--hover); font-weight: 650; box-shadow: inset 2px 0 0 var(--accent); }
 .rights-body { display: grid; gap: 16px; }
 .rights-table th:not(:first-child), .rights-table td:not(:first-child) { width: 92px; }
+.rights-table .badge.fresh { margin-left: 8px; }
+.rights-cleanup { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.side .proj-tab { display: block; padding-left: 34px; font-size: 13px; }
 @media (max-width: 720px) {
   .rights, .staff-grid { grid-template-columns: 1fr; }
 }

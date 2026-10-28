@@ -1,19 +1,37 @@
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-/** Sidebar rows in the rights table. A new panel item stays hidden until a role is granted it. */
+/** Core panel rows in the rights table. Plugin screens and settings sections come from `access-registry.ts`. */
 export const NAV_RESOURCES: { id: string; title: string }[] = [
   { id: "nav:chats", title: "Чаты вне проектов" },
   { id: "nav:projects", title: "Проекты" },
   { id: "nav:agents", title: "Агенты" },
-  { id: "nav:board", title: "Канбан" },
-  { id: "nav:calendar", title: "Календарь" },
   { id: "nav:plugins", title: "Плагины" },
-  { id: "nav:skills", title: "Навыки" },
-  { id: "nav:mcp", title: "MCP" },
   { id: "nav:staff", title: "Сотрудники" },
-  { id: "nav:settings", title: "Настройки установки" },
 ];
+
+const RESOURCE_ID = /^(nav:[a-z0-9_-]{1,40}|settings:[a-z0-9_.-]{1,60}|ui:[a-z][a-z0-9-]{1,63}\/[a-z][a-z0-9-]{0,31}|project:[A-Za-z0-9_-]{1,80})$/;
+
+/** Grants of the first version, copied once to the ids of docs/spec/plugin-rules.md section 8. */
+const MIGRATE_V2: Record<string, string[]> = {
+  "nav:skills": ["ui:skills/settings"],
+  "nav:mcp": ["ui:mcp-catalog/settings"],
+  "nav:board": ["ui:kanban/board"],
+  "nav:calendar": ["ui:scheduler/calendar"],
+  "nav:chats": ["ui:context-inspector/context"],
+  "nav:settings": [
+    "settings:general",
+    "settings:models",
+    "settings:supervisor",
+    "settings:limits",
+    "settings:memory",
+    "settings:policy",
+    "settings:uikit",
+    "ui:context-inspector/settings",
+    "ui:tool-vision/settings",
+    "ui:tool-web/settings",
+  ],
+};
 
 export type AccessAction = "view" | "add" | "edit" | "delete";
 
@@ -137,7 +155,64 @@ export class Accounts {
         user_id TEXT NOT NULL REFERENCES users(id),
         expires_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS resources_seen (
+        resource TEXT PRIMARY KEY,
+        first_seen INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
+    const columns = this.db.prepare("PRAGMA table_info(roles)").all() as { name: string }[];
+    if (!columns.some((c) => c.name === "reviewed_at")) this.db.exec("ALTER TABLE roles ADD COLUMN reviewed_at INTEGER NOT NULL DEFAULT 0");
+    this.migrateV2();
+  }
+
+  private migrateV2(): void {
+    if (this.db.prepare("SELECT 1 FROM meta WHERE key = 'grants_v2'").get()) return;
+    const copy = this.db.prepare(
+      `INSERT OR IGNORE INTO grants (role_id, resource, can_view, can_add, can_edit, can_delete)
+       SELECT role_id, ?, can_view, can_add, can_edit, can_delete FROM grants WHERE resource = ?`,
+    );
+    this.db.exec("BEGIN");
+    try {
+      for (const [from, targets] of Object.entries(MIGRATE_V2)) for (const to of targets) copy.run(to, from);
+      this.db.prepare("DELETE FROM grants WHERE resource IN ('nav:skills','nav:mcp','nav:board','nav:calendar','nav:settings')").run();
+      this.db.prepare("INSERT INTO meta (key, value) VALUES ('grants_v2', ?)").run(new Date().toISOString());
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  /**
+   * Records when each right first appeared and returns the ones newer than the role's last save or creation.
+   * The first call on an install records everything as old, so only rows added later are marked.
+   */
+  noteResources(ids: string[], roleId?: string): Set<string> {
+    const baseline = !this.db.prepare("SELECT 1 FROM resources_seen LIMIT 1").get();
+    const now = baseline ? 0 : Date.now();
+    const put = this.db.prepare("INSERT OR IGNORE INTO resources_seen (resource, first_seen) VALUES (?, ?)");
+    for (const r of ids) put.run(r, now);
+    if (!roleId) return new Set();
+    const role = this.db.prepare("SELECT system, reviewed_at FROM roles WHERE id = ?").get(roleId) as { system: number; reviewed_at: number } | undefined;
+    if (!role || role.system === 1) return new Set();
+    const rows = this.db.prepare("SELECT resource FROM resources_seen WHERE first_seen > ?").all(role.reviewed_at) as { resource: string }[];
+    const fresh = new Set(rows.map((r) => r.resource));
+    return new Set(ids.filter((r) => fresh.has(r)));
+  }
+
+  /** Removes grants of plugins that are no longer installed and of deleted projects. */
+  dropOrphans(installedPlugins: Set<string>, projectIds: Set<string>): number {
+    const rows = this.db.prepare("SELECT DISTINCT resource FROM grants WHERE resource LIKE 'ui:%' OR resource LIKE 'project:%'").all() as { resource: string }[];
+    const gone = rows
+      .map((r) => r.resource)
+      .filter((r) => (r.startsWith("ui:") ? !installedPlugins.has(r.slice(3).split("/")[0] ?? "") : !projectIds.has(r.slice(8))));
+    const del = this.db.prepare("DELETE FROM grants WHERE resource = ?");
+    for (const r of gone) del.run(r);
+    return gone.length;
   }
 
   close(): void {
@@ -238,7 +313,7 @@ export class Accounts {
     if (!title || title.length > 80) throw new AccountError("invalid_name", "Название роли от 1 до 80 символов.");
     const roleId = id("rol");
     try {
-      this.db.prepare("INSERT INTO roles (id, name, system) VALUES (?, ?, 0)").run(roleId, title);
+      this.db.prepare("INSERT INTO roles (id, name, system, reviewed_at) VALUES (?, ?, 0, ?)").run(roleId, title, Date.now());
     } catch {
       throw new AccountError("duplicate", "Роль с таким названием уже есть.", 409);
     }
@@ -267,9 +342,10 @@ export class Accounts {
        ON CONFLICT (role_id, resource) DO UPDATE SET can_view = excluded.can_view, can_add = excluded.can_add, can_edit = excluded.can_edit, can_delete = excluded.can_delete`,
     );
     for (const g of grants) {
-      if (!/^(nav:[a-z0-9_-]{1,40}|project:[A-Za-z0-9_-]{1,80})$/.test(g.resource)) throw new AccountError("invalid_resource", "Неизвестный пункт прав.");
+      if (!RESOURCE_ID.test(g.resource)) throw new AccountError("invalid_resource", "Неизвестный пункт прав.");
       put.run(roleId, g.resource, bit(g.view), bit(g.add), bit(g.edit), bit(g.delete));
     }
+    this.db.prepare("UPDATE roles SET reviewed_at = ? WHERE id = ?").run(Date.now(), roleId);
   }
 
   createUser(input: { email: string; password: string; firstName?: string; lastName?: string; avatar?: string; roleId: string; enabled?: boolean }): AccountUser {
@@ -323,15 +399,15 @@ export class Accounts {
     return this.role(roleId).system === 1;
   }
 
-  /** What the panel may show this person. A system role gets every box. */
-  capabilities(user: AccountUser): Record<string, Grant> {
+  /** What the panel may show this person, for every id in the registry. A system role gets every box. */
+  capabilities(user: AccountUser, ids: string[]): Record<string, Grant> {
     const out: Record<string, Grant> = {};
-    for (const n of NAV_RESOURCES) out[n.id] = { resource: n.id, view: false, add: false, edit: false, delete: false };
+    for (const r of ids) out[r] = { resource: r, view: false, add: false, edit: false, delete: false };
     if (user.system) {
       for (const k of Object.keys(out)) out[k] = { resource: k, view: true, add: true, edit: true, delete: true };
       return out;
     }
-    for (const g of this.grants(user.roleId)) out[g.resource] = g;
+    for (const g of this.grants(user.roleId)) if (g.resource in out) out[g.resource] = g;
     return out;
   }
 

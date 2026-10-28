@@ -321,7 +321,13 @@ async function init(msg: InitMessage): Promise<void> {
     contexts: [...contexts.entries()].map(([name, c]) => ({ name, order: c.order })),
     sections: [...sections.entries()].map(([name, c]) => ({ name, order: c.order, kind: c.kind })),
     subscriptions: [...listeners.keys()] as (EventType | "*")[],
-    routes: routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, public: r.public === true })),
+    routes: routes.map((r) => ({
+      method: r.method.toUpperCase(),
+      path: r.path,
+      public: r.public === true,
+      ...(r.surface ? { surface: r.surface } : {}),
+      ...(r.access ? { access: r.access } : {}),
+    })),
     ...(snapshotHandlers.length ? { inspects: true } : {}),
   });
 }

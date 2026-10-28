@@ -10,7 +10,8 @@ import { scrubText } from "@sinty/supervisor";
 import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
 import { saveBlob } from "../blobs.js";
-import { AccountError, NAV_RESOURCES, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
+import { AccountError, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
+import { accessRegistry, registryIds, routeRight, sectionResource, tabResource, type AccessGroup, type RegistryPlugin } from "../access-registry.js";
 import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
@@ -22,6 +23,7 @@ import { loadRegistry } from "../registry.js";
 import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
 import { assignPolicy, listSections, saveSection } from "../settings-sections.js";
 import { matchRoute, serveStatic } from "./static.js";
+import type { RouteInfo } from "../host/protocol.js";
 
 async function discoverModels(protocol: string, baseUrl: string, apiKey: string): Promise<{ id: string }[]> {
   if (protocol === "anthropic") {
@@ -127,25 +129,32 @@ export function createApp(sinty: Sinty): Hono {
     const r = sessionResource(sessionId);
     return r ? allows(c, r, "view") : superadmin(c);
   };
-  /** Settings sections that are not install-wide belong to the panel item they configure. */
-  const sectionResource = (id: string): string => (id === "plugin.skills" ? "nav:skills" : id === "plugin.mcp-catalog" ? "nav:mcp" : "nav:settings");
-  /** Plugin HTTP routes follow the sidebar item that shows them. */
-  const pluginResource = (name: string): string =>
-    ({ kanban: "nav:board", scheduler: "nav:calendar", skills: "nav:skills", "mcp-catalog": "nav:mcp", "context-inspector": "nav:chats" } as Record<string, string>)[name] ?? "nav:plugins";
-  const methodAction = (method: string): AccessAction => (method === "GET" || method === "HEAD" ? "view" : method === "DELETE" ? "delete" : method === "POST" ? "add" : "edit");
+  const registryPlugins = (): RegistryPlugin[] =>
+    [...sinty.host.plugins.values()].map((p) => ({ name: p.name, disabled: p.disabled || p.staticOnly, manifest: p.loaded.manifest }));
+  /** Every right on this install now (docs/spec/plugin-rules.md 5.1). */
+  /** Every build also stamps rows it has not seen before, so Права can mark them «новое». */
+  const registry = (): AccessGroup[] => {
+    const groups = accessRegistry({
+      plugins: registryPlugins(),
+      coreSections: listSections(sectionSources()).filter((s) => s.owner === "core").map((s) => ({ id: s.id, title: s.title })),
+      projects: listProjects(sinty.paths).map((p) => ({ id: p.id, name: p.name })),
+    });
+    sinty.accounts.noteResources(registryIds(groups));
+    return groups;
+  };
 
   /** Route-level rules for signed-in people. Session and project routes check their own resource further down. */
   const ROUTE_RULES: { method: string; path: RegExp; need: { resource: string; action: AccessAction } | "superadmin" }[] = [
     { method: "POST", path: /^\/v1\/auth\/rotate$/, need: "superadmin" },
     { method: "GET", path: /^\/v1\/registry$/, need: { resource: "nav:plugins", action: "view" } },
-    { method: "POST", path: /^\/v1\/models\/discover$/, need: { resource: "nav:settings", action: "edit" } },
-    { method: "PUT", path: /^\/v1\/models$/, need: { resource: "nav:settings", action: "edit" } },
-    { method: "POST", path: /^\/v1\/skills\/install$/, need: { resource: "nav:skills", action: "add" } },
+    { method: "POST", path: /^\/v1\/models\/discover$/, need: { resource: "settings:models", action: "edit" } },
+    { method: "PUT", path: /^\/v1\/models$/, need: { resource: "settings:models", action: "edit" } },
+    { method: "POST", path: /^\/v1\/skills\/install$/, need: { resource: "ui:skills/settings", action: "add" } },
     { method: "POST", path: /^\/v1\/roster\/agents$/, need: { resource: "nav:agents", action: "add" } },
     { method: "PUT", path: /^\/v1\/roster\/agents\/[^/]+$/, need: { resource: "nav:agents", action: "edit" } },
     { method: "DELETE", path: /^\/v1\/roster\/agents\/[^/]+$/, need: { resource: "nav:agents", action: "delete" } },
     { method: "POST", path: /^\/v1\/plugins\/install$/, need: { resource: "nav:plugins", action: "add" } },
-    { method: "POST", path: /^\/v1\/plugins\/mcp$/, need: { resource: "nav:mcp", action: "add" } },
+    { method: "POST", path: /^\/v1\/plugins\/mcp$/, need: { resource: "ui:mcp-catalog/settings", action: "add" } },
     { method: "PUT", path: /^\/v1\/plugins\/shared$/, need: { resource: "nav:plugins", action: "edit" } },
   ];
 
@@ -217,9 +226,12 @@ export function createApp(sinty: Sinty): Hono {
 
   app.get("/v1/auth/me", (c) => {
     const a = actorOf(c);
-    const all = Object.fromEntries(NAV_RESOURCES.map((n) => [n.id, { resource: n.id, view: true, add: true, edit: true, delete: true }]));
-    if (!a || a.kind === "machine") return c.json({ kind: "machine", superadmin: true, can: all, nav: NAV_RESOURCES });
-    return c.json({ kind: "user", superadmin: a.user.system, user: a.user, can: sinty.accounts.capabilities(a.user), nav: NAV_RESOURCES });
+    const ids = registryIds(registry());
+    if (!a || a.kind === "machine") {
+      const all = Object.fromEntries(ids.map((r) => [r, { resource: r, view: true, add: true, edit: true, delete: true }]));
+      return c.json({ kind: "machine", superadmin: true, can: all });
+    }
+    return c.json({ kind: "user", superadmin: a.user.system, user: a.user, can: sinty.accounts.capabilities(a.user, ids) });
   });
 
   app.get("/v1/accounts/users", (c) => {
@@ -274,7 +286,19 @@ export function createApp(sinty: Sinty): Hono {
 
   app.get("/v1/accounts/roles", (c) => {
     if (!staffMay(c, "view")) return forbid(c);
-    return c.json({ roles: sinty.accounts.listRoles(), nav: NAV_RESOURCES });
+    return c.json({ roles: sinty.accounts.listRoles(), groups: registry() });
+  });
+  /** Rows of the registry that appeared after this role was last saved: Права marks them «новое». */
+  app.get("/v1/accounts/roles/:id/fresh", (c) => {
+    if (!staffMay(c, "view")) return forbid(c);
+    return c.json({ fresh: [...sinty.accounts.noteResources(registryIds(registry()), c.req.param("id"))] });
+  });
+  /** «Убрать права удалённых плагинов»: grants of plugins no longer installed and of deleted projects. */
+  app.post("/v1/accounts/grants/orphans", (c) => {
+    if (!superadmin(c)) return forbid(c);
+    const installed = new Set([...discoverPlugins(sinty.paths, sinty.config.plugins.searchPaths).map((p) => p.name), ...sinty.host.plugins.keys()]);
+    const removed = sinty.accounts.dropOrphans(installed, new Set(listProjects(sinty.paths).map((p) => p.id)));
+    return c.json({ removed });
   });
   app.post("/v1/accounts/roles", async (c) => {
     if (!staffMay(c, "add")) return forbid(c);
@@ -333,7 +357,7 @@ export function createApp(sinty: Sinty): Hono {
   });
 
   app.get("/v1/settings", (c) => {
-    if (!allows(c, "nav:settings", "view") && !allows(c, "nav:plugins", "view")) return forbid(c);
+    if (!["settings:general", "settings:models", "nav:plugins"].some((r) => allows(c, r, "view"))) return forbid(c);
     const enabled = new Set(sinty.config.plugins.enabled);
     // Registry + home (+ searchPaths) so Settings → Plugins lists opt-in-off and custom installs.
     const catalog = discoverPlugins(sinty.paths, sinty.config.plugins.searchPaths);
@@ -361,11 +385,11 @@ export function createApp(sinty: Sinty): Hono {
     }
     const pluginsChanged =
       body.enabled.length !== sinty.config.plugins.enabled.length || body.enabled.some((x) => !sinty.config.plugins.enabled.includes(String(x)));
-    const installChanged =
-      body.model !== (sinty.config.models.default ?? "") ||
-      ["fallback", "agentsMd", "serviceModel", "compress", "facts", "stallSeconds"].some((k) => (body as Record<string, unknown>)[k] !== undefined);
+    const modelsChanged = body.model !== (sinty.config.models.default ?? "") || body.fallback !== undefined;
+    const generalChanged = ["agentsMd", "serviceModel", "compress", "facts", "stallSeconds"].some((k) => (body as Record<string, unknown>)[k] !== undefined);
     if (pluginsChanged && !allows(c, "nav:plugins", "edit")) return forbid(c);
-    if (installChanged && !allows(c, "nav:settings", "edit")) return forbid(c);
+    if (modelsChanged && !allows(c, "settings:models", "edit")) return forbid(c);
+    if (generalChanged && !allows(c, "settings:general", "edit")) return forbid(c);
     // Omit fallback → preserve models.fallback (Models tab used to send [] and wipe it).
     const fallback = Array.isArray(body.fallback) ? body.fallback.filter((x): x is string => typeof x === "string") : undefined;
     const enabled = body.enabled.filter((x): x is string => typeof x === "string");
@@ -411,6 +435,7 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/v1/plugins", (c) =>
     c.json({
       plugins: [...sinty.host.plugins.values()].map((p) => ({
+        // Tabs a person may not open are not sent at all.
         name: p.name,
         version: p.loaded.manifest.version,
         description: p.loaded.manifest.description,
@@ -422,7 +447,12 @@ export function createApp(sinty: Sinty): Hono {
         routes: p.routes.map((r) => ({ method: r.method, path: `/p/${p.name}${r.path}`, public: r.public })),
         runtime: p.loaded.manifest.runtime,
         ui: p.loaded.manifest.ui?.static && p.loaded.manifest.editable === false ? `/ui/${p.name}/` : null,
-        tabs: p.disabled || p.staticOnly ? [] : (p.loaded.manifest.ui?.tabs ?? []).map((t) => ({ id: t.id, title: t.title, src: `/p/${p.name}${t.path}`, placement: t.placement ?? "sidebar" })),
+        tabs:
+          p.disabled || p.staticOnly
+            ? []
+            : (p.loaded.manifest.ui?.tabs ?? [])
+                .filter((t) => allows(c, tabResource(p.name, t.id), "view"))
+                .map((t) => ({ id: t.id, title: t.title, ...(t.path ? { src: `/p/${p.name}${t.path}` } : {}), ...(t.builtin ? { builtin: t.builtin } : {}), placement: t.placement ?? "sidebar" })),
         inspector: p.inspector,
         permissions: p.loaded.manifest.permissions,
         // Default-on plugins replace former core tools: every agent has them unless its card excludes them.
@@ -780,7 +810,7 @@ export function createApp(sinty: Sinty): Hono {
    */
   app.get("/v1/supervisor", (c) => {
     const sessionId = c.req.query("sessionId");
-    if (sessionId ? !seesSession(c, sessionId) : !allows(c, "nav:settings", "view")) return forbid(c);
+    if (sessionId ? !seesSession(c, sessionId) : !allows(c, "settings:supervisor", "view")) return forbid(c);
     const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 100) || 100, 1), 500);
     const clean = (t: string): string => sinty.secrets.redact(scrubText(t));
     const events = (sessionId ? sinty.journal.events(sessionId, { types: SUPERVISOR_EVENTS }).slice(-limit).reverse() : sinty.journal.recentEvents(SUPERVISOR_EVENTS, limit)).map((e) => {
@@ -866,12 +896,12 @@ export function createApp(sinty: Sinty): Hono {
     const prefix = `/p/${name}`;
     const rel = c.req.path.slice(prefix.length) || "/";
     const method = c.req.method.toUpperCase();
-    let found: { index: number; params: Record<string, string>; public: boolean } | undefined;
+    let found: { index: number; params: Record<string, string>; public: boolean; route: RouteInfo } | undefined;
     for (const [index, r] of proc.routes.entries()) {
       if (r.method !== "*" && r.method !== method && !(method === "HEAD" && r.method === "GET")) continue;
       const params = matchRoute(r.path, rel);
       if (params) {
-        found = { index, params, public: r.public };
+        found = { index, params, public: r.public, route: r };
         break;
       }
     }
@@ -879,10 +909,17 @@ export function createApp(sinty: Sinty): Hono {
     if (!found.public && !authorized(c)) {
       const user = sinty.accounts.userByToken(given(c));
       if (!user) return unauthorized(c);
-      const resource = pluginResource(name);
-      // Plugin POST routes both create and act on things, so either box lets them through.
-      const ok = method === "POST" ? sinty.accounts.allows(user, resource, "add") || sinty.accounts.allows(user, resource, "edit") : sinty.accounts.allows(user, resource, methodAction(method));
-      if (!ok) return forbid(c);
+      actors.set(c, { kind: "user", user });
+      const right = routeRight({ name, disabled: false, manifest: proc.loaded.manifest }, found.route, method);
+      if (!right || !allows(c, right.resource, right.action)) return forbid(c);
+      if (right.placement === "session") {
+        const sessionId = c.req.query("session") ?? c.req.query("sessionId") ?? found.params.sessionId;
+        if (sessionId && !seesSession(c, sessionId)) return forbid(c);
+      }
+      if (right.placement === "project") {
+        const projectId = c.req.query("project") ?? c.req.query("projectId") ?? found.params.projectId;
+        if (projectId && !allows(c, `project:${projectId}`, "view")) return forbid(c);
+      }
     }
     const url = new URL(c.req.url);
     url.searchParams.delete("token");
@@ -909,6 +946,7 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/ui/:plugin", (c) => c.redirect(`/ui/${c.req.param("plugin")}/`));
   app.get("/", (c) => (uiRoot(sinty.config.server.ui) ? c.redirect(`/ui/${sinty.config.server.ui}/`) : c.json({ name: "sinty", protocol: PROTOCOL_VERSION, api: "/v1" })));
 
+  registry();
   return app;
 }
 
