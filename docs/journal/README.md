@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-27 | [One send, one turn](2026-10-27-send-once.md) | (open) | Composer reuses one idempotency key and ignores a second click. |
 | 2026-10-27 | [One-shot delay in seconds](2026-10-27-scheduler-delay-seconds.md) | (open) | `delaySeconds` wakes this chat; cron stays the repeat. Policy allows the tool. |
 | 2026-10-26 | [Scheduler month calendar and UI Kit in Settings](2026-10-26-scheduler-calendar.md) | (open) | Month grid from cron expansion. «Набор» moved to Settings → UI Kit. |
 | 2026-10-26 | [Kanban rebuilt around a project team](2026-10-26-kanban-team-board.md) | (open) | Assignee, reviewer, dependencies, team-chat notes. No accept column or dispatcher. |

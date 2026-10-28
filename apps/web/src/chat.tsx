@@ -191,6 +191,10 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   };
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  /** Synchronous lock: two clicks can both see `sending === false` before React re-renders. */
+  const sendGuard = useRef(false);
+  /** Same key until this exact payload is accepted, so a retry does not open a second turn. */
+  const pendingSend = useRef<{ key: string; fingerprint: string } | null>(null);
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
   const [replyAgent, setReplyAgent] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
@@ -326,20 +330,30 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
   const send = async (e?: Event): Promise<void> => {
     e?.preventDefault();
     const text = draft.trim();
-    if ((!text && files.length === 0) || sending) return;
+    if ((!text && files.length === 0) || sendGuard.current) return;
+    sendGuard.current = true;
     setSending(true);
     setError("");
+    const fingerprint = JSON.stringify({
+      text,
+      agentId: replyAgent,
+      blobs: files.map((f) => f.blob),
+    });
+    const key = pendingSend.current?.fingerprint === fingerprint ? pendingSend.current.key : crypto.randomUUID();
+    pendingSend.current = { key, fingerprint };
     try {
       await api(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
         body: { text, channel: "web", ...(replyAgent ? { agentId: replyAgent } : {}), ...(files.length ? { attachments: files.map(({ name, blob, mime, bytes }) => ({ name, blob, mime, bytes })) } : {}) },
-        headers: { "idempotency-key": crypto.randomUUID() },
+        headers: { "idempotency-key": key },
       });
+      pendingSend.current = null;
       setDraft("");
       setFiles([]);
       await loadInfo();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      sendGuard.current = false;
       setSending(false);
     }
   };
