@@ -28,9 +28,11 @@ interface Grant {
   delete: boolean;
 }
 
-interface ProjectRow {
+/** A block of the rights table from GET /v1/accounts/roles: Панель, Настройки, one per plugin, Проекты. */
+interface AccessGroup {
   id: string;
-  name: string;
+  title: string;
+  items: { id: string; title: string }[];
 }
 
 type Tab = "people" | "roles" | "rights";
@@ -178,7 +180,7 @@ function People({ onError }: { onError: (s: string) => void }) {
                 </td>
                 <td class="staff-actions">
                   {editable && <button type="button" class="secondary sm" onClick={() => resetLink(u.id)}>Ссылка на пароль</button>}
-                  {can("nav:staff", "delete") && !locked && <button type="button" class="danger sm" onClick={() => remove(u)}>Удалить</button>}
+                  {can("nav:staff", "delete") && !locked && <button type="button" class="ghost sm danger" onClick={() => remove(u)}>Удалить</button>}
                 </td>
               </tr>
             );
@@ -287,7 +289,7 @@ function Roles({ onError }: { onError: (s: string) => void }) {
               <td><b>{r.name}</b>{r.system && <div class="muted small">Полные права, менять нельзя</div>}</td>
               <td class="center">{users.filter((u) => u.roleId === r.id).length}</td>
               <td class="staff-actions">
-                {!r.system && can("nav:staff", "delete") && r.id !== me?.user?.roleId && <button type="button" class="danger sm" onClick={() => remove(r)}>Удалить</button>}
+                {!r.system && can("nav:staff", "delete") && r.id !== me?.user?.roleId && <button type="button" class="ghost sm danger" onClick={() => remove(r)}>Удалить</button>}
               </td>
             </tr>
           ))}
@@ -301,20 +303,22 @@ function Rights({ onError }: { onError: (s: string) => void }) {
   const { me, can } = useAccess();
   const isSuper = Boolean(me?.superadmin);
   const [roles, setRoles] = useState<RoleRow[]>([]);
-  const [nav, setNav] = useState<{ id: string; title: string }[]>([]);
-  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [groups, setGroups] = useState<AccessGroup[]>([]);
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [roleId, setRoleId] = useState("");
   const [grants, setGrants] = useState<Record<string, Grant>>({});
+  const [cleaned, setCleaned] = useState("");
   useEffect(() => {
-    void api<{ roles: RoleRow[]; nav: { id: string; title: string }[] }>("/v1/accounts/roles").then((r) => {
+    void api<{ roles: RoleRow[]; groups: AccessGroup[] }>("/v1/accounts/roles").then((r) => {
       setRoles(r.roles);
-      setNav(r.nav);
+      setGroups(r.groups);
       setRoleId((cur) => cur || r.roles.find((x) => !x.system)?.id || r.roles[0]?.id || "");
     }).catch((e) => onError(message(e)));
-    void api<{ projects: ProjectRow[] }>("/v1/roster/projects").then((r) => setProjects(r.projects)).catch(() => setProjects([]));
   }, []);
   useEffect(() => {
     if (!roleId) return;
+    setFresh(new Set());
+    void api<{ fresh: string[] }>(`/v1/accounts/roles/${roleId}/fresh`).then((r) => setFresh(new Set(r.fresh))).catch(() => setFresh(new Set()));
     void api<{ grants: Grant[] }>(`/v1/accounts/roles/${roleId}/grants`).then((r) => {
       const map: Record<string, Grant> = {};
       for (const g of r.grants) map[g.resource] = g;
@@ -325,9 +329,14 @@ function Rights({ onError }: { onError: (s: string) => void }) {
   const ownRole = !isSuper && roleId === me?.user?.roleId;
   const readOnly = Boolean(role?.system) || ownRole || !can("nav:staff", "edit");
   const cell = (resource: string): Grant => grants[resource] ?? { resource, view: false, add: false, edit: false, delete: false };
-  /** A non-superadmin may hand out only what their own role has. Project boxes are not in /v1/auth/me, so the server checks those. */
-  const mayGive = (resource: string, action: (typeof ACTIONS)[number]): boolean =>
-    isSuper || resource.startsWith("project:") || can(resource, action);
+  /** A non-superadmin may hand out only what their own role has. */
+  const mayGive = (resource: string, action: (typeof ACTIONS)[number]): boolean => isSuper || can(resource, action);
+  const cleanup = (): void => {
+    onError("");
+    void api<{ removed: number }>("/v1/accounts/grants/orphans", { method: "POST" })
+      .then((r) => setCleaned(r.removed ? `Убрано строк прав: ${r.removed}.` : "Лишних прав нет."))
+      .catch((e) => onError(message(e)));
+  };
   const setBit = (resource: string, action: (typeof ACTIONS)[number] | "all", on: boolean): void => {
     const cur = cell(resource);
     const next = action === "all"
@@ -335,28 +344,28 @@ function Rights({ onError }: { onError: (s: string) => void }) {
       : { ...cur, [action]: on };
     setGrants({ ...grants, [resource]: next });
     onError("");
-    void api(`/v1/accounts/roles/${roleId}/grants`, { method: "PUT", body: { grants: [next] } }).catch((e) => {
+    void api(`/v1/accounts/roles/${roleId}/grants`, { method: "PUT", body: { grants: [next] } }).then(() => setFresh(new Set())).catch((e) => {
       setGrants((g) => ({ ...g, [resource]: cur }));
       onError(message(e));
     });
   };
-  const table = (title: string, rows: { id: string; title: string }[], empty: string) => (
-    <table class="staff-table rights-table">
+  const table = (group: AccessGroup) => (
+    <table key={group.id} class="staff-table rights-table">
       <thead>
         <tr>
-          <th>{title}</th>
+          <th>{group.title}</th>
           {ACTIONS.map((a) => <th key={a} class="center">{ACTION_LABEL[a]}</th>)}
           <th class="center">Все</th>
         </tr>
       </thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={6} class="muted small">{empty}</td></tr>}
-        {rows.map((row) => {
+        {group.items.length === 0 && <tr><td colSpan={6} class="muted small">{group.id === "projects" ? "Проектов пока нет." : "Пусто."}</td></tr>}
+        {group.items.map((row) => {
           const g = cell(row.id);
           const all = role?.system || (g.view && g.add && g.edit && g.delete);
           return (
             <tr key={row.id}>
-              <td>{row.title}</td>
+              <td>{row.title}{!role?.system && fresh.has(row.id) && <span class="badge fresh" title="Появилось после последнего сохранения прав этой роли. Пока закрыто.">новое</span>}</td>
               {ACTIONS.map((a) => (
                 <td key={a} class="center">
                   <input type="checkbox" disabled={readOnly || (!g[a] && !mayGive(row.id, a))} checked={role?.system ? true : g[a]} onChange={(e) => setBit(row.id, a, e.currentTarget.checked)} />
@@ -380,8 +389,13 @@ function Rights({ onError }: { onError: (s: string) => void }) {
       <div class="rights-body">
         {role?.system && <p class="muted small">У суперадмина все права. Их нельзя снять.</p>}
         {ownRole && <p class="muted small">Права своей роли меняет другой администратор.</p>}
-        {table("Панель", nav, "")}
-        {table("Проекты", projects.map((p) => ({ id: `project:${p.id}`, title: p.name })), "Проектов пока нет.")}
+        {groups.map(table)}
+        {isSuper && (
+          <div class="rights-cleanup">
+            <button type="button" onClick={cleanup}>Убрать права удалённых плагинов</button>
+            <span class="muted small">{cleaned || "Права выключенного плагина сохраняются, пока его не удалят."}</span>
+          </div>
+        )}
       </div>
     </div>
   );

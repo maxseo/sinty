@@ -97,16 +97,18 @@
           "description": "Web UI tabs: each loads a public GET route of the plugin in a sandboxed iframe (no same-origin); data reaches it only through the UI's postMessage bridge",
           "items": {
             "type": "object",
-            "required": ["id", "title", "path"],
+            "required": ["id", "title"],
+            "oneOf": [{ "required": ["path"] }, { "required": ["builtin"] }],
             "additionalProperties": false,
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "stable; the tab is the access right ui:<plugin>/<id>" },
               "title": { "type": "string", "minLength": 1, "maxLength": 40 },
               "path": { "type": "string", "maxLength": 200, "pattern": "^/[A-Za-z0-9_\\-./]*$", "description": "route relative to /p/<plugin>, e.g. /tab" },
+              "builtin": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "a page of the Web UI build (board, calendar) instead of an iframe" },
               "placement": {
-                "enum": ["sidebar", "session"],
+                "enum": ["sidebar", "session", "project"],
                 "default": "sidebar",
-                "description": "sidebar: a page in the left navigation; session: a view toggle in an open chat's header (next to Чат/Журнал), told the current sessionId by the bridge"
+                "description": "sidebar: a page in the left navigation; session: a view toggle in an open chat's header (next to Чат/Журнал), told the current sessionId by the bridge; project: a tab inside a project, told projectId"
               }
             }
           }

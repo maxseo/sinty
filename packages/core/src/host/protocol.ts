@@ -4,6 +4,8 @@ export interface RouteInfo {
   method: string;
   path: string;
   public: boolean;
+  surface?: string;
+  access?: "view" | "add" | "edit" | "delete";
 }
 
 export interface SectionInfo {

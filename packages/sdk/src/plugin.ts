@@ -42,17 +42,21 @@ export interface UiTab {
   /** `[a-z][a-z0-9-]*`, unique within the plugin. */
   id: string;
   title: string;
-  /** Plugin HTTP route relative to `/p/<plugin>`, e.g. "/tab". It must be public (the iframe sends no token) and serve only static HTML. */
-  path: string;
+  /** Plugin HTTP route relative to `/p/<plugin>`, e.g. "/tab". It must be public (the iframe sends no token) and serve only static HTML. Exactly one of `path` and `builtin`. */
+  path?: string;
+  /** A page that is part of the Web UI build (`board`, `calendar`) instead of an iframe. For bundled plugins. */
+  builtin?: string;
   /**
    * Where the Web UI shows the tab. `sidebar` (default): a page of its own in the left navigation.
    * `session`: a view toggle in the header of an open chat, next to "Чат" and "Журнал"; the bridge tells the page
    * which session is open (`init.sessionId`, then `{ op: "session" }` when the user switches chats).
+   * `project`: a tab inside a project; the bridge tells the page `init.projectId`.
+   * Every tab is an access right `ui:<plugin>/<id>` (docs/spec/plugin-rules.md).
    */
   placement?: UiTabPlacement;
 }
 
-export type UiTabPlacement = "sidebar" | "session";
+export type UiTabPlacement = "sidebar" | "session" | "project";
 
 export interface ManifestTool {
   name: string;
@@ -238,6 +242,10 @@ export interface HttpRoute {
   path: string;
   /** Public routes skip the core's bearer token check; the plugin must authenticate callers itself. */
   public?: boolean;
+  /** Screen a signed-in person reaches this route from: a `ui.tabs` id or `"settings"`. Default: the first tab, else settings. */
+  surface?: string;
+  /** Box on that screen the person needs. Default from the method: GET view, POST add, PUT/PATCH edit, DELETE delete. */
+  access?: "view" | "add" | "edit" | "delete";
   handler(req: Request, info: { params: Record<string, string>; signal: AbortSignal }): Response | Promise<Response>;
 }
 

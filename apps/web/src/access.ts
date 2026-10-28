@@ -20,7 +20,8 @@ export function useAccess(): { me: Me | undefined; can: (resource: string, actio
 
 /** First settings section this person may open; the gear button lands there. */
 export function firstSection(can: (resource: string) => boolean): string {
-  if (can("nav:settings")) return "general";
+  if (can("settings:general")) return "general";
+  if (can("settings:models")) return "models";
   if (can("nav:plugins")) return "plugins";
   if (can("nav:staff")) return "staff";
   return "uikit";

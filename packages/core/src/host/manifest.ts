@@ -13,10 +13,13 @@ const uiTabSchema = z
       .string()
       .max(200)
       .regex(/^\/[A-Za-z0-9_\-./]*$/, "path must be a route of the plugin, starting with /")
-      .refine((p) => !p.split("/").some((seg) => seg === ".." || seg === "."), "path must not contain . or .. segments"),
-    placement: z.enum(["sidebar", "session"]).optional(),
+      .refine((p) => !p.split("/").some((seg) => seg === ".." || seg === "."), "path must not contain . or .. segments")
+      .optional(),
+    builtin: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).optional(),
+    placement: z.enum(["sidebar", "session", "project"]).optional(),
   })
-  .strict();
+  .strict()
+  .refine((t) => (t.path === undefined) !== (t.builtin === undefined), { message: 'a tab needs exactly one of "path" and "builtin"' });
 
 const settingsFieldSchema = z
   .object({

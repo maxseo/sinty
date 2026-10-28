@@ -540,7 +540,7 @@ function PluginsSettings({
 
 export function SettingsPage({ onSaved, section }: { onSaved: () => void; section: string }) {
   const { can } = useAccess();
-  const { data, error, reload } = useLoad<SettingsData>(can("nav:settings") || can("nav:plugins") ? "/v1/settings" : "", []);
+  const { data, error, reload } = useLoad<SettingsData>(can("settings:general") || can("settings:models") || can("nav:plugins") ? "/v1/settings" : "", []);
   const [model, setModel] = useState("");
   const [enabled, setEnabled] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
@@ -570,12 +570,12 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
     <section class="page settings-page">
       <h2>Настройки</h2>
       {error && <p class="error">{error}</p>}
-      {section !== "uikit" && !can(settingsResource(section)) ? <Denied /> : null}
-      {section === "general" && can("nav:settings") && <GeneralPane />}
+      {!can(settingsResource(section)) ? <Denied /> : null}
+      {section === "general" && can("settings:general") && <GeneralPane />}
       {section === "staff" && can("nav:staff") && <StaffPage />}
-      {section === "uikit" && <KitPage />}
+      {section === "uikit" && can("settings:uikit") && <KitPage />}
       {section !== "general" && section !== "models" && section !== "plugins" && section !== "uikit" && section !== "staff" && can(settingsResource(section)) && <SectionPane key={section} id={section} />}
-      {section === "models" && can("nav:settings") && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
+      {section === "models" && can("settings:models") && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
       {section === "plugins" && can("nav:plugins") && data && (
         <PluginsSettings
           enabled={enabled}
@@ -589,13 +589,12 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
   );
 }
 
-/** Same mapping as the server: skills and MCP sections follow their panel items, the rest is install-wide. */
+/** Same mapping as the server (access-registry.ts): a plugin section is `ui:<plugin>/settings`, a core one `settings:<id>`. */
 function settingsResource(section: string): string {
   if (section === "staff") return "nav:staff";
   if (section === "plugins") return "nav:plugins";
-  if (section === "plugin.skills") return "nav:skills";
-  if (section === "plugin.mcp-catalog") return "nav:mcp";
-  return "nav:settings";
+  if (section.startsWith("plugin.")) return `ui:${section.slice("plugin.".length)}/settings`;
+  return `settings:${section}`;
 }
 
 interface AgentRecord {

@@ -16,5 +16,6 @@
     { "name": "kanban.update", "sideEffects": "write", "idempotent": false, "docs": "README.md" }
   ],
   "config": { "maxParallel": { "type": "integer", "default": 3, "description": "cards the agent works on at the same time" } },
+  "ui": { "tabs": [{ "id": "board", "title": "Канбан", "builtin": "board" }] },
   "editable": true
 }

@@ -6,8 +6,8 @@ import { Chat } from "./chat.js";
 import { AgentsPage, Denied, SettingsPage } from "./pages.js";
 import { useSections } from "./supervisor-ui.js";
 import { CalendarPage } from "./calendar.js";
-import { PluginTab, type PluginTabInfo } from "./plugin-tab.js";
-import { go, href, useRoute } from "./route.js";
+import { PluginTab, tabRight, type PluginTabInfo } from "./plugin-tab.js";
+import { go, href, useRoute, type Route } from "./route.js";
 import { AccessContext, firstSection, type AccessAction, type Me } from "./access.js";
 import { IconBack, IconChevron, IconDots, IconFolder, IconGear, IconMoon, IconPanelLeft, IconPin, IconPlus, IconSun, IconTrash } from "./icons.js";
 
@@ -175,17 +175,17 @@ function Shell() {
   const [agentChoices, setAgentChoices] = useState<{ id: string; name: string }[]>([]);
   const [pickedAgents, setPickedAgents] = useState<string[]>([]);
   const [projectId, setProjectId] = useState(localStorage.getItem("sinty.project") ?? "");
-  const hasKanban = agent?.plugins.some((p) => p.name === "kanban" && !p.disabled) ?? false;
-  const hasScheduler = agent?.plugins.some((p) => p.name === "scheduler" && !p.disabled) ?? false;
   const [tabs, setTabs] = useState<PluginTabInfo[]>([]);
   useEffect(() => {
-    void api<{ plugins: { name: string; tabs?: { id: string; title: string; src: string; placement?: "sidebar" | "session" }[] }[] }>("/v1/plugins")
-      .then((r) => setTabs(r.plugins.flatMap((p) => (p.tabs ?? []).map((t) => ({ plugin: p.name, ...t, placement: t.placement === "session" ? ("session" as const) : ("sidebar" as const) })))))
+    void api<{ plugins: { name: string; tabs?: Omit<PluginTabInfo, "plugin">[] }[] }>("/v1/plugins")
+      .then((r) => setTabs(r.plugins.flatMap((p) => (p.tabs ?? []).map((t) => ({ ...t, plugin: p.name, placement: t.placement ?? "sidebar" })))))
       .catch(() => setTabs([]));
-  }, [agent]);
-  const sideTabs = tabs.filter((t) => t.placement === "sidebar");
-  const sessionTabs = useMemo(() => tabs.filter((t) => t.placement === "session"), [tabs]);
-  const openTab = route.page === "tab" ? sideTabs.find((t) => t.plugin === route.plugin && t.id === route.tab) : undefined;
+  }, [agent, me]);
+  const sideTabs = tabs.filter((t) => t.placement === "sidebar" && can(tabRight(t)));
+  const projectTabs = tabs.filter((t) => t.placement === "project" && can(tabRight(t)));
+  const sessionTabs = useMemo(() => tabs.filter((t) => t.placement === "session" && Boolean(me?.can[tabRight(t)]?.view)), [tabs, me]);
+  const openTab = route.page === "tab" ? [...sideTabs, ...projectTabs].find((t) => t.plugin === route.plugin && t.id === route.tab && !t.builtin) : undefined;
+  const builtinOn = (name: string): boolean => tabs.some((t) => t.builtin === name && can(tabRight(t)));
   const loadProjects = useCallback(async () => {
     const r = await api<{ projects: { id: string; name: string; slug: string }[] }>("/v1/roster/projects");
     setProjects(r.projects);
@@ -275,11 +275,11 @@ function Shell() {
                 <div class="side-pane">
                   <nav>
                     {can("nav:agents") && <a class={route.page === "agents" ? "on" : ""} href={href({ page: "agents" })}>Агенты</a>}
-                    {hasKanban && can("nav:board") && <a class={route.page === "board" ? "on" : ""} href={href({ page: "board" })}>Канбан</a>}
-                    {hasScheduler && can("nav:calendar") && <a class={route.page === "calendar" ? "on" : ""} href={href({ page: "calendar" })}>Календарь</a>}
-                    {sideTabs.filter((t) => can(sideTabResource(t.plugin))).map((t) => (
-                      <a key={`${t.plugin}/${t.id}`} class={route.page === "tab" && route.plugin === t.plugin && route.tab === t.id ? "on" : ""} href={href({ page: "tab", plugin: t.plugin, tab: t.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>
-                    ))}
+                    {sideTabs.map((t) => {
+                      const target: Route = t.builtin === "board" ? { page: "board" } : t.builtin === "calendar" ? { page: "calendar" } : { page: "tab", plugin: t.plugin, tab: t.id };
+                      const on = target.page === "tab" ? route.page === "tab" && route.plugin === t.plugin && route.tab === t.id : route.page === target.page;
+                      return <a key={`${t.plugin}/${t.id}`} class={on ? "on" : ""} href={href(target)} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>;
+                    })}
                   </nav>
                   {pending.length > 0 && (
                     <div class="side-pending">
@@ -332,6 +332,9 @@ function Shell() {
                             <button class="nav-item" onClick={() => { toggleProjectOpen(p.id); chooseProject(p.id); }}><IconFolder /> <span class="title">{p.name}</span></button>
                             <button class="icon" title="Новый чат в проекте" onClick={() => openProjectChat(p.id)}><IconPlus /></button>
                           </div>
+                          {openProjects.includes(p.id) && projectTabs.map((t) => (
+                            <a key={`${t.plugin}/${t.id}`} class={`nav-item proj-tab ${route.page === "tab" && route.plugin === t.plugin && route.tab === t.id && route.projectId === p.id ? "on" : ""}`} href={href({ page: "tab", plugin: t.plugin, tab: t.id, projectId: p.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>
+                          ))}
                           {openProjects.includes(p.id) && chats.filter((s) => s.projectId === p.id).map((s) => (
                             <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
                           ))}
@@ -348,10 +351,10 @@ function Shell() {
                   <button class="nav-item" onClick={() => go({ page: "chat" })}><IconBack /> Назад</button>
                   {agentsOn ? <AgentNav current={route.page === "agents" ? route.agentId : undefined} /> : (
                     <nav>
-                      {can("nav:settings") && <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>}
-                      {can("nav:settings") && <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>}
+                      {can("settings:general") && <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>}
+                      {can("settings:models") && <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>}
                       {can("nav:plugins") && <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>}
-                      <a class={settingsOn && route.section === "uikit" ? "on" : ""} href={href({ page: "settings", section: "uikit" })}>UI Kit</a>
+                      {can("settings:uikit") && <a class={settingsOn && route.section === "uikit" ? "on" : ""} href={href({ page: "settings", section: "uikit" })}>UI Kit</a>}
                       {can("nav:staff") && <a class={settingsOn && route.section === "staff" ? "on" : ""} href={href({ page: "settings", section: "staff" })}>Сотрудники</a>}
                       {sections.map((x) => (
                         <a key={x.id} class={settingsOn && route.section === x.id ? "on" : ""} href={href({ page: "settings", section: x.id })} title={x.owner === "plugin" ? `Настройки плагина ${x.plugin}` : undefined}>{x.title}</a>
@@ -382,11 +385,18 @@ function Shell() {
       </aside>
       <main class="main">
         {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} tabs={sessionTabs} /> : <Empty onNew={newChat} />)}
-        {me && route.page === "board" && (can("nav:board") ? <Board /> : <Denied />)}
+        {me && route.page === "board" && (builtinOn("board") ? <Board /> : <Denied />)}
         {me && route.page === "agents" && (can("nav:agents") ? <AgentsPage agentId={route.agentId} /> : <Denied />)}
         {me && route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
-        {me && route.page === "calendar" && (can("nav:calendar") ? <CalendarPage /> : <Denied />)}
-        {me && route.page === "tab" && (!can(sideTabResource(route.plugin)) ? <Denied /> : openTab ? <PluginTab key={`${openTab.plugin}/${openTab.id}`} tab={openTab} /> : <div class="empty"><p>Вкладка плагина {route.plugin} не найдена: плагин выключен или не запущен.</p></div>)}
+        {me && route.page === "calendar" && (builtinOn("calendar") ? <CalendarPage /> : <Denied />)}
+        {me && route.page === "tab" &&
+          (!can(tabRight({ plugin: route.plugin, id: route.tab })) || (route.projectId && !can(`project:${route.projectId}`)) ? (
+            <Denied />
+          ) : openTab ? (
+            <PluginTab key={`${openTab.plugin}/${openTab.id}/${route.projectId ?? ""}`} tab={openTab} {...(route.projectId ? { projectId: route.projectId } : {})} />
+          ) : (
+            <div class="empty"><p>Вкладка плагина {route.plugin} не найдена: плагин выключен или не запущен.</p></div>
+          ))}
       </main>
       <aside class="dock" />
       {projectDraft !== null && (
@@ -437,10 +447,6 @@ function Shell() {
   );
 }
 
-/** Plugin pages follow the panel item that shows them; the server applies the same mapping. */
-function sideTabResource(plugin: string): string {
-  return ({ kanban: "nav:board", scheduler: "nav:calendar", skills: "nav:skills", "mcp-catalog": "nav:mcp", "context-inspector": "nav:chats" } as Record<string, string>)[plugin] ?? "nav:plugins";
-}
 function AgentNav({ current }: { current?: string }) {
   const [rows, setRows] = useState<{ id: string; name: string; specialization: string; summary: string; avatar: string }[]>([]);
   const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);
