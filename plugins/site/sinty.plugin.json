@@ -6,7 +6,7 @@
   "kinds": ["tool", "ui"],
   "runtime": "node",
   "entry": "dist/index.js",
-  "permissions": { "fs": { "read": ["$DATA"], "write": ["$DATA"] } },
+  "permissions": { "fs": { "read": ["$DATA"], "write": ["$DATA"] }, "agent": ["sessions.read", "sessions.write"] },
   "tools": [
     { "name": "site.list", "description": "List site records (pages, posts, categories, templates).", "sideEffects": "read", "idempotent": true },
     { "name": "site.read", "description": "Read one site record by id or slug, including drafts.", "sideEffects": "read", "idempotent": true },
@@ -16,6 +16,7 @@
     { "name": "site.template", "description": "Insert a template into a record as a dynamic block.", "sideEffects": "write", "idempotent": false },
     { "name": "site.login", "description": "Turn visitor sign-in methods on or off.", "sideEffects": "write", "idempotent": true },
     { "name": "site.visitors", "description": "List visitor accounts without passwords.", "sideEffects": "read", "idempotent": true },
+    { "name": "site.chats", "description": "List visitor chats from the public site.", "sideEffects": "read", "idempotent": true },
     { "name": "site.requests", "description": "List form submissions and where to write the client.", "sideEffects": "read", "idempotent": true },
     { "name": "site.request", "description": "Mark a form submission sent or still pending.", "sideEffects": "write", "idempotent": true }
   ],
@@ -25,7 +26,8 @@
       { "id": "blog", "title": "Блог", "path": "/tab/blog", "placement": "sidebar" },
       { "id": "builder", "title": "Конструктор", "path": "/tab/builder", "placement": "sidebar" },
       { "id": "login", "title": "Вход", "path": "/tab/login", "placement": "sidebar" },
-      { "id": "requests", "title": "Заявки", "path": "/tab/requests", "placement": "sidebar" }
+      { "id": "requests", "title": "Заявки", "path": "/tab/requests", "placement": "sidebar" },
+      { "id": "chats", "title": "Чаты", "path": "/tab/chats", "placement": "sidebar" }
     ]
   },
   "editable": true

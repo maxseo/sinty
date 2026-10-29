@@ -1,4 +1,5 @@
-import { definePlugin, ToolError, z } from "@sinty/sdk";
+import { randomBytes } from "node:crypto";
+import { definePlugin, runTurn, ToolError, z } from "@sinty/sdk";
 import { renderLayout } from "./layout.js";
 import { TAB_CSP, tabHtml } from "./page.js";
 import { KINDS, SiteError, SiteStore, type Doc, type Kind, type LoginSettings, type Status } from "./store.js";
@@ -150,6 +151,16 @@ export default definePlugin({
       },
     });
     ctx.tool({
+      name: "site.chats",
+      description: "List visitor chats on the public site. Each row has the harness session id, so the same thread is also in the harness chat list.",
+      input: z.object({}),
+      sideEffects: "read",
+      idempotent: true,
+      async run() {
+        return { content: { chats: store.chats() } };
+      },
+    });
+    ctx.tool({
       name: "site.visitors",
       description: "List visitor accounts: id, email, createdAt. No passwords.",
       input: z.object({}),
@@ -165,6 +176,57 @@ export default definePlugin({
     ctx.http({ method: "GET", path: "/tab/builder", public: true, surface: "builder", handler: () => html(tabHtml("builder")) });
     ctx.http({ method: "GET", path: "/tab/login", public: true, surface: "login", handler: () => html(loginTab()) });
     ctx.http({ method: "GET", path: "/tab/requests", public: true, surface: "requests", handler: () => html(requestsTab()) });
+    ctx.http({ method: "GET", path: "/tab/chats", public: true, surface: "chats", handler: () => html(chatsTab()) });
+    ctx.http({
+      method: "GET",
+      path: "/chats",
+      surface: "chats",
+      access: "view",
+      handler: () => json({ chats: store.chats() }),
+    });
+    ctx.http({
+      method: "GET",
+      path: "/chat",
+      public: true,
+      handler: () => new Response(chatPage(), { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'", "cache-control": "no-store" } }),
+    });
+    ctx.http({
+      method: "GET",
+      path: "/chat/messages",
+      public: true,
+      handler: (req) => json({ messages: store.chatMessages(chatId(req)) }),
+    });
+    ctx.http({
+      method: "POST",
+      path: "/chat/send",
+      public: true,
+      handler: async (req, { signal }) => {
+        const form = await req.formData();
+        const text = String(form.get("text") ?? "").trim();
+        const id = chatId(req);
+        const fresh = !req.headers.get("cookie")?.includes("site_chat=");
+        const chat = store.openChat(id);
+        if (!text) return json({ error: { code: "empty", message: "message is empty" } }, 400);
+        let sessionId = chat.sessionId ?? undefined;
+        if (sessionId && !(await ctx.agent.getSession(sessionId))) sessionId = undefined;
+        if (!sessionId) {
+          sessionId = (await ctx.agent.createSession({ title: "Сайт: посетитель", metadata: { via: "site", chatId: id } })).id;
+          store.setChatSession(id, sessionId);
+        }
+        store.addChatMessage(id, "visitor", text);
+        let answer = "Агент сейчас не ответил. Напишите ещё раз чуть позже.";
+        try {
+          const outcome = await runTurn(ctx.agent, sessionId, `Сообщение посетителя с сайта:\n${text}`, { signal, channel: "web", idempotencyKey: `site:${id}:${randomBytes(8).toString("hex")}` });
+          if (outcome.text.trim()) answer = outcome.text.trim();
+        } catch (e) {
+          ctx.log.warn("site chat turn failed", e instanceof Error ? e.message : "");
+        }
+        store.addChatMessage(id, "agent", answer);
+        const headers = new Headers({ "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        if (fresh) headers.set("set-cookie", `site_chat=${id}; HttpOnly; Path=/p/site; SameSite=Lax; Max-Age=31536000`);
+        return new Response(JSON.stringify({ messages: store.chatMessages(id) }), { headers });
+      },
+    });
     ctx.http({
       method: "GET",
       path: "/requests",
@@ -291,6 +353,59 @@ function signedIn(store: SiteStore, req: Request): boolean {
 }
 function cookie(token: string, maxAge: number): string {
   return `site_visitor=${token}; HttpOnly; Path=/p/site; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+function chatId(req: Request): string {
+  return req.headers.get("cookie")?.match(/(?:^|;\s*)site_chat=([a-f0-9]+)/)?.[1] ?? randomBytes(8).toString("hex");
+}
+
+function chatPage(): string {
+  return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>Чат</title>
+<style>body{font:16px/1.45 system-ui,sans-serif;margin:0;display:flex;flex-direction:column;height:100vh}#log{flex:1;overflow:auto;padding:16px}form{display:flex;gap:8px;padding:12px;border-top:1px solid #e5e5ea}.me{text-align:right}.agent{color:#1d1d1f}p{margin:8px 0}</style>
+<div id="log"></div>
+<form id="f"><input name="text" required maxlength="4000" style="flex:1" placeholder="Сообщение"><button>Отправить</button></form>
+<script>
+const log = document.getElementById("log");
+function draw(rows) {
+  log.textContent = "";
+  for (const m of rows) {
+    const p = document.createElement("p");
+    p.className = m.role === "visitor" ? "me" : "agent";
+    p.textContent = m.body;
+    log.append(p);
+  }
+  log.scrollTop = log.scrollHeight;
+}
+async function load() { const r = await fetch("/p/site/chat/messages"); draw((await r.json()).messages || []); }
+document.getElementById("f").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = new FormData(e.target).get("text");
+  e.target.reset();
+  const r = await fetch("/p/site/chat/send", { method: "POST", body: new URLSearchParams({ text }) });
+  draw((await r.json()).messages || []);
+};
+load();
+</script>`;
+}
+
+function chatsTab(): string {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Чаты</title>
+<style>body{margin:0;font:14px/1.45 system-ui,sans-serif}h1{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #e5e5ea}li{padding:8px 16px;border-bottom:1px solid #f0f0f2;list-style:none}.muted{color:#6e6e73}</style></head><body>
+<h1>Чаты сайта</h1><ul id="list"></ul>
+<p class="muted" style="padding:0 16px">Ответ пишет агент в сессии харнеса. Страница для гостя: /p/site/chat</p>
+<script>
+const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
+let n = 0; const wait = new Map();
+addEventListener("message", (e) => { const m = e.data || {}; if (m.sinty !== "tab/1") return; if (typeof m.id === "number" && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); } });
+function ask(path) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send("get", { id, path }); }); }
+ask("/chats").then((m) => {
+  const rows = (m.data && m.data.chats) || [];
+  const ul = document.getElementById("list");
+  if (!rows.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "Пока пусто."; ul.append(li); return; }
+  for (const r of rows) { const li = document.createElement("li"); li.textContent = (r.last || "пусто").slice(0, 80); ul.append(li); }
+});
+send("ready");
+</script></body></html>`;
 }
 
 function requestsTab(): string {
