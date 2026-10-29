@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { readMark, updateAvailable, writeMark, type Remote } from "./updates.js";
@@ -67,9 +67,27 @@ send("ready");
 </script></body></html>`;
 }
 
+/** Playwright keeps Chromium here for web.screenshot. HyperFrames looks on PATH and misses it. */
+function playwrightChrome(): string | undefined {
+  const root = join(process.env.LOCALAPPDATA ?? "", "ms-playwright");
+  try {
+    const hits = readdirSync(root)
+      .filter((name) => name.startsWith("chromium-"))
+      .map((name) => join(root, name, "chrome-win64", "chrome.exe"))
+      .filter((file) => existsSync(file));
+    return hits.at(-1);
+  } catch {
+    return undefined;
+  }
+}
+
 function run(cmd: string, args: string[], cwd: string): Promise<{ code: number; out: string }> {
+  const chrome = playwrightChrome();
+  const env = chrome
+    ? { ...process.env, PUPPETEER_EXECUTABLE_PATH: chrome, CHROME_PATH: chrome }
+    : process.env;
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, windowsHide: true, shell: false });
+    const child = spawn(cmd, args, { cwd, windowsHide: true, shell: false, env });
     let out = "";
     const take = (buf: Buffer) => { out = (out + buf.toString("utf8")).slice(-8000); };
     child.stdout?.on("data", take);
@@ -129,7 +147,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "hyperframes.render",
-      description: "Run npx hyperframes render in hyperframes/<slug> and return the CLI output. Needs Node 22, FFmpeg and Chrome on this machine. Stops after 3 minutes.",
+      description: "Run npx hyperframes render in hyperframes/<slug>. Uses the Playwright Chromium already on this machine. If FFmpeg, Python or ImageMagick is missing, call runtimes.install. Stops after 3 minutes.",
       input: z.object({ slug: z.string() }),
       sideEffects: "external",
       idempotent: false,
