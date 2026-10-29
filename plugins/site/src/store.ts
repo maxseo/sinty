@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { parseLayout, SiteError, type Block } from "./layout.js";
+export { SiteError };
 
 export const KINDS = ["page", "post", "category", "template"] as const;
 export type Kind = (typeof KINDS)[number];
@@ -23,6 +25,7 @@ export interface Doc {
   loginRequired: boolean;
   categoryId: string | null;
   seo: Seo;
+  layout: Block[];
   createdAt: string;
   updatedAt: string;
 }
@@ -40,13 +43,6 @@ export interface DocInput {
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export class SiteError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SiteError";
-  }
-}
-
 interface Row {
   id: string;
   kind: Kind;
@@ -60,6 +56,7 @@ interface Row {
   seo_description: string;
   seo_image: string;
   noindex: number;
+  layout: string;
   created_at: string;
   updated_at: string;
 }
@@ -92,6 +89,8 @@ export class SiteStore {
       CREATE UNIQUE INDEX IF NOT EXISTS docs_public_slug ON docs(slug) WHERE kind != 'template';
       CREATE UNIQUE INDEX IF NOT EXISTS docs_template_slug ON docs(slug) WHERE kind = 'template';
     `);
+    const cols = this.db.prepare("PRAGMA table_info(docs)").all() as unknown as { name: string }[];
+    if (!cols.some((c) => c.name === "layout")) this.db.exec("ALTER TABLE docs ADD COLUMN layout TEXT NOT NULL DEFAULT '[]'");
   }
 
   list(filter: { kind?: Kind; status?: Status } = {}): Doc[] {
@@ -155,6 +154,26 @@ export class SiteStore {
     return this.get(id)!;
   }
 
+  /** Replace the constructor tree. Does not change publish status. */
+  setLayout(id: string, layout: unknown): Doc {
+    const doc = this.get(id);
+    if (!doc) throw new SiteError(`no record ${id}`);
+    const tree = parseLayout(layout);
+    this.db.prepare("UPDATE docs SET layout = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(tree), new Date().toISOString(), doc.id);
+    return this.get(doc.id)!;
+  }
+
+  /** Append one block that pulls a template in. The template is not copied, so editing it updates every page that uses it. */
+  useTemplate(id: string, templateId: string): Doc {
+    const doc = this.get(id);
+    const tpl = this.get(templateId);
+    if (!doc) throw new SiteError(`no record ${id}`);
+    if (!tpl || tpl.kind !== "template") throw new SiteError("templateId is not a template");
+    const layout = [...doc.layout, { id: `b_${randomBytes(4).toString("hex")}`, rows: [{ id: `r_${randomBytes(4).toString("hex")}`, cols: [{ id: `c_${randomBytes(4).toString("hex")}`, widgets: [{ id: `w_${randomBytes(4).toString("hex")}`, type: "dynamic_block" as const, props: { templateId: tpl.id } }] }] }] }];
+    this.db.prepare("UPDATE docs SET layout = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(layout), new Date().toISOString(), doc.id);
+    return this.get(doc.id)!;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -164,8 +183,17 @@ export class SiteStore {
     const row = this.db.prepare("SELECT * FROM docs WHERE slug = ? AND status = 'published' AND kind != 'template'").get(slug) as unknown as Row | undefined;
     if (!row) return undefined;
     const doc = toDoc(row);
-    if (doc.loginRequired) return { doc: { ...doc, body: "" }, hidden: true };
+    if (doc.loginRequired) return { doc: { ...doc, body: "", layout: [] }, hidden: true };
     return { doc, hidden: false };
+  }
+}
+
+function parseStored(raw: string | undefined): Block[] {
+  if (!raw) return [];
+  try {
+    return parseLayout(JSON.parse(raw) as unknown);
+  } catch {
+    return [];
   }
 }
 
@@ -180,6 +208,7 @@ function toDoc(r: Row): Doc {
     loginRequired: r.login_required === 1,
     categoryId: r.category_id,
     seo: { title: r.seo_title, description: r.seo_description, image: r.seo_image, noindex: r.noindex === 1 },
+    layout: parseStored(r.layout),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

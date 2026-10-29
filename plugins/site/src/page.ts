@@ -1,9 +1,9 @@
 /** Admin lists. The iframe has no token; the harness bridge adds it to GET /docs. Text only, no HTML from records. */
 export const TAB_CSP = ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", "connect-src 'none'", "form-action 'none'", "base-uri 'none'"].join("; ");
 
-export function tabHtml(which: "pages" | "blog"): string {
-  const title = which === "pages" ? "Страницы" : "Блог";
-  const kinds = which === "pages" ? "page,template" : "post,category";
+export function tabHtml(which: "pages" | "blog" | "builder"): string {
+  const title = which === "pages" ? "Страницы" : which === "blog" ? "Блог" : "Конструктор";
+  const kinds = which === "pages" ? "page,template" : which === "blog" ? "post,category" : "page,post,template";
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title>
 <style>
 body{margin:0;font:14px/1.45 system-ui,sans-serif;color:#1d1d1f;background:#fff}
@@ -35,7 +35,8 @@ function ask(path) {
 ask("/docs").then((m) => {
   const rows = ((m.data && m.data.records) || []).filter((r) => kinds.includes(r.kind));
   const ul = document.getElementById("list");
-  if (!rows.length) ul.innerHTML = '<li class="muted">Пока пусто. Записи создаёт агент инструментами site.write и site.publish.</li>';
+    if (!rows.length) ul.innerHTML = '<li class="muted">Пока пусто. Записи создаёт агент: site.write, site.layout, site.template, site.publish.</li>';
+  const builder = ${JSON.stringify(which === "builder")};
   for (const r of rows) {
     const li = document.createElement("li");
     const b = document.createElement("button");
@@ -43,7 +44,13 @@ ask("/docs").then((m) => {
     const s = document.createElement("span");
     s.className = "muted";
     s.textContent = " · " + r.kind + " · " + r.status + " · /" + r.slug;
-    b.onclick = () => { document.getElementById("body").textContent = r.body || "(пусто)"; };
+    b.onclick = () => {
+      const box = document.getElementById("body");
+      if (!builder) { box.textContent = r.body || "(пусто)"; return; }
+      const types = [];
+      for (const block of r.layout || []) for (const row of block.rows || []) for (const col of row.cols || []) for (const w of col.widgets || []) types.push(w.type);
+      box.textContent = types.length ? types.join(", ") : "(конструктор пуст)";
+    };
     li.append(b, s);
     ul.append(li);
   }
