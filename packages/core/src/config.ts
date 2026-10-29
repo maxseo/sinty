@@ -457,6 +457,7 @@ tools:
   "plugin.apply_patch": ask
   "mcp.install": ask
   "kanban.*": allow
+  "site.*": allow
   "memory.recall": allow
   "memory.write": allow
   "memory.forget": allow

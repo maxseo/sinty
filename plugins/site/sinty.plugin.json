@@ -1,0 +1,23 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "site",
+  "version": "0.1.0",
+  "description": "The site: pages, posts, categories and templates in the harness. The public site reads published records from here.",
+  "kinds": ["tool", "ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "fs": { "read": ["$DATA"], "write": ["$DATA"] } },
+  "tools": [
+    { "name": "site.list", "description": "List site records (pages, posts, categories, templates).", "sideEffects": "read", "idempotent": true },
+    { "name": "site.read", "description": "Read one site record by id or slug, including drafts.", "sideEffects": "read", "idempotent": true },
+    { "name": "site.write", "description": "Create or update a site record. A new record is a draft. Does not publish.", "sideEffects": "write", "idempotent": true },
+    { "name": "site.publish", "description": "Publish a record or return it to draft.", "sideEffects": "write", "idempotent": true }
+  ],
+  "ui": {
+    "tabs": [
+      { "id": "pages", "title": "Страницы", "path": "/tab/pages", "placement": "sidebar" },
+      { "id": "blog", "title": "Блог", "path": "/tab/blog", "placement": "sidebar" }
+    ]
+  },
+  "editable": true
+}
