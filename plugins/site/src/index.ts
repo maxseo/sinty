@@ -42,12 +42,13 @@ export default definePlugin({
     });
     ctx.tool({
       name: "site.write",
-      description: "Create or update a page, post, category or template. Pass id to update. A new record stays a draft until site.publish. slug is the public address, lowercase with hyphens. categoryId is the id of a category, for a post.",
+      description: "Create or update a page, post, category or template. Pass id to update. A new record stays a draft until site.publish. slug is the public address, lowercase with hyphens. For the one front page pass home true and omit slug: it opens at the domain root. categoryId is the id of a category, for a post.",
       input: z.object({
         id: z.string().optional(),
         kind,
         title: z.string().min(1),
-        slug: z.string().min(1),
+        slug: z.string().min(1).optional(),
+        home: z.boolean().optional(),
         body: z.string().optional(),
         loginRequired: z.boolean().optional(),
         categoryId: z.string().nullable().optional(),
@@ -61,7 +62,8 @@ export default definePlugin({
             content: store.write({
               kind: args.kind,
               title: args.title,
-              slug: args.slug,
+              ...(args.slug !== undefined ? { slug: args.slug } : {}),
+              ...(args.home ? { home: true } : {}),
               ...(args.id ? { id: args.id } : {}),
               ...(args.body !== undefined ? { body: args.body } : {}),
               ...(args.loginRequired !== undefined ? { loginRequired: args.loginRequired } : {}),
@@ -182,12 +184,13 @@ export default definePlugin({
       handler: () => json({ records: store.list() }),
     });
     const edit = (allowed: readonly Kind[], layout: boolean) => async (req: Request) => {
-      const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown; categoryId?: string } | null;
+      const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown; categoryId?: string; home?: boolean } | null;
       try {
         if (!body) throw new SiteError("пустое тело");
         if (body.action === "create") {
           if (!allowed.includes(body.kind as Kind)) throw new SiteError("этот тип здесь не создаётся");
-          return json(store.write({ kind: body.kind as Kind, title: String(body.title ?? ""), slug: String(body.slug ?? ""), ...(body.categoryId ? { categoryId: body.categoryId } : {}) }));
+          const home = body.home === true;
+          return json(store.write({ kind: body.kind as Kind, title: String(body.title ?? ""), ...(home ? { home: true } : { slug: String(body.slug ?? "") }), ...(body.categoryId ? { categoryId: body.categoryId } : {}) }));
         }
         if (body.action === "layout") {
           if (!layout) throw new SiteError("виджеты правятся в конструкторе");
@@ -358,16 +361,28 @@ export default definePlugin({
         return new Response(null, { status: 303, headers: { location: "/p/site/login", "set-cookie": cookie("", 0) } });
       },
     });
+    const show = (found: { doc: Doc; hidden: boolean } | undefined): Response => {
+      if (!found) return new Response("Страница не найдена", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
+      const body = found.hidden ? `<p>Эта страница откроется после входа. <a href="/p/site/login">Войти</a></p>` : pageBody(store, found.doc);
+      return html(viewHtml(found.doc.title, body));
+    };
+    ctx.http({
+      method: "GET",
+      path: "/",
+      public: true,
+      handler: (req) => show(store.homePage(signedIn(store, req))),
+    });
+    ctx.http({
+      method: "GET",
+      path: "/view",
+      public: true,
+      handler: (req) => show(store.homePage(signedIn(store, req))),
+    });
     ctx.http({
       method: "GET",
       path: "/view/:slug",
       public: true,
-      handler: (req, { params }) => {
-        const found = store.published(params.slug ?? "", signedIn(store, req));
-        if (!found) return new Response("Страница не найдена", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-        const body = found.hidden ? `<p>Эта страница откроется после входа. <a href="/p/site/login">Войти</a></p>` : pageBody(store, found.doc);
-        return html(viewHtml(found.doc.title, body));
-      },
+      handler: (req, { params }) => show(store.published(params.slug ?? "", signedIn(store, req))),
     });
   },
 });

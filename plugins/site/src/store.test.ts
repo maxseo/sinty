@@ -9,11 +9,13 @@ test("site store: draft stays hidden, publish shows it, a closed page hides its 
   const dir = mkdtempSync(join(tmpdir(), "sinty-site-"));
   try {
     const store = new SiteStore(dir);
-    const page = store.write({ kind: "page", title: "Главная", slug: "home", body: "привет" });
+    const page = store.write({ kind: "page", title: "Главная", home: true, body: "привет" });
+    assert.equal(page.home, true);
+    assert.throws(() => store.write({ kind: "page", title: "Ещё главная", home: true }), /уже есть/);
     assert.equal(page.status, "draft");
-    assert.equal(store.published("home"), undefined);
+    assert.equal(store.homePage(), undefined);
     store.setStatus(page.id, "published");
-    assert.equal(store.published("home")?.doc.body, "привет");
+    assert.equal(store.homePage()?.doc.body, "привет");
 
     const closed = store.write({ kind: "page", title: "Кабинет", slug: "account", body: "секрет", loginRequired: true });
     store.setStatus(closed.id, "published");
@@ -21,7 +23,7 @@ test("site store: draft stays hidden, publish shows it, a closed page hides its 
     assert.equal(seen.hidden, true);
     assert.equal(seen.doc.body, "");
 
-    assert.throws(() => store.write({ kind: "post", title: "Ещё", slug: "home", body: "" }), /already used/);
+    assert.throws(() => store.write({ kind: "post", title: "Ещё", slug: "account", body: "" }), /занят/);
 
     const tpl = store.write({ kind: "template", title: "Шапка", slug: "header" });
     store.setLayout(tpl.id, [{ rows: [{ cols: [{ widgets: [{ type: "title", props: { text: "Синти" } }] }] }] }]);
@@ -36,7 +38,7 @@ test("site store: draft stays hidden, publish shows it, a closed page hides its 
     assert.ok(store.visitorFromToken(token)?.email === "a@b.co");
     assert.throws(() => store.loginVisitor("a@b.co", "wrong-pass"), /wrong/);
 
-    const req = store.addRequest("home", { name: "Анна", email: "a@b.co", telegram: "@anna", message: "хочу счёт" });
+    const req = store.addRequest("account", { name: "Анна", email: "a@b.co", telegram: "@anna", message: "хочу счёт" });
     assert.equal(req.status, "pending");
     assert.equal(store.requests("pending")[0]?.fields.telegram, "@anna");
     assert.equal(store.setRequestStatus(req.id, "sent").status, "sent");
