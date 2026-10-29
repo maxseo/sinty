@@ -112,6 +112,18 @@ export class SiteStore {
         vk INTEGER NOT NULL DEFAULT 0
       );
       INSERT OR IGNORE INTO login_settings (id) VALUES (1);
+      CREATE TABLE IF NOT EXISTS chats (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS requests (
         id TEXT PRIMARY KEY,
         page_slug TEXT NOT NULL,
@@ -198,6 +210,44 @@ export class SiteStore {
 
   endSession(token: string): void {
     if (token) this.db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+  }
+
+  openChat(id: string): { id: string; sessionId: string | null } {
+    const existing = this.db.prepare("SELECT id, session_id FROM chats WHERE id = ?").get(id) as unknown as { id: string; session_id: string | null } | undefined;
+    if (existing) return { id: existing.id, sessionId: existing.session_id };
+    this.db.prepare("INSERT INTO chats (id, session_id, created_at) VALUES (?, NULL, ?)").run(id, new Date().toISOString());
+    return { id, sessionId: null };
+  }
+
+  setChatSession(id: string, sessionId: string): void {
+    this.db.prepare("UPDATE chats SET session_id = ? WHERE id = ?").run(sessionId, id);
+  }
+
+  addChatMessage(chatId: string, role: "visitor" | "agent", body: string): void {
+    const text = body.trim();
+    if (!text) throw new SiteError("message is empty");
+    if (text.length > 4000) throw new SiteError("message is too long");
+    this.db.prepare("INSERT INTO chat_messages (id, chat_id, role, body, created_at) VALUES (?, ?, ?, ?, ?)").run(`msg_${randomBytes(6).toString("hex")}`, chatId, role, text, new Date().toISOString());
+  }
+
+  chatMessages(chatId: string): { role: "visitor" | "agent"; body: string; createdAt: string }[] {
+    return (this.db.prepare("SELECT role, body, created_at FROM chat_messages WHERE chat_id = ? ORDER BY created_at").all(chatId) as unknown as { role: string; body: string; created_at: string }[]).map((r) => ({
+      role: r.role === "agent" ? "agent" : "visitor",
+      body: r.body,
+      createdAt: r.created_at,
+    }));
+  }
+
+  chats(): { id: string; sessionId: string | null; createdAt: string; last: string }[] {
+    return (this.db.prepare(
+      `SELECT c.id, c.session_id, c.created_at, (SELECT body FROM chat_messages m WHERE m.chat_id = c.id ORDER BY created_at DESC LIMIT 1) AS last
+       FROM chats c ORDER BY c.created_at DESC LIMIT 50`,
+    ).all() as unknown as { id: string; session_id: string | null; created_at: string; last: string | null }[]).map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      createdAt: r.created_at,
+      last: r.last ?? "",
+    }));
   }
 
   visitors(): { id: string; email: string; createdAt: string }[] {
