@@ -29,6 +29,12 @@ test("site store: draft stays hidden, publish shows it, a closed page hides its 
     const withTpl = store.useTemplate(page.id, tpl.id);
     assert.equal(withTpl.layout.length, 2);
     assert.equal(withTpl.layout[1]?.rows[0]?.cols[0]?.widgets[0]?.type, "dynamic_block");
+
+    const token = store.registerVisitor("a@b.co", "password1");
+    assert.equal(store.published("account", true)?.hidden, false);
+    assert.equal(store.published("account", true)?.doc.body, "секрет");
+    assert.ok(store.visitorFromToken(token)?.email === "a@b.co");
+    assert.throws(() => store.loginVisitor("a@b.co", "wrong-pass"), /wrong/);
     store.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
