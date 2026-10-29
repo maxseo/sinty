@@ -39,6 +39,30 @@ Work done on top of M6, outside the milestones. The plan behind it is [plan.md](
 | Responsive turns: background `agent.task`, `task.completed`, `agent.task_steer`, stop-all, stall pulse, approval queue, `responsive-turn` plugin | [#20](https://github.com/maxseo/sinty/pull/20) | `2026-10-23-responsive-turns` |
 | Responsive-turn UX: hide child chats in sidebar, no `trigger=task` after human stop-all, inherit `projectId` | (open) | `2026-10-23-responsive-turn-ux` |
 
+## Paused: site plugin (2026-10-29)
+
+The business site lives in `plugins/site`. Work stopped here on purpose. Local preview is enough until it resumes. Do not start the domain move from this note.
+
+Stacked pulls: [#44](https://github.com/maxseo/sinty/pull/44) records, [#45](https://github.com/maxseo/sinty/pull/45) constructor data, [#46](https://github.com/maxseo/sinty/pull/46) visitor login, [#47](https://github.com/maxseo/sinty/pull/47) forms, [#48](https://github.com/maxseo/sinty/pull/48) chat, [#49](https://github.com/maxseo/sinty/pull/49) human constructor, [#50](https://github.com/maxseo/sinty/pull/50) pages and blog tabs, [#51](https://github.com/maxseo/sinty/pull/51) home without a slug, [#52](https://github.com/maxseo/sinty/pull/52) page fields, [#53](https://github.com/maxseo/sinty/pull/53) dark canvas. Data is SQLite at `$SINTY_HOME/data/site/site.db`.
+
+Done:
+
+- Records `page`, `post`, `category`, `template`. Agent tools `site.list`, `site.read`, `site.write`, `site.publish`, `site.layout`, `site.template`, `site.login`, `site.visitors`, `site.requests`, `site.request`, `site.chats`.
+- Tabs: Страницы (internal page: title, address, meta title, meta description, body), Блог (category, then post), Конструктор (type Главная / Страница / Категория, then the record), Вход, Заявки, Чаты.
+- The front page is the one `is_home` record. No public slug. Published home is `http://127.0.0.1:3180/p/site/`. An internal page is `http://127.0.0.1:3180/p/site/view/<slug>`. Drafts are 404.
+- A category layout is used when a record in that category has an empty layout.
+- Constructor canvas: dark page, block / row / column frames, properties for the selected widget, six widgets (title, text, image, button, menu, form), publish.
+- Visitor email and password at `/p/site/login`. `loginRequired` hides the body. OAuth toggles exist and do not sign anyone in.
+- A form stores a request. The plugin does not send mail or Telegram. Chat at `/p/site/chat` opens a harness session.
+
+Still open when work resumes:
+
+- The Syntet Vue builder: drag and drop, live page preview, devices, miniatures, and the full widget set. The canvas above is only the frame.
+- Google, Telegram, Yandex and VK login. Secrets stay in the harness.
+- Mail and Telegram to an address taken from the form. `channel-telegram` only replies to the chat that wrote the bot.
+- Global SEO (robots, sitemap, scripts), JSON-LD, image files next to the database.
+- A separate public frontend and a domain. Wait until the domains are ready.
+
 ## Known gaps
 
 - Durable `scheduler` plugin: minimal opt-in slice exists (`plugins/scheduler`); richer catch-up / trigger=`schedule` / Settings UI still open. See [backlog](backlog.md#scheduler-plugin-durable-timers--cron--not-kanban).
