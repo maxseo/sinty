@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-29 | [HyperFrames plugin](2026-10-29-hyperframes-plugin.md) | (open) | Agents write and render a HyperFrames composition. The tab shows upstream updates. |
 | 2026-10-29 | [Site plugin paused](2026-10-29-site-plugin-paused.md) | (open) | Site plugin status is written in the roadmap. Work on it is paused. |
 | 2026-10-29 | [Constructor canvas](2026-10-29-site-builder-canvas.md) | (open) | The constructor tab is a dark canvas with block frames and a properties panel. |
 | 2026-10-29 | [Pages and the constructor pick](2026-10-29-site-pages-fields.md) | (open) | Pages are internal records with meta fields. The constructor chooses the front page, one page, or a category. |
