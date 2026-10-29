@@ -459,6 +459,7 @@ tools:
   "kanban.*": allow
   "site.*": allow
   "hyperframes.*": allow
+  "runtimes.*": allow
   "memory.recall": allow
   "memory.write": allow
   "memory.forget": allow

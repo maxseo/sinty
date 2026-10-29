@@ -1,0 +1,20 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "runtimes",
+  "version": "0.1.0",
+  "description": "Install FFmpeg, Python and ImageMagick for the agent, and point Chrome at the Chromium Playwright already downloaded.",
+  "kinds": ["tool", "ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": { "shell": true },
+  "tools": [
+    { "name": "runtimes.status", "description": "Where FFmpeg, Python, ImageMagick and Chrome are, or that they are missing.", "sideEffects": "read", "idempotent": true },
+    { "name": "runtimes.install", "description": "Install ffmpeg, python, magick, or all of them with winget. Chrome is the Playwright Chromium already on the machine.", "sideEffects": "external", "idempotent": true }
+  ],
+  "ui": {
+    "tabs": [
+      { "id": "setup", "title": "Программы", "path": "/tab/setup", "placement": "sidebar" }
+    ]
+  },
+  "editable": true
+}
