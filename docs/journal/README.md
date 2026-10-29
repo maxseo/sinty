@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-29 | [Pages and blog tabs](2026-10-29-site-pages-blog.md) | (open) | A person creates pages, categories and posts. Home is the page slug home. A template is a shared block. |
 | 2026-10-29 | [Human constructor](2026-10-29-site-human-builder.md) | (open) | Constructor tab creates and publishes pages. Tab bridge can POST to the plugin. |
 | 2026-10-29 | [Site chat](2026-10-29-site-chat.md) | (open) | Visitor chat at /p/site/chat. One harness session per browser. |
 | 2026-10-29 | [Site form](2026-10-29-site-forms.md) | (open) | Form widget stores the client's email and Telegram. The agent sends through a harness connector. |

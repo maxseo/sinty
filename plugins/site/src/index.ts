@@ -181,32 +181,39 @@ export default definePlugin({
       access: "view",
       handler: () => json({ records: store.list() }),
     });
-    ctx.http({
-      method: "POST",
-      path: "/edit",
-      surface: "builder",
-      access: "edit",
-      handler: async (req) => {
-        const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown } | null;
-        try {
-          if (!body) throw new SiteError("пустое тело");
-          if (body.action === "create") {
-            if (!(KINDS as readonly string[]).includes(String(body.kind))) throw new SiteError("kind must be page, post, category or template");
-            return json(store.write({ kind: body.kind as Kind, title: String(body.title ?? ""), slug: String(body.slug ?? "") }));
-          }
-          if (body.action === "layout") {
-            const widgets = Array.isArray(body.widgets) ? body.widgets : [];
-            return json(store.setLayout(String(body.id ?? ""), [{ rows: [{ cols: [{ widgets }] }] }]));
-          }
-          if (body.action === "status") {
-            if (body.status !== "draft" && body.status !== "published") throw new SiteError("status must be draft or published");
-            return json(store.setStatus(String(body.id ?? ""), body.status));
-          }
-          throw new SiteError("unknown action");
-        } catch (e) {
-          return json({ error: { code: "site_error", message: e instanceof SiteError ? e.message : "не сохранилось" } }, 400);
+    const edit = (allowed: readonly Kind[], layout: boolean) => async (req: Request) => {
+      const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown; categoryId?: string } | null;
+      try {
+        if (!body) throw new SiteError("пустое тело");
+        if (body.action === "create") {
+          if (!allowed.includes(body.kind as Kind)) throw new SiteError("этот тип здесь не создаётся");
+          return json(store.write({ kind: body.kind as Kind, title: String(body.title ?? ""), slug: String(body.slug ?? ""), ...(body.categoryId ? { categoryId: body.categoryId } : {}) }));
         }
-      },
+        if (body.action === "layout") {
+          if (!layout) throw new SiteError("виджеты правятся в конструкторе");
+          const widgets = Array.isArray(body.widgets) ? body.widgets : [];
+          return json(store.setLayout(String(body.id ?? ""), [{ rows: [{ cols: [{ widgets }] }] }]));
+        }
+        if (body.action === "status") {
+          const doc = store.get(String(body.id ?? ""));
+          if (!doc || !allowed.includes(doc.kind)) throw new SiteError("запись не с этой вкладки");
+          if (body.status !== "draft" && body.status !== "published") throw new SiteError("status must be draft or published");
+          return json(store.setStatus(doc.id, body.status));
+        }
+        throw new SiteError("unknown action");
+      } catch (e) {
+        return json({ error: { code: "site_error", message: e instanceof SiteError ? e.message : "не сохранилось" } }, 400);
+      }
+    };
+    ctx.http({ method: "POST", path: "/edit", surface: "builder", access: "edit", handler: edit(KINDS, true) });
+    ctx.http({ method: "POST", path: "/pages/edit", surface: "pages", access: "edit", handler: edit(["page"], false) });
+    ctx.http({ method: "POST", path: "/blog/edit", surface: "blog", access: "edit", handler: edit(["post", "category"], false) });
+    ctx.http({
+      method: "GET",
+      path: "/blog-docs",
+      surface: "blog",
+      access: "view",
+      handler: () => json({ records: store.list().filter((d) => d.kind === "post" || d.kind === "category") }),
     });
     ctx.http({ method: "GET", path: "/tab/login", public: true, surface: "login", handler: () => html(loginTab()) });
     ctx.http({ method: "GET", path: "/tab/requests", public: true, surface: "requests", handler: () => html(requestsTab()) });
