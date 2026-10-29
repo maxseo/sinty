@@ -120,6 +120,7 @@ The only way the agent changes code. Four core tools:
 | `plugin.list` | allow | installed plugins, location (`bundled` or `home`), `editable`, tools |
 | `plugin.read` | allow | list a plugin's files, or read one |
 | `plugin.propose_patch` | allow | write new full file contents to a staging copy and test it; nothing runs yet |
+| `plugin.create` | allow | stage and test a new plugin written by the agent; nothing runs yet |
 | `plugin.apply_patch` | ask | commit, hot-reload, watch, roll back if needed |
 
 ```ts
@@ -144,4 +145,6 @@ Tool errors the plugin raises on purpose (`ToolError` with its own code) do not 
 
 MCP servers (only): create a new home plugin with core tool `mcp.install` or `POST /v1/plugins/mcp` (both **ask**). Writes `$SINTY_HOME/plugins/<name>/sinty.plugin.json`, enables it, hot-starts via `PluginHost.reload`. From chat, `mcp.install` defaults to `bind: agent` (roster visibility for the speaker); API/Settings default `bind: none`. Does not go through the patch pipeline.
 
-Not yet: creating arbitrary node plugins through the pipeline, a policy mode that applies patches automatically when tests pass.
+New node plugins: core tool `plugin.create` (default **allow**: it only stages and tests) writes a new plugin into staging under the narrower rules of [plugin-rules.md](plugin-rules.md) section 9; `plugin.apply_patch` for it always asks a human, then installs, enables and starts it.
+
+Not yet: a policy mode that applies patches automatically when tests pass.

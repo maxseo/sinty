@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, relative, sep } from "node:path";
 import type { PluginManifest } from "@sinty/sdk";
+import { agentMadePlugins, agentManifestViolations, markAgentMade } from "./agent-plugins.js";
 import { git, hasGit } from "./git.js";
 import { newId } from "./ids.js";
 import type { PluginHost } from "./host/host.js";
@@ -26,6 +27,8 @@ export interface PatchEvents {
   applied(p: PatchRow): void;
   rolledBack(p: { sessionId: string; patchId: string; plugin: string; toCommit: string; reason: string }): void;
   toolsChanged(): void;
+  /** A new plugin was applied: add it to config.yaml plugins.enabled before it starts. */
+  enable?(plugin: string): void;
 }
 
 const MAX_FILES = 20;
@@ -35,6 +38,7 @@ const CANARY_CALLS = 5;
 const CANARY_MAX_FAILURES = 2;
 const CANARY_CODES = new Set(["plugin_error", "plugin_crashed", "timeout", "plugin_unavailable"]);
 const SKIP = new Set(["node_modules", "dist", ".git"]);
+const PLUGIN_NAME = /^[a-z][a-z0-9-]{1,63}$/;
 
 interface Canary {
   patchId: string;
@@ -77,39 +81,57 @@ export class PatchManager {
     return { plugin, path, content: text };
   }
 
+  /**
+   * A new plugin written by the agent: same staging, tests and apply as a patch, under the narrower rules of
+   * agent-plugins.ts. Applying it always needs a human, because it brings its first permissions.
+   */
+  async create(sessionId: string, input: { plugin: string; reason: string; files: PatchFile[] }): Promise<PatchRow> {
+    const name = input.plugin;
+    if (!PLUGIN_NAME.test(name)) throw new PatchError("bad_name", `plugin name must match ${PLUGIN_NAME}`, "Use a lowercase id like weather or price-check.");
+    if (this.exists(name) || existsSync(join(this.paths.plugins, name))) throw new PatchError("exists", `plugin ${name} already exists`, "Pick another name, or change it with plugin.propose_patch.");
+    this.checkFiles(input.files);
+    if (!input.files.some((f) => normalize(f.path) === "sinty.plugin.json")) throw new PatchError("bad_patch", "a new plugin needs sinty.plugin.json", "See docs/spec/plugin-rules.md.");
+
+    this.ensureSdkLink();
+    const id = newId("pat");
+    const staging = join(this.paths.plugins, ".staging", id, name);
+    mkdirSync(staging, { recursive: true });
+    writeFiles(staging, input.files);
+    const row = this.newRow(id, name, sessionId, input);
+    row.permissionsChanged = true;
+    this.events.proposed(row);
+
+    let manifest: PluginManifest;
+    try {
+      manifest = parseManifest(JSON.parse(readFileSync(join(staging, "sinty.plugin.json"), "utf8")));
+      if (manifest.name !== name) throw new Error(`manifest name must be "${name}"`);
+    } catch (e) {
+      return this.finishTest(row, false, `manifest: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const bad = agentManifestViolations(manifest);
+    if (bad.length) return this.finishTest(row, false, `rules for agent-written plugins:\n- ${bad.join("\n- ")}`);
+    const { ok, output } = await this.test({ dir: staging, manifest, bundled: false, agentMade: true });
+    return this.finishTest(row, ok, output);
+  }
+
+  /** True when the patch brings a plugin that does not exist yet. */
+  isCreation(patchId: string): boolean {
+    const p = this.journal.getPatch(patchId);
+    return Boolean(p && p.status !== "applied" && !this.exists(p.plugin));
+  }
+
   async propose(sessionId: string, input: { plugin: string; reason: string; files: PatchFile[] }): Promise<PatchRow> {
     const loaded = this.locate(input.plugin);
     if (loaded.manifest.editable === false) throw new PatchError("not_editable", `plugin ${input.plugin} is marked editable: false`, "Ask the human to change it.");
-    if (!input.files.length || input.files.length > MAX_FILES) throw new PatchError("bad_patch", `a patch must change 1–${MAX_FILES} files`);
-    for (const f of input.files) {
-      this.checkRelPath(f.path);
-      if (Buffer.byteLength(f.content) > MAX_FILE_BYTES) throw new PatchError("too_large", `${f.path} is larger than ${MAX_FILE_BYTES} bytes`);
-    }
+    this.checkFiles(input.files);
 
     this.ensureSdkLink();
     const id = newId("pat");
     const staging = join(this.paths.plugins, ".staging", id, input.plugin);
     copyPlugin(loaded.dir, staging);
     if (loaded.bundled) adaptForkedManifest(staging);
-    for (const f of input.files) {
-      const abs = join(staging, normalize(f.path));
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, f.content);
-    }
-
-    const row: PatchRow = {
-      id,
-      plugin: input.plugin,
-      sessionId,
-      status: "ready",
-      reason: input.reason,
-      files: input.files,
-      permissionsChanged: false,
-      testOutput: "",
-      baseCommit: null,
-      commit: null,
-      createdAt: new Date().toISOString(),
-    };
+    writeFiles(staging, input.files);
+    const row = this.newRow(id, input.plugin, sessionId, input);
     this.events.proposed(row);
 
     let manifest: PluginManifest;
@@ -120,9 +142,46 @@ export class PatchManager {
       return this.finishTest(row, false, `manifest: ${e instanceof Error ? e.message : String(e)}`);
     }
     row.permissionsChanged = stable(manifest.permissions) !== stable(loaded.manifest.permissions);
+    if (loaded.agentMade) {
+      const bad = agentManifestViolations(manifest);
+      if (bad.length) return this.finishTest(row, false, `rules for agent-written plugins:\n- ${bad.join("\n- ")}`);
+    }
 
-    const { ok, output } = await this.test({ dir: staging, manifest, bundled: false });
+    const { ok, output } = await this.test({ dir: staging, manifest, bundled: false, ...(loaded.agentMade ? { agentMade: true } : {}) });
     return this.finishTest(row, ok, output);
+  }
+
+  private newRow(id: string, plugin: string, sessionId: string, input: { reason: string; files: PatchFile[] }): PatchRow {
+    return {
+      id,
+      plugin,
+      sessionId,
+      status: "ready",
+      reason: input.reason,
+      files: input.files,
+      permissionsChanged: false,
+      testOutput: "",
+      baseCommit: null,
+      commit: null,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  private checkFiles(files: PatchFile[]): void {
+    if (!files.length || files.length > MAX_FILES) throw new PatchError("bad_patch", `a patch must change 1–${MAX_FILES} files`);
+    for (const f of files) {
+      this.checkRelPath(f.path);
+      if (Buffer.byteLength(f.content) > MAX_FILE_BYTES) throw new PatchError("too_large", `${f.path} is larger than ${MAX_FILE_BYTES} bytes`);
+    }
+  }
+
+  private exists(plugin: string): boolean {
+    try {
+      this.host.locate(plugin);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   getPatch(id: string): PatchRow | undefined {
@@ -138,8 +197,9 @@ export class PatchManager {
 
     await this.ensureRepo();
     const dest = join(this.paths.plugins, p.plugin);
-    const loaded = this.locate(p.plugin);
-    if (loaded.bundled) {
+    const created = !this.exists(p.plugin);
+    const loaded = created ? undefined : this.locate(p.plugin);
+    if (loaded?.bundled) {
       copyPlugin(loaded.dir, dest);
       adaptForkedManifest(dest);
       await git(this.paths.plugins, "add", "-A", "--", p.plugin);
@@ -154,6 +214,10 @@ export class PatchManager {
     const commit = await git(this.paths.plugins, "rev-parse", "HEAD");
     p.baseCommit = baseCommit;
     p.commit = commit;
+    if (created) {
+      markAgentMade(this.paths, p.plugin, true);
+      this.events.enable?.(p.plugin);
+    }
 
     const err = await this.host.reload(p.plugin);
     if (err) {
@@ -201,6 +265,7 @@ export class PatchManager {
     await this.host.unload(plugin);
     rmSync(dest, { recursive: true, force: true });
     if (existed) await git(this.paths.plugins, "checkout", commit, "--", plugin);
+    else if (agentMadePlugins(this.paths).has(plugin)) markAgentMade(this.paths, plugin, false);
     await git(this.paths.plugins, "add", "-A", "--", plugin);
     await git(this.paths.plugins, "commit", "-q", "--allow-empty", "-m", `rollback ${plugin} to ${commit.slice(0, 8)}: ${reason.slice(0, 200)}`);
     await this.host.reload(plugin);
@@ -278,6 +343,14 @@ export class PatchManager {
   private inside(dir: string, p: string): string {
     this.checkRelPath(p);
     return join(dir, normalize(p));
+  }
+}
+
+function writeFiles(dir: string, files: PatchFile[]): void {
+  for (const f of files) {
+    const abs = join(dir, normalize(f.path));
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, f.content);
   }
 }
 

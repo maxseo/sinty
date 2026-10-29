@@ -453,6 +453,7 @@ tools:
   "plugin.list": allow
   "plugin.read": allow
   "plugin.propose_patch": allow
+  "plugin.create": allow
   "plugin.apply_patch": ask
   "mcp.install": ask
   "kanban.*": allow

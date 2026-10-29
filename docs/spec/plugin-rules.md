@@ -140,3 +140,36 @@ Unchanged from [staff accounts](../journal/2026-10-28-staff-access-fix.md): the 
 Existing grants are copied to the new ids once, on the first start of the new version. The hard-coded plugin
 mappings in `server.ts` (`pluginResource`, `sectionResource`) and in the Web UI (`sideTabResource`,
 `settingsResource`, `hasKanban`, `hasScheduler`) are removed.
+
+## 9. Plugins the agent writes
+
+The agent writes a new plugin with the core tool `plugin.create` `{ plugin, reason, files }`. It goes through the patch
+pipeline: staging copy, load check and `*.test.*` files in the sandbox, then `plugin.apply_patch`, git commit,
+hot start and canary. Code: `packages/core/src/agent-plugins.ts`, `patches.ts` (`create`).
+
+- **A human approves every new plugin.** `plugin.apply_patch` for a plugin that does not exist yet asks a human even
+  when policy says `allow`. Applying writes the folder `$SINTY_HOME/plugins/<name>`, adds the name to `config.yaml`
+  `plugins.enabled` and to the speaking agent's card, and starts it.
+- **The core marks it.** The name goes to `$SINTY_HOME/plugins/.agent-made.json`. That file is outside every plugin
+  folder, so no patch can remove the mark. A rollback that removes the plugin removes the mark.
+- **Narrower manifest.** Checked when the plugin is created, on every later patch, and on every start:
+
+| Allowed | Not allowed |
+|---|---|
+| `runtime: "node"`, `entry` a `.ts`, `.mjs` or `.js` file | `mcp-stdio`, `http` (MCP servers go through `mcp.install`) |
+| kinds `tool`, `ui`, `schedule`, `event` | `provider`, `context`, `channel`, `server`, `memory` |
+| `fs.write` `$DATA` or inside it; `fs.read` also `$PLUGIN` | any other path, `$WORKSPACE`, `$CONFIG.*` |
+| `net` hosts (still cut by `policy.yaml net.allow`), `"$PUBLIC"` | `shell`, `browser` (they open child processes) |
+| `secrets` by name, `models` routes | `env`, `context` |
+| `agent: ["sessions.read"]` | `sessions.write` |
+| tools named `<plugin>.<verb>` | other names, `defaultPolicy: "allow"` |
+| `ui.tabs` with `path` | `ui.static`, `builtin`, `editable: false` |
+
+- **Runtime checks.** On start the host refuses an agent-made plugin that registers a tool outside `<plugin>.*`, a model
+  provider, or a `public` route other than the `GET` page of one of its `ui.tabs`.
+- **No chat data by default.** Without `permissions.agent: ["sessions.read"]` the plugin gets no journal reads and no
+  events, whatever it subscribes to.
+- **Screens are closed.** Its tabs and settings appear in Права closed for everyone but the superadmin (section 5.2).
+
+To give such a plugin more than this table, a human edits its folder by hand or installs it from a path; the agent
+cannot.
