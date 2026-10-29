@@ -112,7 +112,46 @@ export class SiteStore {
         vk INTEGER NOT NULL DEFAULT 0
       );
       INSERT OR IGNORE INTO login_settings (id) VALUES (1);
+      CREATE TABLE IF NOT EXISTS requests (
+        id TEXT PRIMARY KEY,
+        page_slug TEXT NOT NULL,
+        fields TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL
+      );
     `);
+  }
+
+  /** A visitor form. fields are what the client typed, including where to write (email, telegram). status pending means the agent has not sent the notice yet. */
+  addRequest(pageSlug: string, fields: Record<string, string>): RequestRow {
+    const page = this.published(pageSlug, true);
+    if (!page) throw new SiteError("no such page");
+    const clean: Record<string, string> = {};
+    for (const key of ["name", "email", "phone", "telegram", "message"]) {
+      const value = (fields[key] ?? "").trim();
+      if (!value) continue;
+      if (value.length > 2000) throw new SiteError(`${key} is too long`);
+      clean[key] = value;
+    }
+    if (!Object.keys(clean).length) throw new SiteError("the form is empty");
+    const id = `req_${randomBytes(6).toString("hex")}`;
+    const createdAt = new Date().toISOString();
+    this.db.prepare("INSERT INTO requests (id, page_slug, fields, status, created_at) VALUES (?, ?, ?, 'pending', ?)").run(id, pageSlug, JSON.stringify(clean), createdAt);
+    return { id, pageSlug, fields: clean, status: "pending", createdAt };
+  }
+
+  requests(status?: "pending" | "sent"): RequestRow[] {
+    const rows = (status
+      ? this.db.prepare("SELECT * FROM requests WHERE status = ? ORDER BY created_at DESC").all(status)
+      : this.db.prepare("SELECT * FROM requests ORDER BY created_at DESC").all()) as unknown as { id: string; page_slug: string; fields: string; status: string; created_at: string }[];
+    return rows.map(toRequest);
+  }
+
+  setRequestStatus(id: string, status: "pending" | "sent"): RequestRow {
+    const row = this.db.prepare("SELECT id FROM requests WHERE id = ?").get(id);
+    if (!row) throw new SiteError(`no request ${id}`);
+    this.db.prepare("UPDATE requests SET status = ? WHERE id = ?").run(status, id);
+    return toRequest(this.db.prepare("SELECT * FROM requests WHERE id = ?").get(id) as unknown as { id: string; page_slug: string; fields: string; status: string; created_at: string });
   }
 
   loginSettings(): LoginSettings {
@@ -265,6 +304,27 @@ export class SiteStore {
     if (doc.loginRequired && !signedIn) return { doc: { ...doc, body: "", layout: [] }, hidden: true };
     return { doc, hidden: false };
   }
+}
+
+export interface RequestRow {
+  id: string;
+  pageSlug: string;
+  fields: Record<string, string>;
+  status: "pending" | "sent";
+  createdAt: string;
+}
+
+function toRequest(r: { id: string; page_slug: string; fields: string; status: string; created_at: string }): RequestRow {
+  let fields: Record<string, string> = {};
+  try {
+    const parsed = JSON.parse(r.fields) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [k, v] of Object.entries(parsed)) if (typeof v === "string") fields[k] = v;
+    }
+  } catch {
+    fields = {};
+  }
+  return { id: r.id, pageSlug: r.page_slug, fields, status: r.status === "sent" ? "sent" : "pending", createdAt: r.created_at };
 }
 
 export interface LoginSettings {

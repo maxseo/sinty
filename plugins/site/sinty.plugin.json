@@ -15,14 +15,17 @@
     { "name": "site.layout", "description": "Replace the widget tree of a page, post or template.", "sideEffects": "write", "idempotent": true },
     { "name": "site.template", "description": "Insert a template into a record as a dynamic block.", "sideEffects": "write", "idempotent": false },
     { "name": "site.login", "description": "Turn visitor sign-in methods on or off.", "sideEffects": "write", "idempotent": true },
-    { "name": "site.visitors", "description": "List visitor accounts without passwords.", "sideEffects": "read", "idempotent": true }
+    { "name": "site.visitors", "description": "List visitor accounts without passwords.", "sideEffects": "read", "idempotent": true },
+    { "name": "site.requests", "description": "List form submissions and where to write the client.", "sideEffects": "read", "idempotent": true },
+    { "name": "site.request", "description": "Mark a form submission sent or still pending.", "sideEffects": "write", "idempotent": true }
   ],
   "ui": {
     "tabs": [
       { "id": "pages", "title": "Страницы", "path": "/tab/pages", "placement": "sidebar" },
       { "id": "blog", "title": "Блог", "path": "/tab/blog", "placement": "sidebar" },
       { "id": "builder", "title": "Конструктор", "path": "/tab/builder", "placement": "sidebar" },
-      { "id": "login", "title": "Вход", "path": "/tab/login", "placement": "sidebar" }
+      { "id": "login", "title": "Вход", "path": "/tab/login", "placement": "sidebar" },
+      { "id": "requests", "title": "Заявки", "path": "/tab/requests", "placement": "sidebar" }
     ]
   },
   "editable": true
