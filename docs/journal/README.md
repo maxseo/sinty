@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-29 | [Pages and the constructor pick](2026-10-29-site-pages-fields.md) | (open) | Pages are internal records with meta fields. The constructor chooses the front page, one page, or a category. |
 | 2026-10-29 | [Front page without an address](2026-10-29-site-home.md) | (open) | Home is a list choice. It opens at the site root. The pages form shows why a save failed. |
 | 2026-10-29 | [Pages and blog tabs](2026-10-29-site-pages-blog.md) | (open) | A person creates pages, categories and posts. Home is the page slug home. A template is a shared block. |
 | 2026-10-29 | [Human constructor](2026-10-29-site-human-builder.md) | (open) | Constructor tab creates and publishes pages. Tab bridge can POST to the plugin. |

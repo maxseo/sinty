@@ -184,13 +184,20 @@ export default definePlugin({
       handler: () => json({ records: store.list() }),
     });
     const edit = (allowed: readonly Kind[], layout: boolean) => async (req: Request) => {
-      const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown; categoryId?: string; home?: boolean } | null;
+      const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown; categoryId?: string; home?: boolean; body?: string; metaTitle?: string; metaDescription?: string } | null;
       try {
         if (!body) throw new SiteError("пустое тело");
         if (body.action === "create") {
           if (!allowed.includes(body.kind as Kind)) throw new SiteError("этот тип здесь не создаётся");
           const home = body.home === true;
-          return json(store.write({ kind: body.kind as Kind, title: String(body.title ?? ""), ...(home ? { home: true } : { slug: String(body.slug ?? "") }), ...(body.categoryId ? { categoryId: body.categoryId } : {}) }));
+          return json(store.write({
+            kind: body.kind as Kind,
+            title: String(body.title ?? ""),
+            ...(home ? { home: true } : { slug: String(body.slug ?? "") }),
+            ...(body.body !== undefined ? { body: String(body.body) } : {}),
+            ...(body.categoryId ? { categoryId: body.categoryId } : {}),
+            ...((body.metaTitle || body.metaDescription) ? { seo: { title: String(body.metaTitle ?? ""), description: String(body.metaDescription ?? "") } } : {}),
+          }));
         }
         if (body.action === "layout") {
           if (!layout) throw new SiteError("виджеты правятся в конструкторе");
@@ -390,9 +397,10 @@ export default definePlugin({
 const html = (body: string): Response => new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": TAB_CSP, "cache-control": "no-store" } });
 
 function pageBody(store: SiteStore, doc: Doc): string {
-  if (doc.layout.length) {
+  const layout = doc.layout.length ? doc.layout : (doc.categoryId ? store.get(doc.categoryId)?.layout ?? [] : []);
+  if (layout.length) {
     const published = store.list({ status: "published" });
-    return renderLayout(doc.layout, doc, (id) => store.get(id), {
+    return renderLayout(layout, doc, (id) => store.get(id), {
       posts: published.filter((d) => d.kind === "post"),
       categories: published.filter((d) => d.kind === "category"),
     });
