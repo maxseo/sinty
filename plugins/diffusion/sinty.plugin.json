@@ -1,0 +1,25 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "diffusion",
+  "version": "0.1.0",
+  "description": "Drive the Diffusion Studio editor: open a JSX project, inspect media, check the cut and export. Needs the desktop app and its diffusion command.",
+  "kinds": ["tool", "ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$WORKSPACE"], "write": ["$WORKSPACE"] },
+    "net": ["$PUBLIC"],
+    "shell": true
+  },
+  "tools": [
+    { "name": "diffusion.status", "description": "Whether the diffusion command is installed, and the latest GitHub release.", "sideEffects": "read", "idempotent": true },
+    { "name": "diffusion.run", "description": "Run one Diffusion Studio command in the workspace: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job.", "sideEffects": "external", "idempotent": false },
+    { "name": "diffusion.generate", "description": "Generate media through the Diffusion Studio account. Spends credits.", "sideEffects": "external", "idempotent": false, "defaultPolicy": "ask" }
+  ],
+  "ui": {
+    "tabs": [
+      { "id": "status", "title": "Diffusion", "path": "/tab/status", "placement": "sidebar" }
+    ]
+  },
+  "editable": true
+}

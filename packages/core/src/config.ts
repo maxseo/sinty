@@ -460,6 +460,8 @@ tools:
   "site.*": allow
   "hyperframes.*": allow
   "runtimes.*": allow
+  "diffusion.generate": ask
+  "diffusion.*": allow
   "memory.recall": allow
   "memory.write": allow
   "memory.forget": allow
