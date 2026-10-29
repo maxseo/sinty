@@ -9,6 +9,7 @@ export class SiteError extends Error {
 
 export interface LayoutDoc {
   title: string;
+  slug: string;
   updatedAt: string;
   layout: Block[];
   kind: string;
@@ -17,7 +18,7 @@ export interface LayoutDoc {
 /** Widgets copied from the Syntet builder, only the ones the first site needs. */
 export const WIDGET_TYPES = [
   "title", "text", "image", "icon", "button", "menu", "logo", "breadcrumbs",
-  "slider", "post_list", "category_list", "cover", "description", "author", "date", "post_nav", "dynamic_block",
+  "slider", "post_list", "category_list", "cover", "description", "author", "date", "post_nav", "dynamic_block", "form",
 ] as const;
 export type WidgetType = (typeof WIDGET_TYPES)[number];
 
@@ -143,6 +144,14 @@ function widgetHtml(w: Widget, doc: LayoutDoc, lookup: (id: string) => LayoutDoc
       return `<ul>${lists.categories.map((d) => `<li>${esc(d.title)}</li>`).join("")}</ul>`;
     case "post_nav":
       return `<p class="muted">Навигация по записям</p>`;
+    case "form": {
+      const names = (p.fields || "name,email,phone,telegram,message").split(",").map((s) => s.trim()).filter((s) => /^(name|email|phone|telegram|message)$/.test(s));
+      const labels: Record<string, string> = { name: "Имя", email: "Почта", phone: "Телефон", telegram: "Telegram", message: "Сообщение" };
+      const inputs = names.map((name) => name === "message"
+        ? `<p><label>${labels[name]}<br><textarea name="${name}" rows="4"></textarea></label></p>`
+        : `<p><label>${labels[name]}<br><input name="${name}" ${name === "email" ? 'type="email"' : ""}></label></p>`).join("");
+      return `<form method="post" action="/p/site/form"><input type="hidden" name="slug" value="${esc(doc.slug)}">${inputs}<p><button>Отправить</button></p></form>`;
+    }
     case "dynamic_block": {
       if (!expand) return `<p class="muted">Шаблон</p>`;
       const tpl = p.templateId ? lookup(p.templateId) : undefined;

@@ -89,7 +89,7 @@ export default definePlugin({
     });
     ctx.tool({
       name: "site.layout",
-      description: "Replace the constructor tree of a record. layout is a list of blocks; each block has rows; each row has cols; each col has widgets. A widget is { type, props }. Types: title, text, image, icon, button, menu, logo, breadcrumbs, slider, post_list, category_list, cover, description, author, date, post_nav, dynamic_block. dynamic_block props.templateId is a template record id. Does not publish.",
+      description: "Replace the constructor tree of a record. layout is a list of blocks; each block has rows; each row has cols; each col has widgets. A widget is { type, props }. Types: title, text, image, icon, button, menu, logo, breadcrumbs, slider, post_list, category_list, cover, description, author, date, post_nav, dynamic_block, form. form props.fields is a comma list of name, email, phone, telegram, message. dynamic_block props.templateId is a template record id. Does not publish.",
       input: z.object({ id: z.string().min(1), layout: z.array(z.unknown()) }),
       sideEffects: "write",
       idempotent: true,
@@ -126,6 +126,30 @@ export default definePlugin({
       },
     });
     ctx.tool({
+      name: "site.requests",
+      description: "List form submissions. Each record has the client's fields (name, email, phone, telegram, message) and status pending or sent. pending means the notice is not sent yet. Send it with a harness connector (mail or Telegram) to the address in those fields, then call site.request with status sent. This tool does not send anything.",
+      input: z.object({ status: z.enum(["pending", "sent"]).optional() }),
+      sideEffects: "read",
+      idempotent: true,
+      async run(args) {
+        return { content: { requests: store.requests(args.status) } };
+      },
+    });
+    ctx.tool({
+      name: "site.request",
+      description: "Mark a form submission sent after the connector delivered the notice, or pending if it still needs sending.",
+      input: z.object({ id: z.string().min(1), status: z.enum(["pending", "sent"]) }),
+      sideEffects: "write",
+      idempotent: true,
+      async run(args) {
+        try {
+          return { content: store.setRequestStatus(args.id, args.status) };
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    });
+    ctx.tool({
       name: "site.visitors",
       description: "List visitor accounts: id, email, createdAt. No passwords.",
       input: z.object({}),
@@ -140,6 +164,30 @@ export default definePlugin({
     ctx.http({ method: "GET", path: "/tab/blog", public: true, surface: "blog", handler: () => html(tabHtml("blog")) });
     ctx.http({ method: "GET", path: "/tab/builder", public: true, surface: "builder", handler: () => html(tabHtml("builder")) });
     ctx.http({ method: "GET", path: "/tab/login", public: true, surface: "login", handler: () => html(loginTab()) });
+    ctx.http({ method: "GET", path: "/tab/requests", public: true, surface: "requests", handler: () => html(requestsTab()) });
+    ctx.http({
+      method: "GET",
+      path: "/requests",
+      surface: "requests",
+      access: "view",
+      handler: () => json({ requests: store.requests() }),
+    });
+    ctx.http({
+      method: "POST",
+      path: "/form",
+      public: true,
+      handler: async (req) => {
+        const form = await req.formData();
+        const fields: Record<string, string> = {};
+        for (const key of ["name", "email", "phone", "telegram", "message"]) fields[key] = String(form.get(key) ?? "");
+        try {
+          store.addRequest(String(form.get("slug") ?? ""), fields);
+          return html(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>Заявка</title><p>Заявка принята.</p>`);
+        } catch (e) {
+          return html(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>Заявка</title><p>${e instanceof SiteError ? "Проверьте поля и попробуйте ещё раз." : "Не получилось отправить."}</p>`);
+        }
+      },
+    });
     ctx.http({
       method: "GET",
       path: "/settings",
@@ -243,6 +291,31 @@ function signedIn(store: SiteStore, req: Request): boolean {
 }
 function cookie(token: string, maxAge: number): string {
   return `site_visitor=${token}; HttpOnly; Path=/p/site; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+function requestsTab(): string {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Заявки</title>
+<style>body{margin:0;font:14px/1.45 system-ui,sans-serif}h1{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #e5e5ea}li{padding:8px 16px;border-bottom:1px solid #f0f0f2;list-style:none}.muted{color:#6e6e73}</style></head><body>
+<h1>Заявки</h1><ul id="list"></ul>
+<p class="muted" style="padding:0 16px">Письмо и Telegram отправляет агент через коннектор харнеса, на почту и в чат из заявки.</p>
+<script>
+const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
+let n = 0; const wait = new Map();
+addEventListener("message", (e) => { const m = e.data || {}; if (m.sinty !== "tab/1") return; if (typeof m.id === "number" && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); } });
+function ask(path) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send("get", { id, path }); }); }
+ask("/requests").then((m) => {
+  const rows = (m.data && m.data.requests) || [];
+  const ul = document.getElementById("list");
+  if (!rows.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "Пока пусто."; ul.append(li); return; }
+  for (const r of rows) {
+    const li = document.createElement("li");
+    const f = r.fields || {};
+    li.textContent = (f.name || "без имени") + " · " + (f.email || f.telegram || "") + " · " + r.status;
+    ul.append(li);
+  }
+});
+send("ready");
+</script></body></html>`;
 }
 
 function loginForm(error: string, settings: LoginSettings): string {

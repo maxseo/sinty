@@ -35,6 +35,11 @@ test("site store: draft stays hidden, publish shows it, a closed page hides its 
     assert.equal(store.published("account", true)?.doc.body, "секрет");
     assert.ok(store.visitorFromToken(token)?.email === "a@b.co");
     assert.throws(() => store.loginVisitor("a@b.co", "wrong-pass"), /wrong/);
+
+    const req = store.addRequest("home", { name: "Анна", email: "a@b.co", telegram: "@anna", message: "хочу счёт" });
+    assert.equal(req.status, "pending");
+    assert.equal(store.requests("pending")[0]?.fields.telegram, "@anna");
+    assert.equal(store.setRequestStatus(req.id, "sent").status, "sent");
     store.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
