@@ -26,6 +26,8 @@ export interface Doc {
   categoryId: string | null;
   seo: Seo;
   layout: Block[];
+  /** The one page served at the site root, with no address after the domain. */
+  home: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,7 +36,9 @@ export interface DocInput {
   id?: string;
   kind: Kind;
   title: string;
-  slug: string;
+  slug?: string;
+  /** The single front page. It has no public address. */
+  home?: boolean;
   body?: string;
   loginRequired?: boolean;
   categoryId?: string | null;
@@ -57,6 +61,7 @@ interface Row {
   seo_image: string;
   noindex: number;
   layout: string;
+  is_home: number;
   created_at: string;
   updated_at: string;
 }
@@ -91,6 +96,9 @@ export class SiteStore {
     `);
     const cols = this.db.prepare("PRAGMA table_info(docs)").all() as unknown as { name: string }[];
     if (!cols.some((c) => c.name === "layout")) this.db.exec("ALTER TABLE docs ADD COLUMN layout TEXT NOT NULL DEFAULT '[]'");
+    const cols2 = this.db.prepare("PRAGMA table_info(docs)").all() as unknown as { name: string }[];
+    if (!cols2.some((c) => c.name === "is_home")) this.db.exec("ALTER TABLE docs ADD COLUMN is_home INTEGER NOT NULL DEFAULT 0");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS docs_one_home ON docs(is_home) WHERE is_home = 1");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS visitors (
         id TEXT PRIMARY KEY,
@@ -281,11 +289,22 @@ export class SiteStore {
     return row ? toDoc(row) : undefined;
   }
 
+  /** The published front page, if there is one. */
+  homePage(signedIn = false): { doc: Doc; hidden: boolean } | undefined {
+    const row = this.db.prepare("SELECT * FROM docs WHERE is_home = 1 AND status = 'published'").get() as unknown as Row | undefined;
+    if (!row) return undefined;
+    const doc = toDoc(row);
+    if (doc.loginRequired && !signedIn) return { doc: { ...doc, body: "", layout: [] }, hidden: true };
+    return { doc, hidden: false };
+  }
+
   write(input: DocInput): Doc {
     const title = input.title.trim();
-    const slug = input.slug.trim();
-    if (!title) throw new SiteError("title is required");
-    if (!SLUG.test(slug)) throw new SiteError("slug must be lowercase words separated by hyphens");
+    const home = input.home === true;
+    const slug = home ? "" : (input.slug ?? "").trim();
+    if (!title) throw new SiteError("Укажите название");
+    if (home && input.kind !== "page") throw new SiteError("Главная может быть только страницей");
+    if (!home && !SLUG.test(slug)) throw new SiteError("Адрес: латиница маленькими буквами, слова через дефис. Пример: o-nas");
     if (!KINDS.includes(input.kind)) throw new SiteError("kind must be page, post, category or template");
     if (input.categoryId) {
       const cat = this.db.prepare("SELECT kind FROM docs WHERE id = ?").get(input.categoryId) as unknown as { kind: string } | undefined;
@@ -293,8 +312,13 @@ export class SiteStore {
     }
     const now = new Date().toISOString();
     const existing = input.id ? (this.db.prepare("SELECT * FROM docs WHERE id = ?").get(input.id) as unknown as Row | undefined) : undefined;
-    const taken = this.db.prepare("SELECT id FROM docs WHERE slug = ? AND id != ? AND (? = 'template') = (kind = 'template')").get(slug, existing?.id ?? "", input.kind) as unknown as { id: string } | undefined;
-    if (taken) throw new SiteError(`slug ${slug} is already used`);
+    if (home) {
+      const other = this.db.prepare("SELECT id FROM docs WHERE is_home = 1 AND id != ?").get(existing?.id ?? "") as unknown as { id: string } | undefined;
+      if (other) throw new SiteError("Главная уже есть. Она одна.");
+    } else {
+      const taken = this.db.prepare("SELECT id FROM docs WHERE slug = ? AND id != ? AND (? = 'template') = (kind = 'template')").get(slug, existing?.id ?? "", input.kind) as unknown as { id: string } | undefined;
+      if (taken) throw new SiteError("Такой адрес уже занят");
+    }
     const seo = {
       title: input.seo?.title ?? existing?.seo_title ?? "",
       description: input.seo?.description ?? existing?.seo_description ?? "",
@@ -303,15 +327,15 @@ export class SiteStore {
     };
     if (existing) {
       this.db.prepare(
-        `UPDATE docs SET kind=?, title=?, slug=?, body=?, login_required=?, category_id=?, seo_title=?, seo_description=?, seo_image=?, noindex=?, updated_at=? WHERE id=?`,
-      ).run(input.kind, title, slug, input.body ?? existing.body, input.loginRequired ? 1 : 0, input.categoryId ?? null, seo.title, seo.description, seo.image, seo.noindex ? 1 : 0, now, existing.id);
+        `UPDATE docs SET kind=?, title=?, slug=?, body=?, login_required=?, category_id=?, seo_title=?, seo_description=?, seo_image=?, noindex=?, is_home=?, updated_at=? WHERE id=?`,
+      ).run(input.kind, title, slug, input.body ?? existing.body, input.loginRequired ? 1 : 0, input.categoryId ?? null, seo.title, seo.description, seo.image, seo.noindex ? 1 : 0, home ? 1 : 0, now, existing.id);
       return this.get(existing.id)!;
     }
     const id = `doc_${randomBytes(6).toString("hex")}`;
     this.db.prepare(
-      `INSERT INTO docs (id, kind, title, slug, body, status, login_required, category_id, seo_title, seo_description, seo_image, noindex, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, input.kind, title, slug, input.body ?? "", input.loginRequired ? 1 : 0, input.categoryId ?? null, seo.title, seo.description, seo.image, seo.noindex ? 1 : 0, now, now);
+      `INSERT INTO docs (id, kind, title, slug, body, status, login_required, category_id, seo_title, seo_description, seo_image, noindex, is_home, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, input.kind, title, slug, input.body ?? "", input.loginRequired ? 1 : 0, input.categoryId ?? null, seo.title, seo.description, seo.image, seo.noindex ? 1 : 0, home ? 1 : 0, now, now);
     return this.get(id)!;
   }
 
@@ -428,6 +452,7 @@ function toDoc(r: Row): Doc {
     categoryId: r.category_id,
     seo: { title: r.seo_title, description: r.seo_description, image: r.seo_image, noindex: r.noindex === 1 },
     layout: parseStored(r.layout),
+    home: r.is_home === 1,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

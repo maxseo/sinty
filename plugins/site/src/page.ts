@@ -7,7 +7,7 @@ export function tabHtml(which: "pages" | "blog"): string {
   const listPath = which === "pages" ? "/docs" : "/blog-docs";
   const editPath = which === "pages" ? "/pages/edit" : "/blog/edit";
   const form = which === "pages"
-    ? `<form id="create" class="row"><input name="title" required placeholder="Название"><input name="slug" required placeholder="адрес, для главной: home" pattern="[a-z0-9]+(-[a-z0-9]+)*"><button>Создать страницу</button></form><p class="muted">Главная — это страница с адресом home, отдельного типа у неё нет. Новая запись — черновик. Текст и виджеты — на вкладке Конструктор.</p>`
+    ? `<p id="err" class="muted"></p><form id="create" class="row"><select id="role"><option value="home">Главная</option><option value="page">Страница</option></select><input name="title" id="title" placeholder="Название"><input name="slug" id="slug" placeholder="адрес, например o-nas" hidden><button type="button" id="go">Создать</button></form><p class="muted">Главная одна. Она открывается по домену, без адреса. У обычной страницы адрес из латинских букв через дефис, например o-nas. Новая запись — черновик. Виджеты — на вкладке Конструктор.</p>`
     : `<form id="cat" class="row"><input name="title" required placeholder="Название категории"><input name="slug" required placeholder="адрес категории" pattern="[a-z0-9]+(-[a-z0-9]+)*"><button>Создать категорию</button></form><form id="post" class="row"><input name="title" required placeholder="Название поста"><input name="slug" required placeholder="адрес поста" pattern="[a-z0-9]+(-[a-z0-9]+)*"><select name="categoryId" id="cats"></select><button>Создать пост</button></form><p class="muted">Сначала категория, потом пост. Черновик не виден на сайте, пока не нажмёте «Опубликовать».</p>`;
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title>
 <style>
@@ -32,10 +32,10 @@ addEventListener("message", (e) => { const m = e.data || {}; if (m.sinty !== "ta
 function ask(op, path, body) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send(op, { id, path, body }); }); }
 let records = [];
 function label(r) {
-  const home = !blog && r.slug === "home" ? "главная · " : "";
-  const kind = r.kind === "category" ? "категория" : r.kind === "post" ? "пост" : "страница";
+  const kind = r.home ? "главная" : r.kind === "category" ? "категория" : r.kind === "post" ? "пост" : "страница";
   const st = r.status === "published" ? "опубликовано" : "черновик";
-  return home + r.title + " · " + kind + " · " + st + " · /" + r.slug;
+  const addr = r.home ? "" : " · /" + r.slug;
+  return r.title + " · " + kind + " · " + st + addr;
 }
 function draw() {
   const ul = document.getElementById("list");
@@ -73,12 +73,24 @@ async function reload() {
   records = (m.data && m.data.records) || [];
   draw();
 }
+function fail(m) {
+  const el = document.getElementById("err");
+  const text = (m && m.error && m.error.message) || "Не сохранилось. Обновите панель и попробуйте ещё раз.";
+  if (el) el.textContent = text; else alert(text);
+}
 async function create(kind, form) {
   const fd = new FormData(form);
-  const body = { action: "create", kind, title: fd.get("title"), slug: fd.get("slug") };
+  const home = !blog && document.getElementById("role") && document.getElementById("role").value === "home";
+  const body = { action: "create", kind, title: fd.get("title") || document.getElementById("title").value };
+  if (home) body.home = true;
+  else body.slug = fd.get("slug") || "";
   if (fd.get("categoryId")) body.categoryId = fd.get("categoryId");
-  const m = await ask("post", ${JSON.stringify(editPath)}, body);
-  if (!m.ok) { alert((m.error && m.error.message) || "не сохранилось"); return; }
+  const err = document.getElementById("err");
+  if (err) err.textContent = "";
+  if (!String(body.title || "").trim()) { fail({ error: { message: "Укажите название" } }); return; }
+  if (!home && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(body.slug || ""))) { fail({ error: { message: "Адрес: латиница маленькими буквами через дефис, например o-nas" } }); return; }
+  const m = await Promise.race([ask("post", ${JSON.stringify(editPath)}, body), new Promise((ok) => setTimeout(() => ok({ ok: false, error: { message: "Панель не ответила. Обновите страницу харнеса (Ctrl+F5) и повторите." } }), 8000))]);
+  if (!m.ok) { fail(m); return; }
   form.reset();
   await reload();
 }
@@ -87,7 +99,10 @@ async function setStatus(r, status) {
   if (!m.ok) { alert((m.error && m.error.message) || "не сохранилось"); return; }
   await reload();
 }
-document.getElementById("create") && (document.getElementById("create").onsubmit = (e) => { e.preventDefault(); create("page", e.target); });
+const role = document.getElementById("role");
+if (role) role.onchange = () => { document.getElementById("slug").hidden = role.value === "home"; };
+const go = document.getElementById("go");
+if (go) go.onclick = () => create("page", document.getElementById("create"));
 document.getElementById("cat") && (document.getElementById("cat").onsubmit = (e) => { e.preventDefault(); create("category", e.target); });
 document.getElementById("post") && (document.getElementById("post").onsubmit = (e) => { e.preventDefault(); create("post", e.target); });
 reload();
@@ -118,7 +133,7 @@ button{cursor:pointer}
     <input name="slug" required placeholder="адрес-латиницей" pattern="[a-z0-9]+(-[a-z0-9]+)*">
     <button>Создать</button>
   </div>
-  <p class="muted">Главная — страница с адресом home. Шаблон — не страница: это общий блок, его вставляют на другие страницы. Категории и посты удобнее заводить на вкладке Блог, страницы — на вкладке Страницы.</p>
+  <p class="muted">Главная создаётся на вкладке Страницы и открывается по домену. Шаблон — не страница: это общий блок для нескольких страниц. Посты и категории — на вкладке Блог.</p>
 </form>
 <ul id="list"></ul>
 <section id="edit" hidden>
