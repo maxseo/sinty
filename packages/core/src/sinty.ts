@@ -12,6 +12,7 @@ import { Journal } from "./journal.js";
 import { MemoryRouter } from "./memory-router.js";
 import { ModelGateway } from "./models.js";
 import { ContextWindows } from "./context-window.js";
+import { enablePluginInConfig } from "./mcp-install.js";
 import { PatchManager } from "./patches.js";
 import { createAgentBridge } from "./plugin-bridge.js";
 import { checkIntegrity, installLooksStrictUnsafe } from "./integrity.js";
@@ -115,6 +116,10 @@ export class Sinty {
       applied: (p) => this.agent.emit({ sessionId: p.sessionId, type: "plugin.patch.applied", actor: PLUGIN_ACTOR, data: { patchId: p.id, commit: p.commit ?? "" } }),
       rolledBack: (r) => this.agent.emit({ sessionId: r.sessionId, type: "plugin.patch.rolled_back", actor: PLUGIN_ACTOR, data: { patchId: r.patchId, toCommit: r.toCommit, reason: r.reason } }),
       toolsChanged: () => this.supervisor?.setTools(this.agent.supervisedTools()),
+      enable: (name) => {
+        enablePluginInConfig(this.paths, name);
+        if (!this.config.plugins.enabled.includes(name)) this.config.plugins.enabled = [...this.config.plugins.enabled, name];
+      },
     });
 
     // Incident memory written before arguments were masked may hold typed passwords or whole files: scrub it once.

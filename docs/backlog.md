@@ -117,10 +117,6 @@ The fallback check ([#14](https://github.com/maxseo/sinty/pull/14)) trims or ski
 - **Why:** today an incident is "these arguments worked", matched exactly on tool and error code.
 - **Effect on the agent:** hints after a failure explain what was wrong and how it was fixed. They also match similar errors, not only identical ones, so the agent repeats fewer mistakes.
 
-### New plugins through the patch pipeline
-- **Why:** the agent can fix existing plugins but cannot add a new tool when it needs one.
-- **Effect on the agent:** it can write a new plugin. That plugin goes through the same tests and git history, and a human approves its first permissions. The agent extends its own abilities safely.
-
 ### Auto-apply mode for patches
 - **Why:** on a trusted personal machine, approving every small fix is tedious.
 - **Effect on the agent:** with `plugin.apply_patch: allow`, it fixes plugins on its own when the tests pass. Permission changes still need a human, and the canary still rolls back.

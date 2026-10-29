@@ -7,6 +7,7 @@ import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType,
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
+import { agentManifestViolations, agentRuntimeViolations } from "../agent-plugins.js";
 import { CORE_TOOL_NAMES, reservedToolOwner } from "../coretools.js";
 import { checkPublicUrl, NetGuardError, parseAllowPrivate, publicFetch, startGuardProxy, type GuardOptions, type GuardProxy } from "../netguard.js";
 import { findPlugin, pluginDataDir, resolveFsGrants, type LoadedManifest } from "./manifest.js";
@@ -152,6 +153,10 @@ export class PluginProcess {
     }
     if (m.runtime !== "node" && m.runtime !== "mcp-stdio" && m.runtime !== "http") throw new Error(`plugin ${m.name}: runtime ${m.runtime} is not supported by this core version yet`);
     if (m.runtime === "node" && !m.entry) throw new Error(`plugin ${m.name}: entry is required`);
+    if (this.loaded.agentMade) {
+      const bad = agentManifestViolations(m);
+      if (bad.length) throw new Error(`plugin ${m.name} was written by the agent and breaks its rules: ${bad.join("; ")}`);
+    }
     if (m.permissions.browser && !(m.permissions.net ?? []).includes(PUBLIC_NET)) throw new Error(`plugin ${m.name}: permissions.browser needs "${PUBLIC_NET}" in permissions.net`);
     const child = fork(RUNNER, [], { execArgv: this.permissionArgs(), env: this.childEnv(), cwd: this.loaded.dir, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "advanced" });
     this.child = child;
@@ -180,6 +185,13 @@ export class PluginProcess {
             this.stopping = true;
             child.kill();
             reject(new Error(`plugin ${this.name}: tool name ${taken.join(", ")} is reserved for a bundled plugin; rename the tool`));
+            return;
+          }
+          const agentBad = this.loaded.agentMade ? agentRuntimeViolations(m, msg) : [];
+          if (agentBad.length) {
+            this.stopping = true;
+            child.kill();
+            reject(new Error(`plugin ${this.name} was written by the agent and breaks its rules: ${agentBad.join("; ")}`));
             return;
           }
           this.tools = msg.tools;
@@ -346,7 +358,13 @@ export class PluginProcess {
     }
   }
 
+  /** Agent-made plugins read chats only with permissions.agent "sessions.read", which a human approved. */
+  private get readsSessions(): boolean {
+    return !this.loaded.agentMade || (this.loaded.manifest.permissions.agent ?? []).includes("sessions.read");
+  }
+
   forward(event: SintyEvent): void {
+    if (!this.readsSessions) return;
     if (this.subscriptions.includes("*") || this.subscriptions.includes(event.type)) this.send({ t: "event", event });
   }
 
@@ -707,7 +725,7 @@ export class PluginProcess {
   private onMessage(msg: FromChild): void {
     if (msg.t === "log") return this.events.log(this.name, msg.level, msg.msg, msg.data);
     if (msg.t === "journal.read") {
-      const events = this.events.readJournal(msg.sessionId, msg.afterSeq, msg.types);
+      const events = this.readsSessions ? this.events.readJournal(msg.sessionId, msg.afterSeq, msg.types) : [];
       this.send({ t: "journal.events", id: msg.id, events });
       return;
     }

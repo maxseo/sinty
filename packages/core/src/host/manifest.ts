@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { z, type PluginManifest } from "@sinty/sdk";
+import { agentMadePlugins } from "../agent-plugins.js";
 import { checkFsGrant } from "../policy.js";
 import { isInside, type SintyPaths } from "../paths.js";
 
@@ -108,6 +109,8 @@ export interface LoadedManifest {
   manifest: PluginManifest;
   /** Bundled plugins live in the read-only install dir. */
   bundled: boolean;
+  /** Written by the agent with plugin.create: the host applies agent-plugins.ts rules on every start. */
+  agentMade?: boolean;
 }
 
 export function parseManifest(json: unknown): PluginManifest {
@@ -122,7 +125,8 @@ export function findPlugin(paths: SintyPaths, name: string, searchPaths: readonl
     if (!existsSync(file)) continue;
     const manifest = manifestSchema.parse(JSON.parse(readFileSync(file, "utf8"))) as PluginManifest;
     if (manifest.name !== name) throw new Error(`${file}: name "${manifest.name}" does not match folder "${name}"`);
-    return { dir, manifest, bundled: isInside(dir, paths.install) };
+    const bundled = isInside(dir, paths.install);
+    return { dir, manifest, bundled, ...(!bundled && root === paths.plugins && agentMadePlugins(paths).has(name) ? { agentMade: true } : {}) };
   }
   throw new Error(`plugin ${name} not found in ${roots.join(", ")}`);
 }

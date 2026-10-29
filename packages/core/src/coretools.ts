@@ -96,6 +96,18 @@ export const CORE_TOOLS: CoreToolDef[] = [
     idempotent: false,
   },
   {
+    name: "plugin.create",
+    description:
+      'Write a new plugin when no installed tool does the job. files must include sinty.plugin.json (runtime "node", kinds tool/ui/schedule/event, entry like src/index.ts) and the entry, which default-exports definePlugin from "@sinty/sdk"; name tools <plugin>.<verb>; add a *.test.ts. Allowed: fs only $DATA (read also $PLUGIN), net hosts, secrets by name, models, agent "sessions.read". Not allowed: shell, browser, env, context, sessions.write, providers, public routes except a ui.tabs page. The core tests it in a sandbox and returns a patchId; a human approves plugin.apply_patch, which installs and enables it.',
+    input: z.object({
+      plugin: z.string().describe("new plugin id: lowercase letters, digits, hyphens"),
+      reason: z.string().min(5).describe("what the plugin is for and why no installed tool does it"),
+      files: z.array(z.object({ path: z.string().describe("relative to the plugin folder"), content: z.string() })).min(2).max(20),
+    }),
+    sideEffects: "write",
+    idempotent: false,
+  },
+  {
     name: "agent.task",
     description:
       "Run a child turn with only the listed tools. Omit tools to allow web search, web read, memory recall and skill read. The child cannot start another child or use tools outside the list. Omit background (or false) for a short answer or one or two quick calls, and wait in this turn. Set background: true yourself when the work is long or parallel (many steps, pages, files, or independent threads), even if the human did not say so. With background: true return {taskId,sessionId} immediately and end the parent turn; when the child finishes the parent gets task.completed and a turn with trigger task if idle.",
