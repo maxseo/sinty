@@ -1,6 +1,7 @@
 import { definePlugin, ToolError, z } from "@sinty/sdk";
+import { renderLayout } from "./layout.js";
 import { TAB_CSP, tabHtml } from "./page.js";
-import { KINDS, SiteError, SiteStore, type Kind, type Status } from "./store.js";
+import { KINDS, SiteError, SiteStore, type Doc, type Kind, type Status } from "./store.js";
 
 const kind = z.enum(KINDS);
 const json = (body: unknown, status = 200): Response =>
@@ -86,9 +87,38 @@ export default definePlugin({
         }
       },
     });
+    ctx.tool({
+      name: "site.layout",
+      description: "Replace the constructor tree of a record. layout is a list of blocks; each block has rows; each row has cols; each col has widgets. A widget is { type, props }. Types: title, text, image, icon, button, menu, logo, breadcrumbs, slider, post_list, category_list, cover, description, author, date, post_nav, dynamic_block. dynamic_block props.templateId is a template record id. Does not publish.",
+      input: z.object({ id: z.string().min(1), layout: z.array(z.unknown()) }),
+      sideEffects: "write",
+      idempotent: true,
+      async run(args) {
+        try {
+          return { content: store.setLayout(args.id, args.layout) };
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    });
+    ctx.tool({
+      name: "site.template",
+      description: "Insert a template into a page or post as one dynamic block. Later edits of the template show up on every record that uses it.",
+      input: z.object({ id: z.string().min(1), templateId: z.string().min(1) }),
+      sideEffects: "write",
+      idempotent: false,
+      async run(args) {
+        try {
+          return { content: store.useTemplate(args.id, args.templateId) };
+        } catch (e) {
+          return fail(e);
+        }
+      },
+    });
 
     ctx.http({ method: "GET", path: "/tab/pages", public: true, surface: "pages", handler: () => html(tabHtml("pages")) });
     ctx.http({ method: "GET", path: "/tab/blog", public: true, surface: "blog", handler: () => html(tabHtml("blog")) });
+    ctx.http({ method: "GET", path: "/tab/builder", public: true, surface: "builder", handler: () => html(tabHtml("builder")) });
     ctx.http({
       method: "GET",
       path: "/docs",
@@ -124,7 +154,8 @@ export default definePlugin({
       handler: (_req, { params }) => {
         const found = store.published(params.slug ?? "");
         if (!found) return new Response("Страница не найдена", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-        return html(viewHtml(found.doc.title, found.hidden ? "Эта страница откроется после входа." : found.doc.body));
+        const body = found.hidden ? "<p>Эта страница откроется после входа.</p>" : pageBody(store, found.doc);
+        return html(viewHtml(found.doc.title, body));
       },
     });
   },
@@ -132,9 +163,21 @@ export default definePlugin({
 
 const html = (body: string): Response => new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": TAB_CSP, "cache-control": "no-store" } });
 
+function pageBody(store: SiteStore, doc: Doc): string {
+  if (doc.layout.length) {
+    const published = store.list({ status: "published" });
+    return renderLayout(doc.layout, doc, (id) => store.get(id), {
+      posts: published.filter((d) => d.kind === "post"),
+      categories: published.filter((d) => d.kind === "category"),
+    });
+  }
+  const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
+  return `<pre style="white-space:pre-wrap">${esc(doc.body)}</pre>`;
+}
+
 function viewHtml(title: string, body: string): string {
   const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
-  return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>${esc(title)}</title><body><h1>${esc(title)}</h1><pre style="white-space:pre-wrap;font:16px/1.5 sans-serif">${esc(body)}</pre></body></html>`;
+  return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>${esc(title)}</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:24px;color:#1d1d1f}.row{display:flex;gap:16px}.col{flex:1}.muted{color:#6e6e73}img{max-width:100%}</style><body><h1>${esc(title)}</h1>${body}</body></html>`;
 }
 
 export type { Status };

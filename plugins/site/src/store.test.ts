@@ -22,6 +22,13 @@ test("site store: draft stays hidden, publish shows it, a closed page hides its 
     assert.equal(seen.doc.body, "");
 
     assert.throws(() => store.write({ kind: "post", title: "Ещё", slug: "home", body: "" }), /already used/);
+
+    const tpl = store.write({ kind: "template", title: "Шапка", slug: "header" });
+    store.setLayout(tpl.id, [{ rows: [{ cols: [{ widgets: [{ type: "title", props: { text: "Синти" } }] }] }] }]);
+    store.setLayout(page.id, [{ rows: [{ cols: [{ widgets: [{ type: "text", props: { text: "низ" } }] }] }] }]);
+    const withTpl = store.useTemplate(page.id, tpl.id);
+    assert.equal(withTpl.layout.length, 2);
+    assert.equal(withTpl.layout[1]?.rows[0]?.cols[0]?.widgets[0]?.type, "dynamic_block");
     store.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
