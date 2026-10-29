@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { definePlugin, runTurn, ToolError, z } from "@sinty/sdk";
 import { renderLayout } from "./layout.js";
-import { TAB_CSP, tabHtml } from "./page.js";
+import { TAB_CSP, builderHtml, tabHtml } from "./page.js";
 import { KINDS, SiteError, SiteStore, type Doc, type Kind, type LoginSettings, type Status } from "./store.js";
 
 const kind = z.enum(KINDS);
@@ -173,7 +173,41 @@ export default definePlugin({
 
     ctx.http({ method: "GET", path: "/tab/pages", public: true, surface: "pages", handler: () => html(tabHtml("pages")) });
     ctx.http({ method: "GET", path: "/tab/blog", public: true, surface: "blog", handler: () => html(tabHtml("blog")) });
-    ctx.http({ method: "GET", path: "/tab/builder", public: true, surface: "builder", handler: () => html(tabHtml("builder")) });
+    ctx.http({ method: "GET", path: "/tab/builder", public: true, surface: "builder", handler: () => html(builderHtml()) });
+    ctx.http({
+      method: "GET",
+      path: "/builder-docs",
+      surface: "builder",
+      access: "view",
+      handler: () => json({ records: store.list() }),
+    });
+    ctx.http({
+      method: "POST",
+      path: "/edit",
+      surface: "builder",
+      access: "edit",
+      handler: async (req) => {
+        const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown } | null;
+        try {
+          if (!body) throw new SiteError("пустое тело");
+          if (body.action === "create") {
+            if (!(KINDS as readonly string[]).includes(String(body.kind))) throw new SiteError("kind must be page, post, category or template");
+            return json(store.write({ kind: body.kind as Kind, title: String(body.title ?? ""), slug: String(body.slug ?? "") }));
+          }
+          if (body.action === "layout") {
+            const widgets = Array.isArray(body.widgets) ? body.widgets : [];
+            return json(store.setLayout(String(body.id ?? ""), [{ rows: [{ cols: [{ widgets }] }] }]));
+          }
+          if (body.action === "status") {
+            if (body.status !== "draft" && body.status !== "published") throw new SiteError("status must be draft or published");
+            return json(store.setStatus(String(body.id ?? ""), body.status));
+          }
+          throw new SiteError("unknown action");
+        } catch (e) {
+          return json({ error: { code: "site_error", message: e instanceof SiteError ? e.message : "не сохранилось" } }, 400);
+        }
+      },
+    });
     ctx.http({ method: "GET", path: "/tab/login", public: true, surface: "login", handler: () => html(loginTab()) });
     ctx.http({ method: "GET", path: "/tab/requests", public: true, surface: "requests", handler: () => html(requestsTab()) });
     ctx.http({ method: "GET", path: "/tab/chats", public: true, surface: "chats", handler: () => html(chatsTab()) });
