@@ -184,7 +184,7 @@ export default definePlugin({
       handler: () => json({ records: store.list() }),
     });
     const edit = (allowed: readonly Kind[], layout: boolean) => async (req: Request) => {
-      const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown; categoryId?: string; home?: boolean; body?: string; metaTitle?: string; metaDescription?: string } | null;
+      const body = (await req.json().catch(() => null)) as { action?: string; kind?: string; title?: string; slug?: string; id?: string; status?: string; widgets?: unknown; layout?: unknown; categoryId?: string; home?: boolean; body?: string; metaTitle?: string; metaDescription?: string } | null;
       try {
         if (!body) throw new SiteError("пустое тело");
         if (body.action === "create") {
@@ -201,8 +201,10 @@ export default definePlugin({
         }
         if (body.action === "layout") {
           if (!layout) throw new SiteError("виджеты правятся в конструкторе");
-          const widgets = Array.isArray(body.widgets) ? body.widgets : [];
-          return json(store.setLayout(String(body.id ?? ""), [{ rows: [{ cols: [{ widgets }] }] }]));
+          const tree = Array.isArray(body.layout)
+            ? body.layout
+            : [{ rows: [{ cols: [{ widgets: Array.isArray(body.widgets) ? body.widgets : [] }] }] }];
+          return json(store.setLayout(String(body.id ?? ""), tree));
         }
         if (body.action === "status") {
           const doc = store.get(String(body.id ?? ""));
