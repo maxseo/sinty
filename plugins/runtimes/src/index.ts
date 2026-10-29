@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 
@@ -13,33 +12,60 @@ const PACKAGES = {
 
 type Name = keyof typeof PACKAGES;
 
-function playwrightChrome(): string | null {
-  const root = join(process.env.LOCALAPPDATA ?? "", "ms-playwright");
-  try {
-    const hits = readdirSync(root)
-      .filter((name) => name.startsWith("chromium-"))
-      .map((name) => join(root, name, "chrome-win64", "chrome.exe"))
-      .filter((file) => existsSync(file));
-    return hits.at(-1) ?? null;
-  } catch {
-    return null;
-  }
+/** The plugin process does not receive LOCALAPPDATA. The install folder is Local\Sinty\app\plugins\<name>. */
+function localAppData(): string {
+  if (process.env.LOCALAPPDATA) return process.env.LOCALAPPDATA;
+  return join(process.cwd(), "..", "..", "..", "..");
 }
 
-function where(bin: string): Promise<string | null> {
-  const cmd = process.platform === "win32" ? "where.exe" : "which";
+function userEnv(): NodeJS.ProcessEnv {
+  const local = localAppData();
+  const extra = join(local, "Microsoft", "WindowsApps");
+  return {
+    ...process.env,
+    LOCALAPPDATA: local,
+    PATH: [process.env.PATH, extra].filter(Boolean).join(";"),
+    ProgramFiles: process.env.ProgramFiles ?? "C:\\Program Files",
+  };
+}
+
+function scan(): Promise<{ ffmpeg: string; python: string; magick: string; chrome: string }> {
+  const ps = join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+function first($name, $roots) {
+  $cmd = Get-Command $name -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  foreach ($r in $roots) {
+    $hit = Get-ChildItem $r -Filter ($name + '.exe') -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($hit) { return $hit.FullName }
+  }
+  return ''
+}
+$local = $env:LOCALAPPDATA
+$chrome = Get-ChildItem (Join-Path $local 'ms-playwright') -Filter chrome.exe -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 1
+@{ ffmpeg = first 'ffmpeg' @((Join-Path $local 'Microsoft\\WinGet\\Packages')); python = first 'python' @((Join-Path $local 'Programs\\Python')); magick = first 'magick' @((Join-Path $local 'Microsoft\\WinGet\\Packages'), $env:ProgramFiles); chrome = $(if ($chrome) { $chrome.FullName } else { '' }) } | ConvertTo-Json -Compress
+`;
   return new Promise((resolve) => {
-    const child = spawn(cmd, [bin], { windowsHide: true });
+    const child = spawn(ps, ["-NoProfile", "-Command", script], { windowsHide: true, env: userEnv() });
     let out = "";
     child.stdout?.on("data", (buf: Buffer) => { out += buf.toString("utf8"); });
-    child.on("error", () => resolve(null));
-    child.on("close", (code) => resolve(code === 0 ? out.split(/\r?\n/).find(Boolean) ?? null : null));
+    child.on("error", () => resolve({ ffmpeg: "", python: "", magick: "", chrome: "" }));
+    child.on("close", () => {
+      try {
+        const parsed = JSON.parse(out) as { ffmpeg?: string; python?: string; magick?: string; chrome?: string };
+        resolve({ ffmpeg: parsed.ffmpeg ?? "", python: parsed.python ?? "", magick: parsed.magick ?? "", chrome: parsed.chrome ?? "" });
+      } catch {
+        resolve({ ffmpeg: "", python: "", magick: "", chrome: "" });
+      }
+    });
   });
 }
 
 function winget(id: string): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn("winget", ["install", "--id", id, "-e", "--scope", "user", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"], { windowsHide: true, shell: true });
+    const winget = join(localAppData(), "Microsoft", "WindowsApps", "winget.exe");
+    const child = spawn(winget, ["install", "--id", id, "-e", "--scope", "user", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"], { windowsHide: true, env: userEnv() });
     let out = "";
     const take = (buf: Buffer) => { out = (out + buf.toString("utf8")).slice(-8000); };
     child.stdout?.on("data", take);
@@ -51,11 +77,14 @@ function winget(id: string): Promise<{ code: number; out: string }> {
 }
 
 async function status() {
-  const [ffmpeg, python, magick] = await Promise.all([where("ffmpeg"), where("python"), where("magick")]);
-  const chrome = playwrightChrome();
+  const found = await scan();
+  const ffmpeg = found.ffmpeg || null;
+  const python = found.python || null;
+  const magick = found.magick || null;
+  const chrome = found.chrome || null;
   return {
     ffmpeg, python, magick, chrome,
-    missing: [ffmpeg ? "" : "ffmpeg", python ? "" : "python", magick ? "" : "magick", chrome ? "" : "chrome"].filter(Boolean),
+    missing: [ffmpeg ? "" : "ffmpeg", python ? "" : "python", magick ? "" : "magick"].filter(Boolean),
   };
 }
 
@@ -82,7 +111,7 @@ function line(s) {
   bits.push(s.ffmpeg ? "FFmpeg: есть" : "FFmpeg: нет");
   bits.push(s.python ? "Python: есть" : "Python: нет");
   bits.push(s.magick ? "ImageMagick: есть" : "ImageMagick: нет");
-  bits.push(s.chrome ? "Chrome: Chromium Playwright" : "Chrome: нет");
+  bits.push(s.chrome ? "Chrome: есть" : "Chrome: нет");
   return bits.join(" · ");
 }
 async function load() {

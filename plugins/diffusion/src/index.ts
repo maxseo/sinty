@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 const TAB_CSP = ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", "connect-src 'none'", "form-action 'none'", "base-uri 'none'"].join("; ");
 const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "logs", "screenshot", "window", "job"] as const;
@@ -13,14 +14,32 @@ function inside(root: string, target: string): string {
   return abs;
 }
 
+function localAppData(): string {
+  return process.env.LOCALAPPDATA || join(process.cwd(), "..", "..", "..", "..");
+}
+
 function where(bin: string): Promise<string | null> {
-  const cmd = process.platform === "win32" ? "where.exe" : "which";
+  const ps = join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const script = `Get-Command ${bin} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source; Get-ChildItem (Join-Path $env:LOCALAPPDATA 'DiffusionStudio') -Include diffusion.exe,diffusion.cmd,dapi.exe,dapi.cmd -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName`;
   return new Promise((resolvePath) => {
-    const child = spawn(cmd, [bin], { windowsHide: true });
+    const child = spawn(ps, ["-NoProfile", "-Command", script], { windowsHide: true, env: { ...process.env, LOCALAPPDATA: localAppData() } });
     let out = "";
     child.stdout?.on("data", (buf: Buffer) => { out += buf.toString("utf8"); });
     child.on("error", () => resolvePath(null));
-    child.on("close", (code) => resolvePath(code === 0 ? out.split(/\r?\n/).find(Boolean) ?? null : null));
+    child.on("close", () => resolvePath(out.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? null));
+  });
+}
+
+function exec(bin: string, args: string[], ms: number): Promise<{ code: number; out: string }> {
+  return new Promise((done) => {
+    const child = spawn(bin, args, { windowsHide: true });
+    let out = "";
+    const take = (buf: Buffer) => { out = (out + buf.toString("utf8")).slice(-4000); };
+    child.stdout?.on("data", take);
+    child.stderr?.on("data", take);
+    const timer = setTimeout(() => { child.kill(); done({ code: 1, out: out + "\nтаймаут" }); }, ms);
+    child.on("error", (e) => { clearTimeout(timer); done({ code: 1, out: String(e) }); });
+    child.on("close", (code) => { clearTimeout(timer); done({ code: code ?? 1, out }); });
   });
 }
 
@@ -39,22 +58,33 @@ function run(bin: string, args: string[], cwd: string, ms: number): Promise<{ co
 
 function tabHtml(): string {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Diffusion</title>
-<style>body{margin:0;font:14px/1.45 system-ui,sans-serif;color:#1d1d1f}h1{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #e5e5ea}p{margin:12px 16px}.miss{color:#9a3412}</style></head><body>
+<style>body{margin:0;font:14px/1.45 system-ui,sans-serif;color:#1d1d1f}h1{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #e5e5ea}p,button{margin:12px 16px}.miss{color:#9a3412}button{font:inherit;cursor:pointer}</style></head><body>
 <h1>Diffusion Studio</h1>
 <p id="state">Проверяю…</p>
+<button type="button" id="go" hidden>Установить приложение</button>
+<p id="log"></p>
 <script>
 const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
 let n = 0; const wait = new Map();
 addEventListener("message", (e) => { const m = e.data || {}; if (m.sinty !== "tab/1") return; if (typeof m.id === "number" && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); } });
-function ask(op, path) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send(op, { id, path }); }); }
-ask("get", "/status").then((m) => {
+function ask(op, path, body) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send(op, { id, path, body }); }); }
+async function load() {
+  const m = await ask("get", "/status");
   const el = document.getElementById("state");
   if (!m.ok) { el.textContent = "Не проверилось"; return; }
   const d = m.data;
   el.className = d.cli ? "" : "miss";
-  el.textContent = d.cli ? "Команда diffusion найдена." : "Команды diffusion нет. Поставьте приложение Diffusion Studio: в нём эта команда и редактор.";
-  if (d.release) el.textContent += " Последний релиз на GitHub: " + d.release + ".";
-});
+  el.textContent = d.cli ? "Команда diffusion найдена." : "Команды diffusion нет.";
+  if (d.release) el.textContent += " Релиз на GitHub: " + d.release + ".";
+  document.getElementById("go").hidden = !!d.cli;
+}
+document.getElementById("go").onclick = async () => {
+  document.getElementById("log").textContent = "Скачиваю установщик и запускаю его. Это несколько минут.";
+  const m = await ask("post", "/install", {});
+  document.getElementById("log").textContent = m.ok ? "Установщик завершился. Если команда всё ещё не видна, откройте приложение один раз." : ((m.error && m.error.message) || "не установилось");
+  await load();
+};
+load();
 send("ready");
 </script></body></html>`;
 }
@@ -131,6 +161,27 @@ export default definePlugin({
     const page = (body: string) => new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": TAB_CSP, "cache-control": "no-store" } });
     const json = (body: unknown, code = 200) => new Response(JSON.stringify(body), { status: code, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     ctx.http({ method: "GET", path: "/tab/status", public: true, surface: "status", handler: () => page(tabHtml()) });
+    ctx.http({
+      method: "POST",
+      path: "/install",
+      surface: "status",
+      access: "edit",
+      handler: async () => {
+        if (process.platform !== "win32") return json({ error: { message: "установщик есть для Windows x64" } }, 400);
+        try {
+          mkdirSync(ctx.paths.data, { recursive: true });
+          const file = join(ctx.paths.data, "Diffusion-Studio-x64-Setup.exe");
+          const curl = join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "curl.exe");
+          const downloaded = await exec(curl, ["-L", "--fail", "-o", file, "https://github.com/diffusionstudio/editor/releases/latest/download/Diffusion-Studio-x64-Setup.exe"], 600_000);
+          if (downloaded.code !== 0) return json({ error: { message: downloaded.out || "не скачалось" } }, 400);
+          const installed = await exec(file, ["--silent"], 600_000);
+          if (installed.code !== 0) return json({ error: { message: installed.out || "установщик завершился с ошибкой" } }, 400);
+          return json(await status());
+        } catch (e) {
+          return json({ error: { message: e instanceof Error ? e.message : "не установилось" } }, 400);
+        }
+      },
+    });
     ctx.http({
       method: "GET",
       path: "/status",

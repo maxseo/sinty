@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Программы looks for FFmpeg, Python, ImageMagick and the Playwright Chromium on disk, not only on PATH. Diffusion's tab downloads the Windows installer instead of only naming the GitHub release.
 - Plugin `diffusion`: agents open a Diffusion Studio project, inspect media, check the cut and export through the desktop app's `diffusion` command. `diffusion.generate` spends account credits and asks first. The tab says when the command is missing and shows the latest GitHub release.
 - Plugin `runtimes`: `runtimes.status` and `runtimes.install` put FFmpeg, Python and ImageMagick on the machine with winget. Chrome is the Playwright Chromium already used by `web.screenshot`; `hyperframes.render` points Puppeteer at that file.
 - Plugin `hyperframes`: agents save an HTML composition and render it with the HyperFrames CLI (`hyperframes.write`, `hyperframes.render`). The Hyperframes tab and `hyperframes.updates` compare the npm version and the GitHub `main` commit with the last seen mark and show when either moved. Needs Node 22, FFmpeg and Chrome on the machine.

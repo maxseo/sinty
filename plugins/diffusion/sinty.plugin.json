@@ -7,7 +7,7 @@
   "runtime": "node",
   "entry": "dist/index.js",
   "permissions": {
-    "fs": { "read": ["$WORKSPACE"], "write": ["$WORKSPACE"] },
+    "fs": { "read": ["$WORKSPACE", "$DATA"], "write": ["$WORKSPACE", "$DATA"] },
     "net": ["$PUBLIC"],
     "shell": true
   },

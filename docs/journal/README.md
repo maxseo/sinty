@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-29 | [Program lookup](2026-10-29-runtime-lookup.md) | (open) | Programs are found on disk. Diffusion's tab downloads the Windows installer. |
 | 2026-10-29 | [Diffusion Studio](2026-10-29-diffusion.md) | (open) | Agents open a Diffusion Studio project and call its CLI. Generate asks first. |
 | 2026-10-29 | [Runtimes installer](2026-10-29-runtimes.md) | (open) | One plugin installs FFmpeg, Python and ImageMagick. Render uses the Playwright Chromium. |
 | 2026-10-29 | [HyperFrames plugin](2026-10-29-hyperframes-plugin.md) | (open) | Agents write and render a HyperFrames composition. The tab shows upstream updates. |
