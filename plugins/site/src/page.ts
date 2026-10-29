@@ -1,60 +1,96 @@
 /** Admin lists. The iframe has no token; the harness bridge adds it to GET /docs. Text only, no HTML from records. */
 export const TAB_CSP = ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", "connect-src 'none'", "form-action 'none'", "base-uri 'none'"].join("; ");
 
-export function tabHtml(which: "pages" | "blog" | "builder"): string {
-  const title = which === "pages" ? "Страницы" : which === "blog" ? "Блог" : "Конструктор";
-  const kinds = which === "pages" ? "page,template" : which === "blog" ? "post,category" : "page,post,template";
+/** Pages or the blog. A person creates the record here; widgets are added on Конструктор. */
+export function tabHtml(which: "pages" | "blog"): string {
+  const title = which === "pages" ? "Страницы" : "Блог";
+  const listPath = which === "pages" ? "/docs" : "/blog-docs";
+  const editPath = which === "pages" ? "/pages/edit" : "/blog/edit";
+  const form = which === "pages"
+    ? `<form id="create" class="row"><input name="title" required placeholder="Название"><input name="slug" required placeholder="адрес, для главной: home" pattern="[a-z0-9]+(-[a-z0-9]+)*"><button>Создать страницу</button></form><p class="muted">Главная — это страница с адресом home, отдельного типа у неё нет. Новая запись — черновик. Текст и виджеты — на вкладке Конструктор.</p>`
+    : `<form id="cat" class="row"><input name="title" required placeholder="Название категории"><input name="slug" required placeholder="адрес категории" pattern="[a-z0-9]+(-[a-z0-9]+)*"><button>Создать категорию</button></form><form id="post" class="row"><input name="title" required placeholder="Название поста"><input name="slug" required placeholder="адрес поста" pattern="[a-z0-9]+(-[a-z0-9]+)*"><select name="categoryId" id="cats"></select><button>Создать пост</button></form><p class="muted">Сначала категория, потом пост. Черновик не виден на сайте, пока не нажмёте «Опубликовать».</p>`;
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title>
 <style>
 body{margin:0;font:14px/1.45 system-ui,sans-serif;color:#1d1d1f;background:#fff}
 h1{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #e5e5ea}
-ul{list-style:none;margin:0;padding:0}
-li{padding:8px 16px;border-bottom:1px solid #f0f0f2}
+form,p{padding:0 16px}
+.row{display:flex;gap:8px;align-items:center;padding-top:12px}
+ul{list-style:none;margin:12px 0 0;padding:0}
+li{padding:8px 16px;border-bottom:1px solid #f0f0f2;display:flex;gap:8px;align-items:center}
 .muted{color:#6e6e73;font-size:12px}
-#body{padding:16px;white-space:pre-wrap}
-button{font:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+input,select,button{font:inherit}
+button{cursor:pointer}
 </style></head><body>
 <h1>${title}</h1>
+${form}
 <ul id="list"></ul>
-<div id="body"></div>
 <script>
-const kinds = ${JSON.stringify(kinds.split(","))};
+const blog = ${JSON.stringify(which === "blog")};
 const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
-let n = 0;
-const wait = new Map();
-addEventListener("message", (e) => {
-  const m = e.data || {};
-  if (m.sinty !== "tab/1") return;
-  if (m.op === "init") send("get", { id: ++n, path: "/docs" });
-  if (typeof m.id === "number" && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); }
-});
-function ask(path) {
-  const id = ++n;
-  return new Promise((ok) => { wait.set(id, ok); send("get", { id, path }); });
+let n = 0; const wait = new Map();
+addEventListener("message", (e) => { const m = e.data || {}; if (m.sinty !== "tab/1") return; if (typeof m.id === "number" && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); } });
+function ask(op, path, body) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send(op, { id, path, body }); }); }
+let records = [];
+function label(r) {
+  const home = !blog && r.slug === "home" ? "главная · " : "";
+  const kind = r.kind === "category" ? "категория" : r.kind === "post" ? "пост" : "страница";
+  const st = r.status === "published" ? "опубликовано" : "черновик";
+  return home + r.title + " · " + kind + " · " + st + " · /" + r.slug;
 }
-ask("/docs").then((m) => {
-  const rows = ((m.data && m.data.records) || []).filter((r) => kinds.includes(r.kind));
+function draw() {
   const ul = document.getElementById("list");
-    if (!rows.length) ul.innerHTML = '<li class="muted">Пока пусто. Страницу можно собрать на вкладке Конструктор или попросить агента.</li>';
-  const builder = ${JSON.stringify(which === "builder")};
+  ul.textContent = "";
+  const rows = records.filter((r) => blog ? r.kind === "post" || r.kind === "category" : r.kind === "page");
+  if (!rows.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "Пока пусто."; ul.append(li); }
   for (const r of rows) {
     const li = document.createElement("li");
-    const b = document.createElement("button");
-    b.textContent = r.title;
-    const s = document.createElement("span");
-    s.className = "muted";
-    s.textContent = " · " + r.kind + " · " + r.status + " · /" + r.slug;
-    b.onclick = () => {
-      const box = document.getElementById("body");
-      if (!builder) { box.textContent = r.body || "(пусто)"; return; }
-      const types = [];
-      for (const block of r.layout || []) for (const row of block.rows || []) for (const col of row.cols || []) for (const w of col.widgets || []) types.push(w.type);
-      box.textContent = types.length ? types.join(", ") : "(конструктор пуст)";
-    };
-    li.append(b, s);
+    const span = document.createElement("span");
+    span.textContent = label(r);
+    const pub = document.createElement("button");
+    pub.type = "button";
+    pub.textContent = r.status === "published" ? "В черновик" : "Опубликовать";
+    pub.onclick = () => setStatus(r, r.status === "published" ? "draft" : "published");
+    li.append(span, pub);
     ul.append(li);
   }
-});
+  if (blog) {
+    const sel = document.getElementById("cats");
+    sel.textContent = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "без категории";
+    sel.append(none);
+    for (const c of records.filter((r) => r.kind === "category")) {
+      const o = document.createElement("option");
+      o.value = c.id;
+      o.textContent = c.title;
+      sel.append(o);
+    }
+  }
+}
+async function reload() {
+  const m = await ask("get", ${JSON.stringify(listPath)});
+  records = (m.data && m.data.records) || [];
+  draw();
+}
+async function create(kind, form) {
+  const fd = new FormData(form);
+  const body = { action: "create", kind, title: fd.get("title"), slug: fd.get("slug") };
+  if (fd.get("categoryId")) body.categoryId = fd.get("categoryId");
+  const m = await ask("post", ${JSON.stringify(editPath)}, body);
+  if (!m.ok) { alert((m.error && m.error.message) || "не сохранилось"); return; }
+  form.reset();
+  await reload();
+}
+async function setStatus(r, status) {
+  const m = await ask("post", ${JSON.stringify(editPath)}, { action: "status", id: r.id, status });
+  if (!m.ok) { alert((m.error && m.error.message) || "не сохранилось"); return; }
+  await reload();
+}
+document.getElementById("create") && (document.getElementById("create").onsubmit = (e) => { e.preventDefault(); create("page", e.target); });
+document.getElementById("cat") && (document.getElementById("cat").onsubmit = (e) => { e.preventDefault(); create("category", e.target); });
+document.getElementById("post") && (document.getElementById("post").onsubmit = (e) => { e.preventDefault(); create("post", e.target); });
+reload();
 send("ready");
 </script></body></html>`;
 }
@@ -77,12 +113,12 @@ button{cursor:pointer}
 <h1>Конструктор</h1>
 <form id="create">
   <div class="row">
-    <select name="kind"><option value="page">Страница</option><option value="post">Пост</option><option value="category">Категория</option><option value="template">Шаблон</option></select>
+    <select name="kind"><option value="page">Страница</option><option value="post">Пост</option><option value="category">Категория</option><option value="template">Шаблон — общий блок</option></select>
     <input name="title" required placeholder="Название">
     <input name="slug" required placeholder="адрес-латиницей" pattern="[a-z0-9]+(-[a-z0-9]+)*">
     <button>Создать</button>
   </div>
-  <p class="muted">Новая запись — черновик. Адрес главной: home.</p>
+  <p class="muted">Главная — страница с адресом home. Шаблон — не страница: это общий блок, его вставляют на другие страницы. Категории и посты удобнее заводить на вкладке Блог, страницы — на вкладке Страницы.</p>
 </form>
 <ul id="list"></ul>
 <section id="edit" hidden>
