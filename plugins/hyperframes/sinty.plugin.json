@@ -1,0 +1,25 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "hyperframes",
+  "version": "0.1.0",
+  "description": "Write a HyperFrames HTML composition and render it to MP4. The tab shows when heygen-com/hyperframes has a newer release.",
+  "kinds": ["tool", "ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$DATA", "$WORKSPACE"], "write": ["$DATA", "$WORKSPACE"] },
+    "net": ["$PUBLIC"],
+    "shell": true
+  },
+  "tools": [
+    { "name": "hyperframes.updates", "description": "Compare the last seen HyperFrames release with the current npm version and GitHub main commit.", "sideEffects": "read", "idempotent": true },
+    { "name": "hyperframes.write", "description": "Save a HyperFrames HTML composition in the session workspace.", "sideEffects": "write", "idempotent": true },
+    { "name": "hyperframes.render", "description": "Render a saved composition to MP4 with the hyperframes CLI. Needs Node 22, FFmpeg and Chrome.", "sideEffects": "external", "idempotent": false }
+  ],
+  "ui": {
+    "tabs": [
+      { "id": "updates", "title": "Hyperframes", "path": "/tab/updates", "placement": "sidebar" }
+    ]
+  },
+  "editable": true
+}
