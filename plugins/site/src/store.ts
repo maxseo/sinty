@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { parseLayout, SiteError, type Block } from "./layout.js";
@@ -91,6 +91,85 @@ export class SiteStore {
     `);
     const cols = this.db.prepare("PRAGMA table_info(docs)").all() as unknown as { name: string }[];
     if (!cols.some((c) => c.name === "layout")) this.db.exec("ALTER TABLE docs ADD COLUMN layout TEXT NOT NULL DEFAULT '[]'");
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS visitors (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        visitor_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS login_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        email INTEGER NOT NULL DEFAULT 1,
+        google INTEGER NOT NULL DEFAULT 0,
+        telegram INTEGER NOT NULL DEFAULT 0,
+        yandex INTEGER NOT NULL DEFAULT 0,
+        vk INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT OR IGNORE INTO login_settings (id) VALUES (1);
+    `);
+  }
+
+  loginSettings(): LoginSettings {
+    const row = this.db.prepare("SELECT email, google, telegram, yandex, vk FROM login_settings WHERE id = 1").get() as unknown as Record<string, number>;
+    return { email: row.email === 1, google: row.google === 1, telegram: row.telegram === 1, yandex: row.yandex === 1, vk: row.vk === 1 };
+  }
+
+  setLoginSettings(next: { email?: boolean | undefined; google?: boolean | undefined; telegram?: boolean | undefined; yandex?: boolean | undefined; vk?: boolean | undefined }): LoginSettings {
+    const cur = this.loginSettings();
+    const merged = { ...cur };
+    for (const key of ["email", "google", "telegram", "yandex", "vk"] as const) {
+      if (typeof next[key] === "boolean") merged[key] = next[key];
+    }
+    this.db.prepare("UPDATE login_settings SET email=?, google=?, telegram=?, yandex=?, vk=? WHERE id=1").run(merged.email ? 1 : 0, merged.google ? 1 : 0, merged.telegram ? 1 : 0, merged.yandex ? 1 : 0, merged.vk ? 1 : 0);
+    return merged;
+  }
+
+  /** Email and password of a visitor. Returns a session token. The hash never leaves the database. */
+  registerVisitor(email: string, password: string): string {
+    if (!this.loginSettings().email) throw new SiteError("email login is off");
+    const addr = normalizeEmail(email);
+    if (password.length < 8) throw new SiteError("password must be at least 8 characters");
+    const taken = this.db.prepare("SELECT id FROM visitors WHERE email = ?").get(addr);
+    if (taken) throw new SiteError("this email is already registered");
+    const id = `vis_${randomBytes(6).toString("hex")}`;
+    this.db.prepare("INSERT INTO visitors (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)").run(id, addr, hashPassword(password), new Date().toISOString());
+    return this.openSession(id);
+  }
+
+  loginVisitor(email: string, password: string): string {
+    if (!this.loginSettings().email) throw new SiteError("email login is off");
+    const row = this.db.prepare("SELECT id, password_hash FROM visitors WHERE email = ?").get(normalizeEmail(email)) as unknown as { id: string; password_hash: string } | undefined;
+    if (!row || !checkPassword(password, row.password_hash)) throw new SiteError("email or password is wrong");
+    return this.openSession(row.id);
+  }
+
+  visitorFromToken(token: string): { id: string; email: string } | undefined {
+    if (!token) return undefined;
+    const row = this.db.prepare(
+      "SELECT v.id, v.email FROM sessions s JOIN visitors v ON v.id = s.visitor_id WHERE s.token = ? AND s.expires_at > ?",
+    ).get(token, new Date().toISOString()) as unknown as { id: string; email: string } | undefined;
+    return row;
+  }
+
+  endSession(token: string): void {
+    if (token) this.db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+  }
+
+  visitors(): { id: string; email: string; createdAt: string }[] {
+    return (this.db.prepare("SELECT id, email, created_at FROM visitors ORDER BY created_at").all() as unknown as { id: string; email: string; created_at: string }[]).map((r) => ({ id: r.id, email: r.email, createdAt: r.created_at }));
+  }
+
+  private openSession(visitorId: string): string {
+    const token = randomBytes(24).toString("hex");
+    const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    this.db.prepare("INSERT INTO sessions (token, visitor_id, expires_at) VALUES (?, ?, ?)").run(token, visitorId, expires);
+    return token;
   }
 
   list(filter: { kind?: Kind; status?: Status } = {}): Doc[] {
@@ -179,13 +258,43 @@ export class SiteStore {
   }
 
   /** What a visitor may see. A closed page keeps its title and hides the body. */
-  published(slug: string): { doc: Doc; hidden: boolean } | undefined {
+  published(slug: string, signedIn = false): { doc: Doc; hidden: boolean } | undefined {
     const row = this.db.prepare("SELECT * FROM docs WHERE slug = ? AND status = 'published' AND kind != 'template'").get(slug) as unknown as Row | undefined;
     if (!row) return undefined;
     const doc = toDoc(row);
-    if (doc.loginRequired) return { doc: { ...doc, body: "", layout: [] }, hidden: true };
+    if (doc.loginRequired && !signedIn) return { doc: { ...doc, body: "", layout: [] }, hidden: true };
     return { doc, hidden: false };
   }
+}
+
+export interface LoginSettings {
+  email: boolean;
+  google: boolean;
+  telegram: boolean;
+  yandex: boolean;
+  vk: boolean;
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(email: string): string {
+  const addr = email.trim().toLowerCase();
+  if (!EMAIL.test(addr) || addr.length > 200) throw new SiteError("email is not valid");
+  return addr;
+}
+
+function hashPassword(password: string): string {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 32);
+  return `${salt.toString("hex")}:${hash.toString("hex")}`;
+}
+
+function checkPassword(password: string, stored: string): boolean {
+  const [saltHex, hashHex] = stored.split(":");
+  if (!saltHex || !hashHex) return false;
+  const hash = scryptSync(password, Buffer.from(saltHex, "hex"), 32);
+  const expected = Buffer.from(hashHex, "hex");
+  return hash.length === expected.length && timingSafeEqual(hash, expected);
 }
 
 function parseStored(raw: string | undefined): Block[] {

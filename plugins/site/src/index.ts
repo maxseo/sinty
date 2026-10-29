@@ -1,7 +1,7 @@
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { renderLayout } from "./layout.js";
 import { TAB_CSP, tabHtml } from "./page.js";
-import { KINDS, SiteError, SiteStore, type Doc, type Kind, type Status } from "./store.js";
+import { KINDS, SiteError, SiteStore, type Doc, type Kind, type LoginSettings, type Status } from "./store.js";
 
 const kind = z.enum(KINDS);
 const json = (body: unknown, status = 200): Response =>
@@ -115,10 +115,38 @@ export default definePlugin({
         }
       },
     });
+    ctx.tool({
+      name: "site.login",
+      description: "Turn visitor sign-in methods on or off: email (password), google, telegram, yandex, vk. OAuth keys are harness secrets, never stored in the site database. Only email and password can sign a visitor in today.",
+      input: z.object({ email: z.boolean().optional(), google: z.boolean().optional(), telegram: z.boolean().optional(), yandex: z.boolean().optional(), vk: z.boolean().optional() }),
+      sideEffects: "write",
+      idempotent: true,
+      async run(args) {
+        return { content: store.setLoginSettings(args) };
+      },
+    });
+    ctx.tool({
+      name: "site.visitors",
+      description: "List visitor accounts: id, email, createdAt. No passwords.",
+      input: z.object({}),
+      sideEffects: "read",
+      idempotent: true,
+      async run() {
+        return { content: { visitors: store.visitors(), login: store.loginSettings() } };
+      },
+    });
 
     ctx.http({ method: "GET", path: "/tab/pages", public: true, surface: "pages", handler: () => html(tabHtml("pages")) });
     ctx.http({ method: "GET", path: "/tab/blog", public: true, surface: "blog", handler: () => html(tabHtml("blog")) });
     ctx.http({ method: "GET", path: "/tab/builder", public: true, surface: "builder", handler: () => html(tabHtml("builder")) });
+    ctx.http({ method: "GET", path: "/tab/login", public: true, surface: "login", handler: () => html(loginTab()) });
+    ctx.http({
+      method: "GET",
+      path: "/settings",
+      surface: "login",
+      access: "view",
+      handler: () => json({ login: store.loginSettings(), visitors: store.visitors().length }),
+    });
     ctx.http({
       method: "GET",
       path: "/docs",
@@ -141,20 +169,52 @@ export default definePlugin({
       method: "GET",
       path: "/public/:slug",
       public: true,
-      handler: (_req, { params }) => {
-        const found = store.published(params.slug ?? "");
+      handler: (req, { params }) => {
+        const found = store.published(params.slug ?? "", signedIn(store, req));
         if (!found) return json({ error: { code: "not_found", message: "no such page" } }, 404);
         return json({ ...found.doc, hidden: found.hidden });
       },
     });
     ctx.http({
       method: "GET",
+      path: "/login",
+      public: true,
+      handler: (req) => html(loginForm(new URL(req.url, "http://x").searchParams.get("error") ?? "", store.loginSettings())),
+    });
+    ctx.http({
+      method: "POST",
+      path: "/session",
+      public: true,
+      handler: async (req) => {
+        const form = await req.formData();
+        const email = String(form.get("email") ?? "");
+        const password = String(form.get("password") ?? "");
+        try {
+          const token = String(form.get("action") ?? "") === "register" ? store.registerVisitor(email, password) : store.loginVisitor(email, password);
+          return new Response(null, { status: 303, headers: { location: "/p/site/login?ok=1", "set-cookie": cookie(token, 30 * 24 * 3600) } });
+        } catch (e) {
+          const code = e instanceof SiteError ? "bad" : "error";
+          return new Response(null, { status: 303, headers: { location: `/p/site/login?error=${code}` } });
+        }
+      },
+    });
+    ctx.http({
+      method: "POST",
+      path: "/logout",
+      public: true,
+      handler: (req) => {
+        store.endSession(tokenOf(req));
+        return new Response(null, { status: 303, headers: { location: "/p/site/login", "set-cookie": cookie("", 0) } });
+      },
+    });
+    ctx.http({
+      method: "GET",
       path: "/view/:slug",
       public: true,
-      handler: (_req, { params }) => {
-        const found = store.published(params.slug ?? "");
+      handler: (req, { params }) => {
+        const found = store.published(params.slug ?? "", signedIn(store, req));
         if (!found) return new Response("Страница не найдена", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-        const body = found.hidden ? "<p>Эта страница откроется после входа.</p>" : pageBody(store, found.doc);
+        const body = found.hidden ? `<p>Эта страница откроется после входа. <a href="/p/site/login">Войти</a></p>` : pageBody(store, found.doc);
         return html(viewHtml(found.doc.title, body));
       },
     });
@@ -173,6 +233,55 @@ function pageBody(store: SiteStore, doc: Doc): string {
   }
   const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
   return `<pre style="white-space:pre-wrap">${esc(doc.body)}</pre>`;
+}
+
+function tokenOf(req: Request): string {
+  return req.headers.get("cookie")?.match(/(?:^|;\s*)site_visitor=([a-f0-9]+)/)?.[1] ?? "";
+}
+function signedIn(store: SiteStore, req: Request): boolean {
+  return Boolean(store.visitorFromToken(tokenOf(req)));
+}
+function cookie(token: string, maxAge: number): string {
+  return `site_visitor=${token}; HttpOnly; Path=/p/site; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+function loginForm(error: string, settings: LoginSettings): string {
+  const note = error === "bad" ? "<p>Почта или пароль не подошли, либо такая почта уже есть.</p>" : "";
+  const providers = [
+    settings.google ? "Google" : "",
+    settings.telegram ? "Telegram" : "",
+    settings.yandex ? "Яндекс" : "",
+    settings.vk ? "VK" : "",
+  ].filter(Boolean);
+  const later = providers.length ? `<p class="muted">${providers.join(", ")}: ключ хранится в харнесе, кнопка входа будет следующим шагом.</p>` : "";
+  const form = settings.email
+    ? `<form method="post" action="/p/site/session"><p><input name="email" type="email" required placeholder="почта"></p><p><input name="password" type="password" required minlength="8" placeholder="пароль"></p><p><button name="action" value="login">Войти</button> <button name="action" value="register">Создать аккаунт</button></p></form><form method="post" action="/p/site/logout"><button>Выйти</button></form>`
+    : "<p>Вход по почте выключен.</p>";
+  return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>Вход</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:24px}.muted{color:#6e6e73}</style><h1>Вход на сайт</h1>${note}${form}${later}`;
+}
+
+function loginTab(): string {
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Вход</title>
+<style>body{margin:0;font:14px/1.45 system-ui,sans-serif;padding:16px}.muted{color:#6e6e73}</style></head><body>
+<h1>Вход посетителей</h1>
+<p id="state" class="muted">Загрузка…</p>
+<p class="muted">Переключатели ставит агент инструментом site.login. Ключи Google, Telegram, Яндекса и VK в базу сайта не пишутся.</p>
+<script>
+const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
+let n = 0; const wait = new Map();
+addEventListener("message", (e) => {
+  const m = e.data || {};
+  if (m.sinty !== "tab/1") return;
+  if (typeof m.id === "number" && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); }
+});
+function ask(path) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send("get", { id, path }); }); }
+ask("/settings").then((m) => {
+  const login = (m.data && m.data.login) || {};
+  const on = (k) => login[k] ? "вкл" : "выкл";
+  document.getElementById("state").textContent = "Почта " + on("email") + ", Google " + on("google") + ", Telegram " + on("telegram") + ", Яндекс " + on("yandex") + ", VK " + on("vk") + ". Посетителей: " + ((m.data && m.data.visitors) || 0);
+});
+send("ready");
+</script></body></html>`;
 }
 
 function viewHtml(title: string, body: string): string {

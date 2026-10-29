@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-29 | [Visitor login](2026-10-29-site-visitors.md) | (open) | Visitor email accounts in the site DB, cookie session, closed pages open after login. |
 | 2026-10-29 | [Site constructor](2026-10-29-site-constructor.md) | (open) | Widget tree on site records, template as a dynamic block, Конструктор tab. |
 | 2026-10-29 | [Site plugin, first slice](2026-10-29-site-plugin.md) | (open) | SQLite records for pages, posts, categories and templates; agent tools and two harness tabs. |
 | 2026-10-29 | [Agent-made plugins](2026-10-29-agent-made-plugins.md) | (open) | `plugin.create`: the agent writes a new plugin under narrower rules; a human approves its first start. |
