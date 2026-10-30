@@ -4,13 +4,7 @@ import { definePlugin, ToolError, z } from "@sinty/sdk";
 
 const TAB_CSP = ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", "connect-src 'none'", "form-action 'none'", "base-uri 'none'"].join("; ");
 
-const PACKAGES = {
-  ffmpeg: "Gyan.FFmpeg",
-  python: "Python.Python.3.12",
-  magick: "ImageMagick.ImageMagick",
-} as const;
-
-type Name = keyof typeof PACKAGES;
+type Name = "ffmpeg" | "python" | "magick";
 
 /** The plugin process does not receive LOCALAPPDATA. The install folder is Local\Sinty\app\plugins\<name>. */
 function localAppData(): string {
@@ -44,7 +38,8 @@ function first($name, $roots) {
 }
 $local = $env:LOCALAPPDATA
 $chrome = Get-ChildItem (Join-Path $local 'ms-playwright') -Filter chrome.exe -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 1
-@{ ffmpeg = first 'ffmpeg' @((Join-Path $local 'Microsoft\\WinGet\\Packages')); python = first 'python' @((Join-Path $local 'Programs\\Python')); magick = first 'magick' @((Join-Path $local 'Microsoft\\WinGet\\Packages'), $env:ProgramFiles); chrome = $(if ($chrome) { $chrome.FullName } else { '' }) } | ConvertTo-Json -Compress
+$tools = Join-Path $local 'Sinty\tools'
+@{ ffmpeg = first 'ffmpeg' @($tools); python = first 'python' @($tools, (Join-Path $local 'Programs\Python')); magick = first 'magick' @($tools); chrome = $(if ($chrome) { $chrome.FullName } else { '' }) } | ConvertTo-Json -Compress
 `;
   return new Promise((resolve) => {
     const child = spawn(ps, ["-NoProfile", "-Command", script], { windowsHide: true, env: userEnv() });
@@ -62,18 +57,53 @@ $chrome = Get-ChildItem (Join-Path $local 'ms-playwright') -Filter chrome.exe -R
   });
 }
 
-function winget(id: string): Promise<{ code: number; out: string }> {
+function sys(name: string): string {
+  return join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", name);
+}
+
+function run(bin: string, args: string[], ms: number): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const winget = join(localAppData(), "Microsoft", "WindowsApps", "winget.exe");
-    const child = spawn(winget, ["install", "--id", id, "-e", "--scope", "user", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"], { windowsHide: true, env: userEnv() });
+    const child = spawn(bin, args, { windowsHide: true, env: userEnv() });
     let out = "";
-    const take = (buf: Buffer) => { out = (out + buf.toString("utf8")).slice(-8000); };
+    const take = (buf: Buffer) => { out = (out + buf.toString("utf8")).slice(-4000); };
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
-    const timer = setTimeout(() => { child.kill(); resolve({ code: 1, out: out + "\nостановлено по таймауту 10 минут" }); }, 600_000);
+    const timer = setTimeout(() => { child.kill(); resolve({ code: 1, out: out + "\nостановлено по таймауту" }); }, ms);
     child.on("error", (err) => { clearTimeout(timer); resolve({ code: 1, out: String(err) }); });
     child.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? 1, out }); });
   });
+}
+
+async function download(url: string, dest: string): Promise<void> {
+  const result = await run(sys("curl.exe"), ["-L", "--fail", "-o", dest, url], 600_000);
+  if (result.code !== 0) throw new Error(result.out || "не скачалось");
+}
+
+async function installTool(name: Name): Promise<void> {
+  const tools = join(localAppData(), "Sinty", "tools");
+  const made = await run(sys("WindowsPowerShell\\v1.0\\powershell.exe"), ["-NoProfile", "-Command", `New-Item -ItemType Directory -Force -Path '${tools}' | Out-Null`], 30_000);
+  if (made.code !== 0) throw new Error(made.out || "не создалась папка");
+  if (name === "ffmpeg") {
+    const zip = join(tools, "ffmpeg.zip");
+    await download("https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip", zip);
+    const unpacked = await run(sys("tar.exe"), ["-xf", zip, "-C", tools], 180_000);
+    if (unpacked.code !== 0) throw new Error(unpacked.out || "ffmpeg не распаковался");
+    return;
+  }
+  if (name === "python") {
+    const exe = join(tools, "python-installer.exe");
+    await download("https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe", exe);
+    const dir = join(tools, "python");
+    const installed = await run(exe, ["/quiet", "InstallAllUsers=0", `TargetDir=${dir}`, "PrependPath=0", "Include_test=0"], 600_000);
+    if (installed.code !== 0) throw new Error(installed.out || "python не установился");
+    return;
+  }
+  const seven = join(tools, "7zr.exe");
+  await download("https://www.7-zip.org/a/7zr.exe", seven);
+  const archive = join(tools, "magick.7z");
+  await download("https://github.com/ImageMagick/ImageMagick/releases/download/7.1.2-34/ImageMagick-7.1.2-34-portable-Q16-x64.7z", archive);
+  const unpacked = await run(seven, ["x", archive, `-o${join(tools, "magick")}`, "-y"], 180_000);
+  if (unpacked.code !== 0) throw new Error(unpacked.out || "ImageMagick не распаковался");
 }
 
 async function status() {
@@ -123,7 +153,7 @@ async function load() {
   document.getElementById("go").hidden = !(m.data.missing || []).filter((x) => x !== "chrome").length;
 }
 document.getElementById("go").onclick = async () => {
-  document.getElementById("log").textContent = "Ставлю через winget…";
+  document.getElementById("log").textContent = "Скачиваю и распаковываю. Это несколько минут.";
   const m = await ask("post", "/install", { what: "all" });
   document.getElementById("log").textContent = m.ok ? "Готово. Новое окно терминала увидит их в PATH." : ((m.error && m.error.message) || "не установилось");
   await load();
@@ -148,18 +178,21 @@ export default definePlugin({
     });
     ctx.tool({
       name: "runtimes.install",
-      description: "Install ffmpeg, python, magick, or all, with winget for the current user. Chrome is not installed: HyperFrames uses the Playwright Chromium. A new terminal sees the new PATH.",
+      description: "Download ffmpeg, python, magick, or all into %LOCALAPPDATA%\\Sinty\\tools. Chrome is not installed: HyperFrames uses the Playwright Chromium.",
       input: z.object({ what: z.enum(["ffmpeg", "python", "magick", "all"]) }),
       sideEffects: "external",
       idempotent: true,
       async run(args) {
-        if (process.platform !== "win32") throw new ToolError("runtimes_os", "установка через winget только на Windows");
+        if (process.platform !== "win32") throw new ToolError("runtimes_os", "установка только на Windows");
         const names = (args.what === "all" ? ["ffmpeg", "python", "magick"] : [args.what]) as Name[];
-        const installed: Record<string, string> = {};
+        const installed: string[] = [];
         for (const name of names) {
-          const result = await winget(PACKAGES[name]);
-          if (result.code !== 0) throw new ToolError("runtimes_install", `${name}: ${result.out || result.code}`);
-          installed[name] = PACKAGES[name];
+          try {
+            await installTool(name);
+          } catch (e) {
+            throw new ToolError("runtimes_install", `${name}: ${e instanceof Error ? e.message : "не установилось"}`);
+          }
+          installed.push(name);
         }
         return { content: { installed, status: await status() } };
       },
@@ -181,8 +214,11 @@ export default definePlugin({
         try {
           const names = (what === "all" ? ["ffmpeg", "python", "magick"] : [what]) as Name[];
           for (const name of names) {
-            const result = await winget(PACKAGES[name]);
-            if (result.code !== 0) return json({ error: { message: `${name}: ${result.out || result.code}` } }, 400);
+            try {
+              await installTool(name);
+            } catch (e) {
+              return json({ error: { message: `${name}: ${e instanceof Error ? e.message : "не установилось"}` } }, 400);
+            }
           }
           return json(await status());
         } catch (e) {

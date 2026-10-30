@@ -4,4 +4,4 @@ Agents edit video in [Diffusion Studio](https://github.com/diffusionstudio/edito
 
 `diffusion.run` wraps the app CLI: `open`, `context`, `capture`, `check`, `export`, `probe`, `grab`, `transcribe`, `filmstrip`, `waveform`, `listen`, `fonts`, `logs`, `screenshot`, `window`, `job`. Paths stay in the session workspace. `diffusion.generate` spends account credits and asks first.
 
-The command `diffusion` ships with the desktop app. The sidebar tab says when it is missing and shows the latest GitHub release tag. This plugin does not download the app.
+The command `diffusion` ships with the desktop app. The sidebar tab says whether `Diffusion Studio.exe` is installed, shows the latest GitHub release, downloads the Windows setup when the app is missing, and opens the editor window.
