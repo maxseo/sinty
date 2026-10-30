@@ -193,7 +193,7 @@ function filmsPage(): Response {
   <p class="err" id="note" hidden></p>
   <form id="add">
     <input name="name" placeholder="Название фильма" required maxlength="80">
-    <button type="submit">Новый фильм</button>
+    <button type="button" id="create">Новый фильм</button>
   </form>
   <ul id="list"></ul>
 </main>
@@ -255,15 +255,20 @@ addEventListener("message", (e) => {
   wait.delete(m.id);
   if (m.ok) pending.ok(m.data); else pending.bad(new Error((m.error && m.error.message) || "ошибка"));
 });
-document.getElementById("add").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = new FormData(e.currentTarget).get("name");
-  e.currentTarget.reset();
+async function createFilm() {
+  const form = document.getElementById("add");
+  const input = form.querySelector("input");
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  input.value = "";
   try {
-    const data = await ask("post", "/library?project=" + encodeURIComponent(project), { name: String(name || "") });
+    const data = await ask("post", "/library?project=" + encodeURIComponent(project), { name });
     if (data.film) openFilm(data.film.id);
+    else say("Фильм не создался.");
   } catch (err) { say(err.message); }
-});
+}
+document.getElementById("create").addEventListener("click", () => { createFilm(); });
+document.getElementById("add").addEventListener("submit", (e) => { e.preventDefault(); createFilm(); });
 const hello = setInterval(() => {
   if (project) { clearInterval(hello); return; }
   parent.postMessage({ sinty: PROTO, op: "ready" }, "*");
