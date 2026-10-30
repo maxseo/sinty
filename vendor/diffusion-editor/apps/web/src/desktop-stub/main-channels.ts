@@ -67,6 +67,7 @@ export const MAIN_CHANNELS = {
   PROJECTS_GET: "projects:get",
   PROJECTS_INIT: "projects:init",
   PROJECTS_RESOLVE: "projects:resolve",
+  PROJECTS_OPEN_ID: "projects:open-id",
   PROJECTS_FIND_MOVED: "projects:find-moved",
   PROJECTS_ASK_MISSING: "projects:ask-missing",
   PROJECTS_CREATE: "projects:create",
@@ -270,6 +271,10 @@ export type MainRequestMap = {
   };
   [MAIN_CHANNELS.PROJECTS_RESOLVE]: {
     request: { dir: string };
+    response: ProjectInfo | null;
+  };
+  [MAIN_CHANNELS.PROJECTS_OPEN_ID]: {
+    request: { id: string };
     response: ProjectInfo | null;
   };
   // The project `id` in a folder beside `dir`, which no longer holds it (a

@@ -2,7 +2,7 @@
   "$schema": "../../schemas/plugin-manifest.schema.json",
   "name": "diffusion",
   "version": "0.1.0",
-  "description": "The Diffusion Studio editor inside the harness. Agents use the same commands; sign-in, generation, transcription and listen go through local adapters.",
+  "description": "A video editor inside each harness project. Films belong to that project. Agents use the same commands; sign-in, generation, transcription and listen go through local adapters.",
   "kinds": ["tool", "ui"],
   "runtime": "node",
   "entry": "dist/index.js",
@@ -12,12 +12,12 @@
     "shell": true
   },
   "tools": [
-    { "name": "diffusion.run", "description": "Run one editor command in the open Diffusion tab: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job.", "sideEffects": "external", "idempotent": false },
+    { "name": "diffusion.run", "description": "Run one editor command in the film open in the project's video tab: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job.", "sideEffects": "external", "idempotent": false },
     { "name": "diffusion.generate", "description": "Generate media through the connected adapter. Without an address the call says nothing is connected.", "sideEffects": "external", "idempotent": false, "defaultPolicy": "ask" }
   ],
   "ui": {
     "tabs": [
-      { "id": "status", "title": "Diffusion", "path": "/app", "placement": "sidebar" }
+      { "id": "status", "title": "Видео", "path": "/films", "placement": "project" }
     ]
   },
   "editable": true
