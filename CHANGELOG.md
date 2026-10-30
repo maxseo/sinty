@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Opening a new film no longer leaves the project tab black. The answer that the film is ready goes back to the editor that asked, instead of a shared queue another open editor can take.
 - Opening a film no longer fails with “Access to this API has been restricted”. Import media copies the chosen video or picture into that film, so a file picked in the browser shows up in Assets.
 - `shell.run` asks a human for each folder outside the project and opens only those, read-only, for that command. The disk, the user profile and Sinty secrets stay closed. A timed-out command kills the cage and its children, so a browser left running inside it no longer holds the turn.
 - Программы shows a download bar with megabytes received and total. FFmpeg comes from the GitHub copy of the essentials build, because gyan.dev was sending about 120 KB/s and the row looked stuck.

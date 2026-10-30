@@ -47,7 +47,7 @@ function editorFile(rel: string): Response {
   const ext = extname(file).toLowerCase();
   const headers: Record<string, string> = {
     "content-type": TYPES[ext] ?? "application/octet-stream",
-    "cache-control": ext === ".html" ? "no-store" : "public, max-age=300",
+    "cache-control": ext === ".html" || file.endsWith("harness-desktop.js") ? "no-store" : "public, max-age=300",
     "access-control-allow-origin": "*",
     "cross-origin-resource-policy": "cross-origin",
   };
@@ -114,8 +114,8 @@ export default definePlugin({
         if (req.method !== "POST") return json({ error: { message: "нужен POST" } }, 405);
         const body = await req.json() as { channel?: string; payload?: unknown };
         if (!body.channel) return json({ error: { message: "нет канала" } }, 400);
-        await acceptFromEditor(body.channel, body.payload, roots());
-        return json({ ok: true });
+        const reply = await acceptFromEditor(body.channel, body.payload, roots());
+        return json(reply ?? { ok: true });
       },
     });
     ctx.http({
