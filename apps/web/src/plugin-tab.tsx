@@ -121,7 +121,7 @@ export function PluginTab({ tab, sessionId, projectId }: { tab: PluginTabInfo; s
       {error || !tab.src ? (
         <p class="error">{error || "bad tab path"}</p>
       ) : (
-        <iframe ref={frame} key={tab.src} title={tab.title} src={tab.src} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />
+        <iframe ref={frame} key={tab.src} title={tab.title} src={tab.src} sandbox="allow-scripts" referrerpolicy="no-referrer" allow={tab.plugin === "diffusion" ? "fullscreen; clipboard-read; clipboard-write" : ""} />
       )}
     </div>
   );
