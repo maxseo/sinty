@@ -9,7 +9,7 @@
   "permissions": { "shell": true },
   "tools": [
     { "name": "runtimes.status", "description": "Where FFmpeg, Python, ImageMagick and Chrome are, or that they are missing.", "sideEffects": "read", "idempotent": true },
-    { "name": "runtimes.install", "description": "Install ffmpeg, python, magick, or all of them with winget. Chrome is the Playwright Chromium already on the machine.", "sideEffects": "external", "idempotent": true }
+    { "name": "runtimes.install", "description": "Download ffmpeg, python, magick, or whichever of them is missing, into %LOCALAPPDATA%\\Sinty\\tools. Chrome is the Playwright Chromium already on the machine.", "sideEffects": "external", "idempotent": true }
   ],
   "ui": {
     "tabs": [

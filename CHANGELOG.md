@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Программы shows a download bar with megabytes received and total. FFmpeg comes from the GitHub copy of the essentials build, because gyan.dev was sending about 120 KB/s and the row looked stuck.
+- Программы: each missing program has its own Установить button, and Установить все stays. The download no longer dies when the tab's request is cut off at two minutes. Installed programs are added to the user PATH.
 - The editor title bar shows the harness mark and the name Synt Studio.
 - «Новый фильм» did nothing: the project tab sandbox blocked form submit. The button now creates the film directly, and the Diffusion frame is allowed to submit that form.
 - The video editor is a tab inside each harness project. It lists that project's films and opens the editor for one of them. Diffusion Studio's own project dashboard is not shown.

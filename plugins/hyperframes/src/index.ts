@@ -81,11 +81,21 @@ function playwrightChrome(): string | undefined {
   return line?.trim();
 }
 
+/** Bins from the Программы tab. Missing folders are harmless on PATH. The process cannot stat this directory. */
+function toolBins(): string[] {
+  const local = process.env.LOCALAPPDATA || join(process.cwd(), "..", "..", "..", "..");
+  const tools = join(local, "Sinty", "tools");
+  return [join(tools, "ffmpeg"), join(tools, "python"), join(tools, "python", "Scripts"), join(tools, "magick")];
+}
+
 function run(cmd: string, args: string[], cwd: string): Promise<{ code: number; out: string }> {
   const chrome = playwrightChrome();
-  const env = chrome
-    ? { ...process.env, PUPPETEER_EXECUTABLE_PATH: chrome, CHROME_PATH: chrome }
-    : process.env;
+  const bins = toolBins();
+  const env = {
+    ...process.env,
+    ...(bins.length ? { PATH: [...bins, process.env.PATH].filter(Boolean).join(";") } : {}),
+    ...(chrome ? { PUPPETEER_EXECUTABLE_PATH: chrome, CHROME_PATH: chrome } : {}),
+  };
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, windowsHide: true, shell: false, env });
     let out = "";
