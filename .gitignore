@@ -1,4 +1,8 @@
 node_modules/
+vendor/diffusion-editor/node_modules/
+vendor/diffusion-editor/apps/web/dist/
+plugins/diffusion/editor/
+plugins/diffusion/compiler.json
 build/
 dist/
 plugins/ui-web/public/

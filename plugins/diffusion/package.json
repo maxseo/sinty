@@ -9,6 +9,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@sinty/sdk": "workspace:*"
+    "@babel/core": "^7.26.10",
+    "@babel/preset-typescript": "^7.26.0",
+    "@sinty/sdk": "workspace:*",
+    "babel-preset-solid": "^1.9.16",
+    "esbuild": "^0.28.2"
   }
 }

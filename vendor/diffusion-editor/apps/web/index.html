@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/mark.svg" />
+    <script>
+      (function () {
+        try {
+          var apply = function (mode) {
+            var resolved =
+              mode === "system"
+                ? window.matchMedia("(prefers-color-scheme: dark)").matches
+                  ? "dark"
+                  : "light"
+                : mode;
+            var root = document.documentElement;
+            root.style.colorScheme = resolved;
+            root.dataset.kbTheme = resolved;
+            return mode;
+          };
+          var stored = localStorage.getItem("kb-color-mode");
+          if (stored) apply(stored);
+          else localStorage.setItem("kb-color-mode", apply("dark"));
+        } catch (e) {}
+
+        if (window.desktop) {
+          document.documentElement.dataset.platform = window.desktop.platform;
+          if (window.desktop.platform === "darwin") {
+            document.documentElement.dataset.boot = "1";
+          }
+        }
+      })();
+    </script>
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+
+      html[data-boot="1"] #boot-splash {
+        display: flex;
+      }
+
+      #boot-splash svg {
+        width: 48px;
+        height: 48px;
+      }
+    </style>
+    <link href="/src/index.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Diffusion Studio</title>
+    <meta name="description" content="The video editor built on an infinite canvas. Create and edit videos with design-tool freedom and export up to 4K. Multi-track timeline, AI-powered workflows, and full creative control. Built for creators and professionals." />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Diffusion Studio — The creative platform for video and motion graphics." />
+    <meta property="og:description" content="The video editor built on an infinite canvas. Create and edit videos with design-tool freedom and export up to 4K. Multi-track timeline, AI-powered workflows, and full creative control. Built for creators and professionals." />
+    <meta property="og:image" content="/og-default.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Diffusion Studio — The creative platform for video and motion graphics." />
+    <meta name="twitter:description" content="The video editor built on an infinite canvas. Create and edit videos with design-tool freedom and export up to 4K. Multi-track timeline, AI-powered workflows, and full creative control. Built for creators and professionals." />
+    <meta name="twitter:image" content="/og-default.png" />
+  </head>
+  <body>
+    <div id="boot-splash" aria-hidden="true">
+      <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M24.1654 5.98253C28.7439 3.33916 34.3852 3.33916 38.9636 5.98253L50.3971 12.5838C54.9755 15.2272 57.7958 20.1124 57.7958 25.3991V38.6009C57.7958 43.8876 54.9754 48.7728 50.3971 51.4162L38.9636 58.0175C34.3852 60.6608 28.7439 60.6608 24.1654 58.0175L12.732 51.4162C8.15369 48.7728 5.33325 43.8875 5.33325 38.6009V25.3991C5.33326 20.1124 8.1536 15.2272 12.732 12.5838L24.1654 5.98253ZM35.3368 12.4783C33.0477 11.1567 30.2272 11.1567 27.9381 12.4783L16.5145 19.0742C14.2254 20.3959 12.8148 22.8385 12.8148 25.4819V38.6723C12.8148 41.3157 14.2253 43.7583 16.5145 45.0799L27.9381 51.6752C30.2273 52.9968 33.0476 52.9968 35.3368 51.6752L46.7604 45.0799C49.0496 43.7583 50.4601 41.3157 50.4601 38.6723V25.4819C50.4601 22.8385 49.0496 20.3959 46.7604 19.0742L35.3368 12.4783Z" fill="#F2F2F2" fill-opacity="0.64"/>
+      </svg>
+    </div>
+    <div id="root"></div>
+    <script src="harness-desktop.js"></script>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>

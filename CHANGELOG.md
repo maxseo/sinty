@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Diffusion tab is the editor itself, built from the pinned Diffusion Studio web app (`vendor/diffusion-editor`, MPL-2.0) without the Electron shell. Agent commands go to that tab. Sign-in, generation, transcription and listen are adapter URLs in `$SINTY_HOME/data/diffusion/adapters.json`; an empty address answers «не подключено».
 - Программы installs FFmpeg, Python and ImageMagick by downloading them into `%LOCALAPPDATA%\Sinty\tools`. The WindowsApps `winget.exe` path is not a program, so starting it failed. Diffusion's tab says the editor is installed and opens its window.
 - Программы looks for FFmpeg, Python, ImageMagick and the Playwright Chromium on disk, not only on PATH. Diffusion's tab downloads the Windows installer instead of only naming the GitHub release.
 - Plugin `diffusion`: agents open a Diffusion Studio project, inspect media, check the cut and export through the desktop app's `diffusion` command. `diffusion.generate` spends account credits and asks first. The tab says when the command is missing and shows the latest GitHub release.
