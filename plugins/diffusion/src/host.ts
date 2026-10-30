@@ -187,6 +187,27 @@ function compilerPackage(): string | null {
   return abs && readable(abs) ? abs : null;
 }
 
+/** Lets a canvas edit stay on the stage. The JSX file is not rewritten yet, so a reload shows the file again. Answering with an error makes the editor delete the clip it just added. */
+function keepEdits(edits: unknown): { skipped: string[]; ids: Record<string, string>; unrolled: string[] } {
+  const ids: Record<string, string> = {};
+  const unrolled: string[] = [];
+  const list = Array.isArray(edits) ? edits : [];
+  for (const edit of list) {
+    if (!edit || typeof edit !== "object") continue;
+    const row = edit as { kind?: unknown; source?: unknown; iterations?: unknown };
+    if (typeof row.source === "string" && row.source.startsWith("pending#")) ids[row.source] = row.source;
+    if (row.kind === "unroll" && typeof row.source === "string") unrolled.push(row.source);
+    if (!Array.isArray(row.iterations)) continue;
+    for (const iteration of row.iterations) {
+      if (!iteration || typeof iteration !== "object") continue;
+      for (const value of Object.values(iteration as Record<string, { pending?: unknown }>)) {
+        if (value && typeof value.pending === "string") ids[value.pending] = value.pending;
+      }
+    }
+  }
+  return { skipped: [], ids, unrolled };
+}
+
 async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
   const entry = ["index.tsx", "index.ts", "index.jsx", "index.js"].find((name) => readable(join(dir, name)));
   if (!entry) return { ok: false, error: "нет index.tsx" };
@@ -195,6 +216,7 @@ async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: 
   const script = `
     const { createRequire } = require("node:module");
     const { readFileSync } = require("node:fs");
+    const { dirname } = require("node:path");
     const req = createRequire(process.env.COMPILER_PKG);
     const esbuild = req("esbuild");
     const babel = req("@babel/core");
@@ -211,7 +233,7 @@ async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: 
           const source = readFileSync(args.path, "utf8");
           const out = await babel.transformAsync(source, {
             filename: args.path, babelrc: false, configFile: false,
-            plugins: [tags],
+            plugins: [[tags, { root: dirname(process.env.COMPILER_ENTRY) }]],
             presets: [
               [solid.default || solid, { generate: "universal", moduleName: "@diffusionstudio/jsx" }],
               [typescript.default || typescript, { onlyRemoveTypeImports: true }],
@@ -305,7 +327,7 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
     return null;
   }
   if (channel === "projects:compile") return compile(inside(roots, String(body.dir ?? "")));
-  if (channel === "projects:write") return { skipped: [], error: "правка исходника из холста ещё не пишется в файл" };
+  if (channel === "projects:write") return keepEdits(body.edits);
   if (channel === "projects:watch" || channel === "projects:unwatch") return null;
   if (channel === "projects:manifest-read") {
     const file = join(inside(roots, String(body.dir ?? "")), "assets.yml");

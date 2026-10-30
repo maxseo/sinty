@@ -1,4 +1,6 @@
-/** Turns composition tags into the PascalCase components the editor mounts. A lowercase tag is HTML, which the stage refuses. Inside <svg>, the names both sides share stay SVG. */
+const { relative } = require("path");
+
+/** Turns composition tags into the PascalCase components the editor mounts. A lowercase tag is HTML, which the stage refuses. Inside <svg>, the names both sides share stay SVG. Each composition tag is stamped with where it came from, which is what tells the canvas there is a project to drop a clip into. */
 
 const TAGS = new Set([
   "stage", "scene", "group", "rect", "ellipse", "polygon", "path", "video", "image", "audio", "text",
@@ -10,28 +12,43 @@ const TAGS = new Set([
 
 const SVG_SHARED = new Set(["rect", "ellipse", "polygon", "path", "text", "image", "mask", "clipPath"]);
 
+function fileOf(filename, root) {
+  if (!filename) return "index.tsx";
+  if (!root) return filename.split(/[/\\]/).pop();
+  const rel = relative(root, filename).split("\\").join("/");
+  return rel.startsWith("..") ? filename.split(/[/\\]/).pop() : rel;
+}
+
 module.exports = function compositionTags(babel) {
   const t = babel.types;
   return {
     visitor: {
-      Program(program) {
+      Program(program, state) {
         const used = new Set();
         const stack = [];
+        const file = fileOf(state.filename, state.opts && state.opts.root);
+        let index = 0;
         program.traverse({
           JSXElement: {
             enter(path) {
-              const opening = path.node.openingElement.name;
+              const opening = path.node.openingElement;
+              const name = opening.name;
               const inSvg = stack.length ? stack[stack.length - 1] : false;
-              if (opening.type !== "JSXIdentifier") {
+              if (name.type !== "JSXIdentifier") {
                 stack.push(inSvg);
                 return;
               }
-              let tag = opening.name;
+              let tag = name.name;
               if (TAGS.has(tag) && !(inSvg && SVG_SHARED.has(tag))) {
                 const pascal = tag.charAt(0).toUpperCase() + tag.slice(1);
-                opening.name = pascal;
+                name.name = pascal;
                 const closing = path.node.closingElement;
                 if (closing && closing.name.type === "JSXIdentifier") closing.name.name = pascal;
+                const stamped = opening.attributes.some((attr) => attr.type === "JSXAttribute" && attr.name && attr.name.name === "__source");
+                if (!stamped) {
+                  index += 1;
+                  opening.attributes.push(t.jsxAttribute(t.jsxIdentifier("__source"), t.stringLiteral(`${file}:${index}`)));
+                }
                 used.add(pascal);
                 tag = pascal;
               }
