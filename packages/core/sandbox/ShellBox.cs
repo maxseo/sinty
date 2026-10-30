@@ -20,19 +20,22 @@ static class ShellBox {
       return 0;
     }
     string cwd = null, tools = null;
+    var grants = new System.Collections.Generic.List<string>();
     var commandAt = -1;
     for (var i = 0; i < args.Length; i++) {
       if (args[i] == "--cwd" && i + 1 < args.Length) cwd = args[++i];
       else if (args[i] == "--tools" && i + 1 < args.Length) tools = args[++i];
+      else if (args[i] == "--grant" && i + 1 < args.Length) grants.Add(args[++i]);
       else if (args[i] == "--command") { commandAt = i + 1; break; }
     }
     if (cwd == null || commandAt < 0 || commandAt >= args.Length) return Fail("usage");
     var command = string.Join(" ", args, commandAt, args.Length - commandAt);
     if (!string.IsNullOrEmpty(tools)) {
-      Grant(tools, sid);
+      Grant(tools, sid, true);
       command = "set \"PATH=" + tools + ";%PATH%\" && " + command;
     }
-    Grant(cwd, sid);
+    Grant(cwd, sid, true);
+    foreach (var g in grants) if (!string.IsNullOrEmpty(g)) Grant(g, sid, false);
 
     var size = IntPtr.Zero;
     InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
@@ -49,17 +52,28 @@ static class ShellBox {
     var cmd = "cmd.exe /d /s /c " + command;
     if (!CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, true, EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, cwd, ref si, out pi))
       return Fail("start " + Marshal.GetLastWin32Error());
+    // When this process is killed, the job handle closes and every child (cmd, node, Chrome) dies with it.
+    var job = CreateJobObject(IntPtr.Zero, null);
+    if (job != IntPtr.Zero) {
+      var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+      info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+      var len = Marshal.SizeOf(info);
+      var mem = Marshal.AllocHGlobal(len);
+      Marshal.StructureToPtr(info, mem, false);
+      if (SetInformationJobObject(job, JobObjectExtendedLimitInformation, mem, (uint)len)) AssignProcessToJobObject(job, pi.hProcess);
+    }
     WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
     uint code;
     GetExitCodeProcess(pi.hProcess, out code);
     return (int)code;
   }
 
-  static void Grant(string dir, IntPtr sid) {
+  static void Grant(string dir, IntPtr sid, bool write) {
     IntPtr sidStr;
     ConvertSidToStringSid(sid, out sidStr);
     var text = Marshal.PtrToStringUni(sidStr);
-    var psi = new System.Diagnostics.ProcessStartInfo("icacls", "\"" + dir + "\" /grant *" + text + ":(OI)(CI)M /C /Q") { CreateNoWindow = true, UseShellExecute = false };
+    var rights = write ? "(OI)(CI)M" : "(OI)(CI)RX";
+    var psi = new System.Diagnostics.ProcessStartInfo("icacls", "\"" + dir + "\" /grant *" + text + ":" + rights + " /C /Q") { CreateNoWindow = true, UseShellExecute = false };
     System.Diagnostics.Process.Start(psi).WaitForExit();
   }
 
@@ -78,4 +92,30 @@ static class ShellBox {
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcess(string app, string cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
   [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
   [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateJobObject(IntPtr attrs, string name);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int cls, IntPtr info, uint len);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+  const int JobObjectExtendedLimitInformation = 9;
+  const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+  [StructLayout(LayoutKind.Sequential)]
+  struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+    public long PerProcessUserTimeLimit;
+    public long PerJobUserTimeLimit;
+    public uint LimitFlags;
+    public UIntPtr MinimumWorkingSetSize;
+    public UIntPtr MaximumWorkingSetSize;
+    public uint ActiveProcessLimit;
+    public UIntPtr Affinity;
+    public uint PriorityClass;
+    public uint SchedulingClass;
+  }
+
+  [StructLayout(LayoutKind.Sequential)]
+  struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+    public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount, ReadTransferCount, WriteTransferCount, OtherTransferCount;
+    public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+  }
 }

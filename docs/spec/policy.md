@@ -60,11 +60,14 @@ An `ask` call journals `tool.call.approval_requested` and the turn enters `block
 ## Shell sandbox
 
 Approval decides whether `shell.run` may run a command; the sandbox decides what the command can reach. The
-working directory always stays inside the workspace, and `assertSandbox` refuses commands that name a path outside it.
+working directory always stays inside the workspace. A command that names a folder outside the project is approved
+separately: the reason lists those folders, and a yes grants them read-only for that command only. The next command
+asks again. Session trust does not skip this ask. The disk root, the user profile and anything under `$SINTY_HOME`
+or a `.sinty` folder are never granted. `assertSandbox` still refuses every other path outside the workspace.
 
 | Platform | Sandbox |
 |---|---|
-| Windows | `ShellBox.exe`: an AppContainer without capabilities (no network); the workspace and a copy of Node are granted. Unchanged by `config.yaml` `shell` |
+| Windows | `ShellBox.exe`: an AppContainer without capabilities (no network); the workspace and a copy of Node are writable. A folder the human just approved is readable. Killing the box kills its children. Unchanged by `config.yaml` `shell` |
 | Linux | bubblewrap (`bwrap`), see below |
 | macOS | none yet: the command runs as the user |
 

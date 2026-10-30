@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import type { ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isInside } from "./paths.js";
 import { bwrapArgs, decideSandbox, type ShellSandboxConfig } from "./shell-sandbox.js";
@@ -22,6 +23,11 @@ export interface ShellOptions extends ShellSandboxConfig {
   /** $SINTY_HOME, kept out of the Linux sandbox. */
   home?: string;
   log?: (level: string, msg: string) => void;
+  /**
+   * Folders outside the workspace a human just allowed for this command. Read-only in the cage.
+   * Anything else outside the workspace is still refused.
+   */
+  grants?: string[];
 }
 
 /** One warning per process when Linux commands run without the sandbox. */
@@ -38,7 +44,12 @@ export function runShell(workspace: string, command: string, cwd = ".", timeoutM
   const ms = Math.min(Math.max(timeoutMs, 1_000), 120_000);
   const dir = resolve(workspace, cwd);
   if (!isInside(dir, workspace)) return Promise.reject(new Error("cwd must stay inside the workspace"));
-  assertSandbox(workspace, dir, line);
+  const grants = opts.grants ?? [];
+  try {
+    assertSandbox(workspace, dir, line, grants, process.env, opts.home);
+  } catch (e) {
+    return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+  }
   mkdirSync(dir, { recursive: true });
 
   const box = process.platform === "win32" ? shellBoxExe() : undefined;
@@ -53,9 +64,9 @@ export function runShell(workspace: string, command: string, cwd = ".", timeoutM
   return new Promise((done) => {
     const tools = box ? cageNode() : undefined;
     const child = box
-      ? spawn(box, ["--cwd", dir, ...(tools ? ["--tools", tools] : []), "--command", line], { cwd: dir, windowsHide: true })
+      ? spawn(box, ["--cwd", dir, ...(tools ? ["--tools", tools] : []), ...grants.flatMap((g) => ["--grant", g]), "--command", line], { cwd: dir, windowsHide: true })
       : linux?.kind === "bwrap"
-        ? spawn(linux.bin, bwrapArgs({ workspace: ws, cwd: dir, command: line, ...(opts.home ? { home: opts.home } : {}), ...(opts.network !== undefined ? { network: opts.network } : {}), ...(opts.passEnv ? { passEnv: opts.passEnv } : {}) }), { cwd: dir })
+        ? spawn(linux.bin, bwrapArgs({ workspace: ws, cwd: dir, command: line, ...(opts.home ? { home: opts.home } : {}), ...(opts.network !== undefined ? { network: opts.network } : {}), ...(opts.passEnv ? { passEnv: opts.passEnv } : {}), ...(grants.length ? { grants } : {}) }), { cwd: dir })
         : spawn(line, { cwd: dir, shell: true, windowsHide: true });
     let stdout = "";
     let stderr = "";
@@ -68,14 +79,14 @@ export function runShell(workspace: string, command: string, cwd = ".", timeoutM
         truncated = true;
         stdout = stdout.slice(0, MAX_OUT);
         stderr = stderr.slice(0, Math.max(0, MAX_OUT - stdout.length));
-        child.kill();
+        killTree(child);
       }
     };
     child.stdout?.on("data", (chunk: Buffer) => take(chunk, "out"));
     child.stderr?.on("data", (chunk: Buffer) => take(chunk, "err"));
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      killTree(child);
     }, ms);
     child.on("error", (e) => {
       clearTimeout(timer);
@@ -117,12 +128,80 @@ function shellBoxExe(): string | undefined {
   return undefined;
 }
 
-/** Rejects a command that names a file outside the workspace. The process still starts only after approval. */
-export function assertSandbox(workspace: string, cwd: string, command: string): void {
-  if (/%(USERPROFILE|HOMEPATH|HOME|APPDATA)%/i.test(command)) throw new Error("command refers to a profile folder outside the workspace");
-  const refs = command.match(/[A-Za-z]:[\\/][^\s"'|&<>]+|\\\\[^\s"'|&<>]+|(?:\.\.?[\\/])+[^\s"'|&<>]+/g) ?? [];
-  for (const ref of refs) {
+const EXPAND_ENV = new Set(["LOCALAPPDATA", "APPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"]);
+
+/**
+ * Folders outside the workspace that this command names. A human may allow exactly these, for this command.
+ * Throws when a named path is the disk, the user profile, or the Sinty home (secrets). Those are never granted.
+ */
+export function shellGrants(workspace: string, cwd: string, command: string, env: NodeJS.ProcessEnv = process.env, home?: string): string[] {
+  const expanded = command.replace(/%([^%]+)%/g, (all, name: string) => {
+    if (!EXPAND_ENV.has(name.toUpperCase())) return all;
+    const key = Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase());
+    return key && env[key] ? env[key] : all;
+  });
+  const profile = env.USERPROFILE ? resolve(env.USERPROFILE) : undefined;
+  const grants: string[] = [];
+  for (const ref of pathRefs(expanded)) {
     const abs = resolve(cwd, ref);
-    if (!isInside(abs, workspace)) throw new Error(`command reaches outside the workspace: ${ref}`);
+    const dir = grantDir(abs);
+    if (isInside(abs, workspace) || isInside(dir, workspace)) continue;
+    refuseWide(dir, home, profile);
+    if (!grants.some((g) => isInside(dir, g) && isInside(g, dir))) grants.push(dir);
   }
+  return grants;
+}
+
+/** Rejects a command that names a file outside the workspace and outside `grants`. */
+export function assertSandbox(workspace: string, cwd: string, command: string, grants: readonly string[] = [], env?: NodeJS.ProcessEnv, home?: string): void {
+  const needed = shellGrants(workspace, cwd, command, env, home);
+  for (const dir of needed) {
+    if (!grants.some((g) => isInside(dir, resolve(g)))) throw new Error(`command reaches outside the workspace: ${dir}`);
+  }
+}
+
+function pathRefs(command: string): string[] {
+  const refs: string[] = [];
+  const rest = command.replace(/"([^"]*)"|'([^']*)'/g, (_all, dbl: string | undefined, sgl: string | undefined) => {
+    const inner = (dbl ?? sgl ?? "").trim();
+    if (looksLikePath(inner)) refs.push(inner);
+    return " ";
+  });
+  for (const ref of rest.match(/[A-Za-z]:[\\/][^\s"'|&<>]*|\\\\[^\s"'|&<>]+|(?:\.\.?[\\/])+[^\s"'|&<>]+/g) ?? []) refs.push(ref);
+  return refs;
+}
+
+function looksLikePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\") || /^(?:\.\.?[\\/])/.test(value);
+}
+
+function grantDir(abs: string): string {
+  try {
+    if (existsSync(abs) && statSync(abs).isFile()) return dirname(abs);
+  } catch {
+    // A path the process cannot stat is granted as named.
+  }
+  const ext = extname(abs);
+  if (ext && ext.length > 1 && ext.length <= 5) return dirname(abs);
+  return abs;
+}
+
+function refuseWide(dir: string, home: string | undefined, profile: string | undefined): void {
+  if (dirname(dir) === dir) throw new Error(`command reaches outside the workspace: ${dir} (too wide)`);
+  if (profile && (samePath(dir, profile) || isInside(profile, dir))) throw new Error(`command reaches outside the workspace: ${dir} (the user profile is too wide)`);
+  if (home && (isInside(dir, home) || isInside(home, dir))) throw new Error(`command reaches outside the workspace: ${dir} (Sinty secrets are never granted)`);
+  if (dir.split(/[\\/]/).some((part) => part.toLowerCase() === ".sinty")) throw new Error(`command reaches outside the workspace: ${dir} (Sinty secrets are never granted)`);
+}
+
+function samePath(a: string, b: string): boolean {
+  return isInside(a, b) && isInside(b, a);
+}
+
+function killTree(child: ChildProcess): void {
+  if (process.platform === "win32" && child.pid) {
+    const exe = join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "taskkill.exe");
+    spawn(exe, ["/T", "/F", "/PID", String(child.pid)], { windowsHide: true, stdio: "ignore" });
+    return;
+  }
+  child.kill("SIGKILL");
 }

@@ -49,7 +49,7 @@ export const CORE_TOOLS: CoreToolDef[] = [
   },
   {
     name: "shell.run",
-    description: "Run one command in the workspace. cwd is relative to the workspace. A human must approve it. Output is capped. Do not use it to read secrets or leave the workspace.",
+    description: "Run one command in the workspace. cwd is relative to the workspace. A human must approve it. If the command names a folder outside the project, the human is asked for that folder only, for this command. The whole disk, the user profile and Sinty secrets are never opened. Output is capped.",
     input: z.object({
       command: z.string().min(1),
       cwd: z.string().optional().describe("directory relative to the workspace, default ."),

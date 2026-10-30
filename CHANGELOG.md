@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- `shell.run` asks a human for each folder outside the project and opens only those, read-only, for that command. The disk, the user profile and Sinty secrets stay closed. A timed-out command kills the cage and its children, so a browser left running inside it no longer holds the turn.
 - Программы shows a download bar with megabytes received and total. FFmpeg comes from the GitHub copy of the essentials build, because gyan.dev was sending about 120 KB/s and the row looked stuck.
 - Программы: each missing program has its own Установить button, and Установить все stays. The download no longer dies when the tab's request is cut off at two minutes. Installed programs are added to the user PATH.
 - The editor title bar shows the harness mark and the name Synt Studio.
