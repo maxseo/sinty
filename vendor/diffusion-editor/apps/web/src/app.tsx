@@ -24,7 +24,6 @@ import { ProjectPage } from '@/pages/project';
 import { LoginPage } from '@/pages/login';
 import { AuthCallbackPage } from '@/pages/auth-callback';
 import { NotFoundPage } from '@/pages/not-found';
-import { DashboardPage } from '@/pages/dashboard';
 
 function AuthGate(props: { children: JSX.Element }) {
   const auth = useAuth();
@@ -90,6 +89,14 @@ function EnvironmentOverlays() {
   );
 }
 
+/** Their project list is not ours. Home leaves the editor and returns to the film list of this harness project. */
+function FilmsHome() {
+  const back = new URLSearchParams(window.location.search).get("back");
+  const target = back && back.startsWith("/p/diffusion/films") ? back : "/p/diffusion/films";
+  window.location.replace(target);
+  return null;
+}
+
 function App() {
   // The harness serves this app under /p/diffusion/app, so the path is not "/".
   // Hash routing keeps the editor routes on the hash, the same way the desktop shell does.
@@ -118,7 +125,7 @@ function App() {
       )}
     >
       <Route path="/auth/callback" component={AuthCallbackPage} />
-      <Route path="/" component={() => <AuthGate><DashboardPage /></AuthGate>} />
+      <Route path="/" component={FilmsHome} />
       <Route path="/projects/*ref" component={() => <AuthGate><ProjectPage /></AuthGate>} />
       <Route path="*404" component={NotFoundPage} />
     </RouterComponent>

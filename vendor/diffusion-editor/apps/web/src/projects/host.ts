@@ -236,6 +236,14 @@ export async function moveProject(dir: string, target: string): Promise<ProjectI
 export async function resolveProject(ref: string): Promise<ProjectInfo | null> {
 	if (!ref || !isDesktop()) return null;
 
+	// A film opened from the harness list is found by id on disk. That does not
+	// wait on the editor's own project database, which only knew the old dashboard.
+	const found = await mainBridge.call(MAIN_CHANNELS.PROJECTS_OPEN_ID, { id: ref });
+	if (found) {
+		void rememberProject(found);
+		return found;
+	}
+
 	for (const record of await findProjectRecords(ref)) {
 		// A folder renamed or moved since is looked for next to where it was.
 		const project =

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { acceptFromEditor, callTool, cloudCall, takeInbox } from "./host.js";
+import { acceptFromEditor, callTool, cloudCall, createFilm, listFilms, takeInbox } from "./host.js";
 
 const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "logs", "screenshot", "window", "job", "generate"] as const;
 const LONG = new Set(["export", "transcribe", "listen", "grab", "generate"]);
@@ -63,6 +63,32 @@ export default definePlugin({
       headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
     }));
 
+    ctx.http({ method: "GET", path: "/films", public: true, surface: "status", handler: () => filmsPage() });
+    ctx.http({
+      method: "GET",
+      path: "/library",
+      surface: "status",
+      handler: (req) => {
+        try {
+          return json({ films: listFilms(ctx.paths.data, new URL(req.url).searchParams.get("project") ?? "") });
+        } catch (error) {
+          return json({ error: { message: error instanceof Error ? error.message : "неизвестный проект" } }, 400);
+        }
+      },
+    });
+    ctx.http({
+      method: "POST",
+      path: "/library",
+      surface: "status",
+      handler: async (req) => {
+        try {
+          const body = await req.json() as { name?: string };
+          return json({ film: createFilm(ctx.paths.data, new URL(req.url).searchParams.get("project") ?? "", body.name ?? "") });
+        } catch (error) {
+          return json({ error: { message: error instanceof Error ? error.message : "не получилось создать фильм" } }, 400);
+        }
+      },
+    });
     ctx.http({ method: "GET", path: "/app", public: true, surface: "status", handler: () => editorFile("index.html") });
     ctx.http({
       method: "GET",
@@ -111,7 +137,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one editor command in the Diffusion tab: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job. The tab has to be open. Paths stay in the session workspace.",
+      description: "Run one editor command in the open film: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job. The film has to be open in the project's Видео tab. Paths stay in the session workspace.",
       sideEffects: "external",
       input: z.object({
         command: z.enum(COMMANDS),
@@ -143,6 +169,116 @@ export default definePlugin({
     });
   },
 });
+
+function filmsPage(): Response {
+  const html = `<!doctype html>
+<meta charset="utf-8">
+<title>Видео</title>
+<style>
+  body { margin: 0; font: 15px/1.4 system-ui, sans-serif; color: #18181b; background: #fff; }
+  main { max-width: 640px; margin: 0 auto; padding: 28px 20px 48px; }
+  h1 { font-size: 20px; font-weight: 650; margin: 0 0 16px; }
+  form { display: flex; gap: 8px; margin-bottom: 18px; }
+  input { flex: 1; height: 36px; border: 1px solid #e4e4e7; border-radius: 8px; padding: 0 10px; font: inherit; }
+  button { height: 36px; border: 0; border-radius: 8px; padding: 0 14px; background: #18181b; color: #fff; font: inherit; cursor: pointer; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { border-top: 1px solid #f4f4f5; }
+  a { display: flex; justify-content: space-between; gap: 12px; padding: 12px 2px; color: inherit; text-decoration: none; }
+  a:hover { background: #fafafa; }
+  .when { color: #71717a; font-size: 13px; }
+  .empty, .err { color: #71717a; }
+</style>
+<main>
+  <h1>Фильмы</h1>
+  <p class="err" id="note" hidden></p>
+  <form id="add">
+    <input name="name" placeholder="Название фильма" required maxlength="80">
+    <button type="submit">Новый фильм</button>
+  </form>
+  <ul id="list"></ul>
+</main>
+<script>
+const PROTO = "tab/1";
+let project = "";
+let n = 1;
+const wait = new Map();
+const note = document.getElementById("note");
+const list = document.getElementById("list");
+function say(text) { note.hidden = !text; note.textContent = text || ""; }
+function ask(op, path, body) {
+  const id = n++;
+  return new Promise((ok, bad) => {
+    wait.set(id, { ok, bad });
+    parent.postMessage({ sinty: PROTO, id, op, path, body }, "*");
+  });
+}
+function openFilm(id) {
+  const back = encodeURIComponent("/p/diffusion/films");
+  location.href = "/p/diffusion/app?back=" + back + "#/projects/" + encodeURIComponent(id);
+}
+function draw(films) {
+  list.replaceChildren();
+  if (!films.length) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "В этом проекте пока нет фильмов.";
+    list.append(p);
+    return;
+  }
+  for (const film of films) {
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.href = "#";
+    const name = document.createElement("span");
+    name.textContent = film.name;
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = new Date(film.modifiedAt).toLocaleString();
+    a.append(name, when);
+    a.addEventListener("click", (e) => { e.preventDefault(); openFilm(film.id); });
+    li.append(a);
+    list.append(li);
+  }
+}
+async function load() {
+  if (!project) { say("Откройте вкладку внутри проекта."); return; }
+  say("");
+  const data = await ask("get", "/library?project=" + encodeURIComponent(project));
+  draw(data.films || []);
+}
+addEventListener("message", (e) => {
+  const m = e.data;
+  if (!m || m.sinty !== PROTO) return;
+  if (m.op === "init") { project = m.projectId || ""; load().catch((err) => say(err.message)); }
+  const pending = wait.get(m.id);
+  if (!pending) return;
+  wait.delete(m.id);
+  if (m.ok) pending.ok(m.data); else pending.bad(new Error((m.error && m.error.message) || "ошибка"));
+});
+document.getElementById("add").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = new FormData(e.currentTarget).get("name");
+  e.currentTarget.reset();
+  try {
+    const data = await ask("post", "/library?project=" + encodeURIComponent(project), { name: String(name || "") });
+    if (data.film) openFilm(data.film.id);
+  } catch (err) { say(err.message); }
+});
+const hello = setInterval(() => {
+  if (project) { clearInterval(hello); return; }
+  parent.postMessage({ sinty: PROTO, op: "ready" }, "*");
+}, 300);
+parent.postMessage({ sinty: PROTO, op: "ready" }, "*");
+</script>`;
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "access-control-allow-origin": "*",
+      "cross-origin-resource-policy": "cross-origin",
+    },
+  });
+}
 
 function argsOf(command: string, args: string[]): Record<string, unknown> {
   if (command === "open") {

@@ -34,7 +34,7 @@ export function callTool(tool: string, args: unknown, ms: number): Promise<unkno
   return new Promise((done, reject) => {
     const timer = setTimeout(() => {
       waiting.delete(id);
-      reject(new Error("Откройте вкладку Diffusion: редактор не отвечает."));
+      reject(new Error("Откройте фильм во вкладке «Видео» проекта: редактор не отвечает."));
     }, ms);
     waiting.set(id, (reply) => {
       clearTimeout(timer);
@@ -106,6 +106,47 @@ function describe(dir: string, draft: boolean): ProjectInfo | null {
     createdAt: folder.birthtime.toISOString(),
     draft,
   };
+}
+
+function projectKey(id: string): string {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new Error("неизвестный проект");
+  return id;
+}
+
+function filmsRoot(data: string, project: string): string {
+  return join(data, "films", projectKey(project));
+}
+
+export function listFilms(data: string, project: string): { id: string; name: string; modifiedAt: string }[] {
+  const dir = filmsRoot(data, project);
+  if (!existsSync(dir)) return [];
+  const films = readdirSync(dir).flatMap((name) => {
+    const info = describe(join(dir, name), false);
+    return info ? [{ id: info.id, name: info.displayName, modifiedAt: info.modifiedAt }] : [];
+  });
+  films.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  return films;
+}
+
+export function createFilm(data: string, project: string, name: string): { id: string; name: string; modifiedAt: string } {
+  const title = name.trim().slice(0, 80) || "Без названия";
+  const info = ensureProject(join(filmsRoot(data, project), randomUUID()), title);
+  return { id: info.id, name: info.displayName, modifiedAt: info.modifiedAt };
+}
+
+export function findFilm(data: string, id: string): ProjectInfo | null {
+  if (!/^[A-Za-z0-9-]{1,80}$/.test(id)) return null;
+  const root = join(data, "films");
+  if (!existsSync(root)) return null;
+  for (const project of readdirSync(root)) {
+    const dir = join(root, project);
+    if (!statSync(dir).isDirectory()) continue;
+    for (const folder of readdirSync(dir)) {
+      const info = describe(join(dir, folder), false);
+      if (info && (info.id === id || folder === id)) return info;
+    }
+  }
+  return null;
 }
 
 function ensureProject(dir: string, displayName: string): ProjectInfo {
@@ -205,6 +246,7 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
   if (channel === "cli:install" || channel === "cli:uninstall") return { status: "absent" };
   if (channel === "projects:pick-folder") return roots.workspace;
   if (channel === "projects:ask-missing") return "cancel";
+  if (channel === "projects:open-id") return findFilm(roots.data, String(body.id ?? ""));
   if (channel === "projects:create") {
     const id = randomUUID();
     return ensureProject(join(roots.data, "drafts", id), "Untitled");
