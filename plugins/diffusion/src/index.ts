@@ -61,6 +61,7 @@ function tabHtml(): string {
 <style>body{margin:0;font:14px/1.45 system-ui,sans-serif;color:#1d1d1f}h1{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #e5e5ea}p,button{margin:12px 16px}.miss{color:#9a3412}button{font:inherit;cursor:pointer}</style></head><body>
 <h1>Diffusion Studio</h1>
 <p id="state">Проверяю…</p>
+<button type="button" id="open" hidden>Открыть редактор</button>
 <button type="button" id="go" hidden>Установить приложение</button>
 <p id="log"></p>
 <script>
@@ -73,11 +74,16 @@ async function load() {
   const el = document.getElementById("state");
   if (!m.ok) { el.textContent = "Не проверилось"; return; }
   const d = m.data;
-  el.className = d.cli ? "" : "miss";
-  el.textContent = d.cli ? "Команда diffusion найдена." : "Команды diffusion нет.";
+  el.className = d.app ? "" : "miss";
+  el.textContent = d.app ? "Редактор установлен. Окно само не открывается." : "Редактор не установлен.";
   if (d.release) el.textContent += " Релиз на GitHub: " + d.release + ".";
-  document.getElementById("go").hidden = !!d.cli;
+  document.getElementById("open").hidden = !d.app;
+  document.getElementById("go").hidden = !!d.app;
 }
+document.getElementById("open").onclick = async () => {
+  const m = await ask("post", "/open", {});
+  document.getElementById("log").textContent = m.ok ? "Окно редактора должно появиться на рабочем столе." : ((m.error && m.error.message) || "не открылось");
+};
 document.getElementById("go").onclick = async () => {
   document.getElementById("log").textContent = "Скачиваю установщик и запускаю его. Это несколько минут.";
   const m = await ask("post", "/install", {});
@@ -108,7 +114,16 @@ export default definePlugin({
       } catch {
         release = "";
       }
-      return { cli, release, app: "https://github.com/diffusionstudio/editor" };
+      const app = join(localAppData(), "DiffusionStudio", "Diffusion Studio.exe");
+      const exists = await new Promise<boolean>((ok) => {
+        const ps = join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+        const child = spawn(ps, ["-NoProfile", "-Command", `if (Test-Path -LiteralPath '${app.replaceAll("'", "''")}') { 'yes' }`], { windowsHide: true });
+        let out = "";
+        child.stdout?.on("data", (buf: Buffer) => { out += buf.toString("utf8"); });
+        child.on("error", () => ok(false));
+        child.on("close", () => ok(out.includes("yes")));
+      });
+      return { cli, app: exists ? app : null, release, page: "https://github.com/diffusionstudio/editor" };
     }
 
     async function call(command: string, args: string[]) {
@@ -161,6 +176,19 @@ export default definePlugin({
     const page = (body: string) => new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": TAB_CSP, "cache-control": "no-store" } });
     const json = (body: unknown, code = 200) => new Response(JSON.stringify(body), { status: code, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     ctx.http({ method: "GET", path: "/tab/status", public: true, surface: "status", handler: () => page(tabHtml()) });
+    ctx.http({
+      method: "POST",
+      path: "/open",
+      surface: "status",
+      access: "edit",
+      handler: async () => {
+        const current = await status();
+        if (!current.app) return json({ error: { message: "редактор не установлен" } }, 400);
+        const child = spawn(current.app, [], { detached: true, stdio: "ignore", windowsHide: false });
+        child.unref();
+        return json({ opened: current.app });
+      },
+    });
     ctx.http({
       method: "POST",
       path: "/install",

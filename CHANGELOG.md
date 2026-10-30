@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Программы installs FFmpeg, Python and ImageMagick by downloading them into `%LOCALAPPDATA%\Sinty\tools`. The WindowsApps `winget.exe` path is not a program, so starting it failed. Diffusion's tab says the editor is installed and opens its window.
 - Программы looks for FFmpeg, Python, ImageMagick and the Playwright Chromium on disk, not only on PATH. Diffusion's tab downloads the Windows installer instead of only naming the GitHub release.
 - Plugin `diffusion`: agents open a Diffusion Studio project, inspect media, check the cut and export through the desktop app's `diffusion` command. `diffusion.generate` spends account credits and asks first. The tab says when the command is missing and shows the latest GitHub release.
 - Plugin `runtimes`: `runtimes.status` and `runtimes.install` put FFmpeg, Python and ImageMagick on the machine with winget. Chrome is the Playwright Chromium already used by `web.screenshot`; `hyperframes.render` points Puppeteer at that file.
