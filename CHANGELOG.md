@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Dragging a file from Assets onto the timeline inserts the clip. The film compiler stamps each composition tag, and a canvas edit is kept on the open timeline instead of being thrown away.
 - Opening a film inside a project shows Assets, the timeline and the inspector. A saved “hide panels” value no longer leaves only the black canvas.
 - A new film renders. `<stage>` and the other composition tags compile to the components the canvas mounts, so the editor no longer reports that DOM content must be inside `<html>`.
 - Opening a new film no longer leaves the project tab black. The answer that the film is ready goes back to the editor that asked, instead of a shared queue another open editor can take.
