@@ -87,6 +87,8 @@ export interface BwrapCommand {
   network?: boolean;
   passEnv?: string[];
   env?: NodeJS.ProcessEnv;
+  /** Extra folders a human allowed for this command, bound read-only. */
+  grants?: string[];
 }
 
 /** Arguments for `bwrap` that run `command` with `/bin/sh -c` inside the sandbox. */
@@ -128,6 +130,18 @@ export function bwrapArgs(o: BwrapCommand): string[] {
   addTool(dirname(process.execPath));
   for (const dir of (env.PATH ?? "").split(delimiter)) addTool(dir);
   for (const t of tools) args.push("--ro-bind", t, t);
+  for (const g of o.grants ?? []) {
+    if (!g || !isAbsolute(g) || !existsSync(g)) continue;
+    let real: string;
+    try {
+      real = realpathSync(g);
+    } catch {
+      continue;
+    }
+    if (blocked.some((b) => b && isInside(b, real))) continue;
+    if (isInside(real, o.workspace)) continue;
+    args.push("--ro-bind", real, real);
+  }
 
   // Real paths: a symlink on the way to the workspace would not exist inside the sandbox.
   const ws = safeReal(o.workspace);

@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-30 | [Shell path grant](2026-10-30-shell-path-grant.md) | (open) | A command outside the project asks for those folders only, and a timeout kills the cage. |
 | 2026-10-30 | [Program buttons](2026-10-30-program-buttons.md) | (open) | Each missing program has Установить. The download keeps going after the tab request returns. |
 | 2026-10-30 | [Films in the project](2026-10-30-project-films.md) | (open) | Each harness project has a video tab. Their project dashboard is not shown. |
 | 2026-10-30 | [Diffusion tab visible](2026-10-30-diffusion-tab-visible.md) | (open) | The Diffusion tab paints the editor. The frame no longer stays white. |

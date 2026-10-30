@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { z, type TurnInfo, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
 import { budgetTokens, type CheckpointPhase, type SupervisedTool } from "@sinty/supervisor";
 import type { Bus, StreamOnlyEvent } from "./bus.js";
@@ -19,7 +19,7 @@ import { hint, renderTurnContext, resolveTimezone, withoutHint } from "./prompt.
 import { foldTranscript, type MemoryRouter } from "./memory-router.js";
 import type { ModelGateway } from "./models.js";
 import { compactCap, compactPoint, ContextWindows, ratioFromEvents, tokenRatio, type ContextWindow } from "./context-window.js";
-import { runShell, ShellSandboxError } from "./shell.js";
+import { runShell, shellGrants, ShellSandboxError } from "./shell.js";
 import { materializeAttachmentsToDir, renderAttachment } from "./blobs.js";
 import type { SintyPaths } from "./paths.js";
 import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
@@ -1084,7 +1084,9 @@ export class Agent {
           this.record({ ...base, type: "tool.call.denied", actor: SYSTEM, data: { callId: call.callId, by: SYSTEM, note: `denied by policy ${verdict.rule}` } });
           return "done";
         }
-        const forced = this.forcedApproval(call);
+        const pathAsk = this.shellPathAsk(sessionId, call);
+        if (pathAsk?.kind === "refused") return fail("invalid_args", pathAsk.message, "Назовите конкретную папку. Весь диск, папка пользователя и секреты Sinty не открываются.");
+        const forced = this.forcedApproval(call) ?? (pathAsk?.kind === "ask" ? pathAsk.reason : undefined);
         if (forced) {
           this.record({ ...base, type: "tool.call.approval_requested", actor: SYSTEM, data: { callId: call.callId, tool: tool.name, args: call.args, reason: forced } });
           return this.block(sessionId, turnId, "approval", `${tool.name} needs approval`);
@@ -1121,6 +1123,25 @@ export class Agent {
       }
       case "resolved":
         return "done";
+    }
+  }
+
+  /**
+   * A shell command that names a folder outside the project. `reason` is the approval text.
+   * `refused` means the path is the disk, the user profile or Sinty secrets, and no approval can open it.
+   */
+  private shellPathAsk(sessionId: string, call: ToolCallRef): { kind: "ask"; reason: string } | { kind: "refused"; message: string } | undefined {
+    if (call.tool !== "shell.run") return undefined;
+    const args = call.args as { command?: unknown; cwd?: unknown } | null;
+    if (!args || typeof args.command !== "string") return undefined;
+    const ws = this.sessionWorkspace(sessionId);
+    const cwd = resolve(ws, typeof args.cwd === "string" ? args.cwd : ".");
+    try {
+      const grants = shellGrants(ws, cwd, args.command, process.env, this.d.paths.home);
+      if (!grants.length) return undefined;
+      return { kind: "ask", reason: `нужен доступ только к: ${grants.join("; ")}` };
+    } catch (e) {
+      return { kind: "refused", message: e instanceof Error ? e.message : String(e) };
     }
   }
 
@@ -1222,10 +1243,13 @@ export class Agent {
     if (name === "shell.run") {
       const a = args as { command: string; cwd?: string; timeoutMs?: number };
       try {
-        return await runShell(this.sessionWorkspace(sessionId), a.command, a.cwd ?? ".", a.timeoutMs ?? 30_000, {
+        const ws = this.sessionWorkspace(sessionId);
+        const grants = shellGrants(ws, resolve(ws, a.cwd ?? "."), a.command, process.env, this.d.paths.home);
+        return await runShell(ws, a.command, a.cwd ?? ".", a.timeoutMs ?? 30_000, {
           ...(this.d.config.shell ?? {}),
           strict: this.d.policy.mode === "strict",
           home: this.d.paths.home,
+          ...(grants.length ? { grants } : {}),
           ...(this.d.log ? { log: this.d.log } : {}),
         });
       } catch (e) {
