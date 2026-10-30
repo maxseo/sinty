@@ -44,9 +44,11 @@ function LayoutToggles() {
       <Button variant="ghost" size="icon" class="text-muted-foreground" onClick={toggleTimeline}>
         <Icon name="sidebar-timeline" />
       </Button>
-      <Button variant="ghost" size="icon" class="text-muted-foreground" onClick={toggleUI}>
-        <Icon name="sidebar" />
-      </Button>
+      <Show when={!window.desktop?.harness}>
+        <Button variant="ghost" size="icon" class="text-muted-foreground" onClick={toggleUI}>
+          <Icon name="sidebar" />
+        </Button>
+      </Show>
     </div>
   )
 }

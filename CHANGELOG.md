@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Opening a film inside a project shows Assets, the timeline and the inspector. A saved “hide panels” value no longer leaves only the black canvas.
 - A new film renders. `<stage>` and the other composition tags compile to the components the canvas mounts, so the editor no longer reports that DOM content must be inside `<html>`.
 - Opening a new film no longer leaves the project tab black. The answer that the film is ready goes back to the editor that asked, instead of a shared queue another open editor can take.
 - Opening a film no longer fails with “Access to this API has been restricted”. Import media copies the chosen video or picture into that film, so a file picked in the browser shows up in Assets.
