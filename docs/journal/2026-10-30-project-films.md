@@ -11,3 +11,5 @@ The Diffusion sidebar tab is gone. Each harness project has a Видео tab. It
 The person wants the editor as a tool inside a project, not a second harness. A film belongs to the project it was made in.
 
 The «Новый фильм» button did not run. The tab frame is sandboxed without form submission, so the browser dropped the submit. The button now calls the create request itself, and the frame is allowed to submit the form.
+
+The editor title bar used their mark and the name Diffusion Studio. Both are now the harness mark and Synt Studio.

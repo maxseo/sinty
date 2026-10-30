@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- The editor title bar shows the harness mark and the name Synt Studio.
 - «Новый фильм» did nothing: the project tab sandbox blocked form submit. The button now creates the film directly, and the Diffusion frame is allowed to submit that form.
 - The video editor is a tab inside each harness project. It lists that project's films and opens the editor for one of them. Diffusion Studio's own project dashboard is not shown.
 - The Diffusion tab stayed white. The editor page no longer sends COOP/COEP into the frame, the desktop bridge script uses an absolute path, and the editor routes live on the hash so the project list opens inside the tab.
