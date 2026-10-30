@@ -200,6 +200,7 @@ async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: 
     const babel = req("@babel/core");
     const solid = req("babel-preset-solid");
     const typescript = req("@babel/preset-typescript");
+    const tags = req("./tags.cjs");
     esbuild.build({
       bundle: true, write: false, format: "cjs", platform: "browser", target: "chrome130",
       external: ["solid-js", "solid-js/*", "@diffusionstudio/jsx"],
@@ -210,6 +211,7 @@ async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: 
           const source = readFileSync(args.path, "utf8");
           const out = await babel.transformAsync(source, {
             filename: args.path, babelrc: false, configFile: false,
+            plugins: [tags],
             presets: [
               [solid.default || solid, { generate: "universal", moduleName: "@diffusionstudio/jsx" }],
               [typescript.default || typescript, { onlyRemoveTypeImports: true }],

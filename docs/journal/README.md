@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-10-30 | [Film renders](2026-10-30-film-render.md) | (open) | A new film mounts. Composition tags compile as components, not as HTML. |
 | 2026-10-30 | [Film opens](2026-10-30-film-black.md) | (open) | A new film paints the editor. Its reply is not taken by another open copy. |
 | 2026-10-30 | [Film media](2026-10-30-film-media.md) | (open) | A film opens, and Import media copies the file into that film. |
 | 2026-10-30 | [Shell path grant](2026-10-30-shell-path-grant.md) | (open) | A command outside the project asks for those folders only, and a timeout kills the cage. |
