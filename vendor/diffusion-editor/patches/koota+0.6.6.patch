@@ -1,0 +1,159 @@
+diff --git a/node_modules/koota/dist/chunk-ZWIGMIL4.js b/node_modules/koota/dist/chunk-ZWIGMIL4.js
+index feb90a8..663b06f 100644
+--- a/node_modules/koota/dist/chunk-ZWIGMIL4.js
++++ b/node_modules/koota/dist/chunk-ZWIGMIL4.js
+@@ -176,6 +176,8 @@ function checkQuery(world, query, entity) {
+   const ctx = world[$internal];
+   const eid = entity & ENTITY_ID_MASK;
+   if (query.traitInstances.all.length === 0) return false;
++  let orRequired = false;
++  let orMatched = false;
+   for (let i = 0; i < generations.length; i++) {
+     const generationId = generations[i];
+     const bitmask = staticBitmasks[i];
+@@ -184,11 +186,14 @@ function checkQuery(world, query, entity) {
+     const forbidden = bitmask.forbidden;
+     const or = bitmask.or;
+     const entityMask = ctx.entityMasks[generationId]?.[eid] || 0;
+-    if (!forbidden && !required && !or) return false;
+     if (forbidden && (entityMask & forbidden) !== 0) return false;
+     if (required && (entityMask & required) !== required) return false;
+-    if (or !== 0 && (entityMask & or) === 0) return false;
++    if (or !== 0) {
++      orRequired = true;
++      if ((entityMask & or) !== 0) orMatched = true;
++    }
+   }
++  if (orRequired && !orMatched) return false;
+   return true;
+ }
+ 
+@@ -222,6 +227,8 @@ function checkQueryTracking(world, query, entity, eventType, eventGenerationId,
+   const generationsLen = generations.length;
+   const trackingGroupsLen = trackingGroups.length;
+   if (traitInstancesAll.length === 0) return false;
++  let orRequired = false;
++  let orMatched = false;
+   for (let i = 0; i < generationsLen; i++) {
+     const generationId = generations[i];
+     const bitmask = staticBitmasks[i];
+@@ -233,8 +240,12 @@ function checkQueryTracking(world, query, entity, eventType, eventGenerationId,
+     const entityMask = genMasks ? genMasks[eid] | 0 : 0;
+     if (forbidden && (entityMask & forbidden) !== 0) return false;
+     if (required && (entityMask & required) !== required) return false;
+-    if (or !== 0 && (entityMask & or) === 0) return false;
++    if (or !== 0) {
++      orRequired = true;
++      if ((entityMask & or) !== 0) orMatched = true;
++    }
+   }
++  if (orRequired && !orMatched) return false;
+   let hasOrGroup = false;
+   let anyOrMatched = false;
+   for (let i = 0; i < trackingGroupsLen; i++) {
+diff --git a/node_modules/koota/dist/index.cjs b/node_modules/koota/dist/index.cjs
+index efa87da..35eb15d 100644
+--- a/node_modules/koota/dist/index.cjs
++++ b/node_modules/koota/dist/index.cjs
+@@ -222,6 +222,8 @@ function checkQuery(world, query, entity) {
+   const ctx = world[$internal];
+   const eid = entity & ENTITY_ID_MASK;
+   if (query.traitInstances.all.length === 0) return false;
++  let orRequired = false;
++  let orMatched = false;
+   for (let i = 0; i < generations.length; i++) {
+     const generationId = generations[i];
+     const bitmask = staticBitmasks[i];
+@@ -230,11 +232,14 @@ function checkQuery(world, query, entity) {
+     const forbidden = bitmask.forbidden;
+     const or = bitmask.or;
+     const entityMask = ctx.entityMasks[generationId]?.[eid] || 0;
+-    if (!forbidden && !required && !or) return false;
+     if (forbidden && (entityMask & forbidden) !== 0) return false;
+     if (required && (entityMask & required) !== required) return false;
+-    if (or !== 0 && (entityMask & or) === 0) return false;
++    if (or !== 0) {
++      orRequired = true;
++      if ((entityMask & or) !== 0) orMatched = true;
++    }
+   }
++  if (orRequired && !orMatched) return false;
+   return true;
+ }
+ 
+@@ -654,6 +659,8 @@ function checkQueryTracking(world, query, entity, eventType, eventGenerationId,
+   const generationsLen = generations.length;
+   const trackingGroupsLen = trackingGroups.length;
+   if (traitInstancesAll.length === 0) return false;
++  let orRequired = false;
++  let orMatched = false;
+   for (let i = 0; i < generationsLen; i++) {
+     const generationId = generations[i];
+     const bitmask = staticBitmasks[i];
+@@ -665,8 +672,12 @@ function checkQueryTracking(world, query, entity, eventType, eventGenerationId,
+     const entityMask = genMasks ? genMasks[eid] | 0 : 0;
+     if (forbidden && (entityMask & forbidden) !== 0) return false;
+     if (required && (entityMask & required) !== required) return false;
+-    if (or !== 0 && (entityMask & or) === 0) return false;
++    if (or !== 0) {
++      orRequired = true;
++      if ((entityMask & or) !== 0) orMatched = true;
++    }
+   }
++  if (orRequired && !orMatched) return false;
+   let hasOrGroup = false;
+   let anyOrMatched = false;
+   for (let i = 0; i < trackingGroupsLen; i++) {
+diff --git a/node_modules/koota/dist/react.cjs b/node_modules/koota/dist/react.cjs
+index 3117293..0a80166 100644
+--- a/node_modules/koota/dist/react.cjs
++++ b/node_modules/koota/dist/react.cjs
+@@ -118,6 +118,8 @@ function checkQuery(world, query, entity) {
+   const ctx = world[$internal];
+   const eid = entity & ENTITY_ID_MASK;
+   if (query.traitInstances.all.length === 0) return false;
++  let orRequired = false;
++  let orMatched = false;
+   for (let i = 0; i < generations.length; i++) {
+     const generationId = generations[i];
+     const bitmask = staticBitmasks[i];
+@@ -126,11 +128,14 @@ function checkQuery(world, query, entity) {
+     const forbidden = bitmask.forbidden;
+     const or = bitmask.or;
+     const entityMask = ctx.entityMasks[generationId]?.[eid] || 0;
+-    if (!forbidden && !required && !or) return false;
+     if (forbidden && (entityMask & forbidden) !== 0) return false;
+     if (required && (entityMask & required) !== required) return false;
+-    if (or !== 0 && (entityMask & or) === 0) return false;
++    if (or !== 0) {
++      orRequired = true;
++      if ((entityMask & or) !== 0) orMatched = true;
++    }
+   }
++  if (orRequired && !orMatched) return false;
+   return true;
+ }
+ 
+@@ -493,6 +498,8 @@ function checkQueryTracking(world, query, entity, eventType, eventGenerationId,
+   const generationsLen = generations.length;
+   const trackingGroupsLen = trackingGroups.length;
+   if (traitInstancesAll.length === 0) return false;
++  let orRequired = false;
++  let orMatched = false;
+   for (let i = 0; i < generationsLen; i++) {
+     const generationId = generations[i];
+     const bitmask = staticBitmasks[i];
+@@ -504,8 +511,12 @@ function checkQueryTracking(world, query, entity, eventType, eventGenerationId,
+     const entityMask = genMasks ? genMasks[eid] | 0 : 0;
+     if (forbidden && (entityMask & forbidden) !== 0) return false;
+     if (required && (entityMask & required) !== required) return false;
+-    if (or !== 0 && (entityMask & or) === 0) return false;
++    if (or !== 0) {
++      orRequired = true;
++      if ((entityMask & or) !== 0) orMatched = true;
++    }
+   }
++  if (orRequired && !orMatched) return false;
+   let hasOrGroup = false;
+   let anyOrMatched = false;
+   for (let i = 0; i < trackingGroupsLen; i++) {
