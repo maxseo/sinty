@@ -29,6 +29,10 @@
       });
   }
 
+  try {
+    localStorage.setItem("dspro.ui.layout.uiVisible", JSON.stringify({ value: true }));
+  } catch (err) {}
+
   window.desktop = {
     platform: "win32",
     harness: true,

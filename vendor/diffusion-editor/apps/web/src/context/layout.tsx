@@ -28,10 +28,14 @@ const LayoutContext = createContext<LayoutContextValue>();
 export const MIN_TIMELINE_HEIGHT = 120;
 export const DEFAULT_TIMELINE_HEIGHT = 234;
 
+const embedded = (): boolean => !!window.desktop?.harness;
+
 export function LayoutProvider(props: { children: JSX.Element }) {
-  const [uiVisible, setUiVisible] = createStoredSignal(
+  const [storedVisible, setStoredVisible] = createStoredSignal(
     store.define<boolean>('layout.uiVisible', true),
   );
+  // Inside the harness the panels are the editor. Hiding them leaves a black canvas.
+  const uiVisible = (): boolean => embedded() || storedVisible();
 
   const [timelineHeight, setTimelineHeight] = createStoredSignal(
     store.define<number>('layout.timelineHeight', DEFAULT_TIMELINE_HEIGHT),
@@ -46,7 +50,10 @@ export function LayoutProvider(props: { children: JSX.Element }) {
     ),
   );
 
-  const toggleUI = () => setUiVisible(!uiVisible());
+  const toggleUI = () => {
+    if (embedded()) return;
+    setStoredVisible(!storedVisible());
+  };
   const toggleTimeline = () => setTimelineMinimized(!timelineMinimized());
 
   return (
