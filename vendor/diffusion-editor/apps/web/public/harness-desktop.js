@@ -38,6 +38,8 @@
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ channel: channel, payload: payload }),
+      }).then(function (res) { return res.ok ? res.json() : null; }).then(function (msg) {
+        if (msg && msg.channel) emit(msg.channel, msg.payload);
       }).catch(function (err) { console.error(err); });
     },
     on: function (channel, cb) {

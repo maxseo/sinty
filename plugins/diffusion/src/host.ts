@@ -44,7 +44,8 @@ export function callTool(tool: string, args: unknown, ms: number): Promise<unkno
   });
 }
 
-export async function acceptFromEditor(channel: string, payload: unknown, roots: Roots): Promise<void> {
+/** Answers one message from the editor. A request's reply is returned to that caller; it is not put on the shared inbox, which another open film would take. */
+export async function acceptFromEditor(channel: string, payload: unknown, roots: Roots): Promise<Outgoing | null> {
   if (channel === REPLY) {
     const reply = payload as Reply;
     const wait = waiting.get(reply.id);
@@ -52,15 +53,15 @@ export async function acceptFromEditor(channel: string, payload: unknown, roots:
       waiting.delete(reply.id);
       wait(reply);
     }
-    return;
+    return null;
   }
-  if (channel !== REQUEST) return;
+  if (channel !== REQUEST) return null;
   const req = payload as { id: string; channel: string; data: unknown };
   try {
     const data = await handleMain(req.channel, req.data, roots);
-    outbox.push({ channel: RESPONSE, payload: { id: req.id, ok: true, data } });
+    return { channel: RESPONSE, payload: { id: req.id, ok: true, data } };
   } catch (error) {
-    outbox.push({ channel: RESPONSE, payload: { id: req.id, ok: false, error: error instanceof Error ? error.message : "ошибка" } });
+    return { channel: RESPONSE, payload: { id: req.id, ok: false, error: error instanceof Error ? error.message : "ошибка" } };
   }
 }
 
