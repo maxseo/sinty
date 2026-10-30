@@ -39,6 +39,8 @@ Restart the server after replacing `plugins/runtimes/dist/index.js` and `plugins
 
 An install that is running dies if the server process stops. The half-written archive is deleted at the next attempt. Chrome still has no install button. The user PATH update is visible to new terminals, not to programs that were already open.
 
+The first FFmpeg URL was `https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip`. That host sent about 120 KB/s, so 110 MB took a quarter of an hour, and the tab only said «Скачиваю FFmpeg». The zip is now `GyanD/codexffmpeg` release `9.0.2` essentials (the same archive, GitHub's file host). `job.received` and `job.total` feed a `<progress>` bar. A child PowerShell prints the growing file size because the plugin process cannot stat `%LOCALAPPDATA%\Sinty\tools`.
+
 ## How to test
 
 Open Программы. Each missing program has Установить, and Установить все is there. Start ImageMagick (the small archive). The row stays on «нет» while the log says it is downloading, then becomes «есть» without the request dying at two minutes.

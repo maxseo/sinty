@@ -7,6 +7,8 @@ const TAB_CSP = ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 
 type Name = "ffmpeg" | "python" | "magick";
 
 const LABELS: Record<Name, string> = { ffmpeg: "FFmpeg", python: "Python", magick: "ImageMagick" };
+/** Same essentials build gyan.dev serves, from the GitHub file host. gyan.dev itself sends about 120 KB/s. */
+const FFMPEG_ZIP = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip";
 
 /** The plugin process does not receive LOCALAPPDATA. The install folder is Local\Sinty\app\plugins\<name>. */
 function localAppData(): string {
@@ -103,11 +105,43 @@ function ps(script: string, ms = 30_000): Promise<{ code: number; out: string; e
   return run(powershell(), ["-NoProfile", "-EncodedCommand", encoded], ms);
 }
 
-async function download(url: string, dest: string): Promise<void> {
-  const result = await run(sys("curl.exe"), ["-L", "--fail", "--retry", "3", "--retry-delay", "2", "-o", dest, url], 600_000);
-  const size = await ps(`$i = Get-Item -LiteralPath ${q(dest)} -ErrorAction SilentlyContinue; if ($i) { $i.Length }`);
-  const bytes = Number(size.out.trim().split(/\r?\n/).pop());
-  if (result.code !== 0 || !Number.isFinite(bytes) || bytes < 1000) throw new Error(tail(result.err || "не скачалось"));
+async function contentLength(url: string): Promise<number> {
+  const head = await run(sys("curl.exe"), ["-sI", "-L", "--fail", url], 30_000);
+  const found = [...head.out.matchAll(/content-length:\s*(\d+)/gi)];
+  const last = found.at(-1);
+  return last ? Number(last[1]) : 0;
+}
+
+/** One PowerShell writes the growing file size. The plugin process is not allowed to stat this folder. */
+function watchSize(dest: string, onSize: (bytes: number) => void): { stop: () => void } {
+  const script = `$ProgressPreference = 'SilentlyContinue'\n$p = ${q(dest)}\nwhile ($true) {\n  if (Test-Path -LiteralPath $p) { (Get-Item -LiteralPath $p).Length } else { 0 }\n  Start-Sleep -Milliseconds 400\n}`;
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const child = spawn(powershell(), ["-NoProfile", "-EncodedCommand", encoded], { windowsHide: true, env: userEnv() });
+  let buf = "";
+  child.stdout?.on("data", (chunk: Buffer) => {
+    buf += chunk.toString("utf8");
+    const lines = buf.split(/\r?\n/);
+    buf = lines.pop() ?? "";
+    const last = lines.map((line) => line.trim()).filter(Boolean).pop();
+    const n = last ? Number(last) : NaN;
+    if (Number.isFinite(n)) onSize(n);
+  });
+  return { stop: () => { child.kill(); } };
+}
+
+async function download(url: string, dest: string, label: string): Promise<void> {
+  const total = await contentLength(url);
+  job = { ...job, step: `Скачиваю ${label}`, received: 0, total, error: "" };
+  const watch = watchSize(dest, (received) => { job = { ...job, received, total }; });
+  try {
+    const result = await run(sys("curl.exe"), ["-L", "--fail", "--retry", "3", "--retry-delay", "2", "-o", dest, url], 600_000);
+    const size = await ps(`$i = Get-Item -LiteralPath ${q(dest)} -ErrorAction SilentlyContinue; if ($i) { $i.Length }`);
+    const bytes = Number(size.out.trim().split(/\r?\n/).pop());
+    if (result.code !== 0 || !Number.isFinite(bytes) || bytes < 1000) throw new Error(tail(result.err || "не скачалось"));
+    job = { ...job, received: bytes, total: total || bytes };
+  } finally {
+    watch.stop();
+  }
 }
 
 async function exeDir(root: string, name: string): Promise<string> {
@@ -150,7 +184,7 @@ foreach ($d in @($dirs)) {
 async function linkBin(name: string, dir: string): Promise<void> {
   const link = join(toolsDir(), name);
   if (link.toLowerCase() === dir.toLowerCase()) return;
-  const result = await ps(`$l = ${q(link)}; if (Test-Path -LiteralPath $l) { cmd /c rmdir ${q(link)} | Out-Null }; cmd /c mklink /J ${q(link)} ${q(dir)}`);
+  const result = await ps(`$l = ${q(link)}; $d = ${q(dir)}; if (Test-Path -LiteralPath $l) { Remove-Item -LiteralPath $l -Force }; New-Item -ItemType Junction -Path $l -Target $d | Out-Null`);
   if (result.code !== 0) throw new Error(tail(result.err || result.out || "не создалась ссылка"));
 }
 
@@ -159,9 +193,8 @@ async function installTool(name: Name, step: (text: string) => void): Promise<st
   const made = await ps(`New-Item -ItemType Directory -Force -Path ${q(tools)} | Out-Null`);
   if (made.code !== 0) throw new Error(tail(made.err || made.out || "не создалась папка"));
   if (name === "ffmpeg") {
-    step("Скачиваю FFmpeg");
     const zip = join(tools, "ffmpeg.zip");
-    await download("https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip", zip);
+    await download(FFMPEG_ZIP, zip, "FFmpeg");
     step("Распаковываю FFmpeg");
     const unpacked = await run(sys("tar.exe"), ["-xf", zip, "-C", tools], 300_000);
     if (unpacked.code !== 0) throw new Error(tail(unpacked.err || unpacked.out || "ffmpeg не распаковался"));
@@ -171,9 +204,8 @@ async function installTool(name: Name, step: (text: string) => void): Promise<st
     return dir;
   }
   if (name === "python") {
-    step("Скачиваю Python");
     const exe = join(tools, "python-installer.exe");
-    await download("https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe", exe);
+    await download("https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe", exe, "Python");
     const dir = join(tools, "python");
     await ps(`$d = ${q(dir)}; if ((Test-Path -LiteralPath $d) -and -not (Test-Path -LiteralPath (Join-Path $d 'python.exe'))) { Remove-Item -LiteralPath $d -Recurse -Force }`);
     await ps(`Unblock-File -LiteralPath ${q(exe)}`);
@@ -188,12 +220,11 @@ async function installTool(name: Name, step: (text: string) => void): Promise<st
     await ps(`Remove-Item -LiteralPath ${q(exe)} -Force`);
     return dir;
   }
-  step("Скачиваю ImageMagick");
   const seven = join(tools, "7zr.exe");
   const sevenSize = await ps(`$i = Get-Item -LiteralPath ${q(seven)} -ErrorAction SilentlyContinue; if ($i) { $i.Length } else { 0 }`);
-  if (Number(sevenSize.out.trim().split(/\r?\n/).pop()) < 1000) await download("https://www.7-zip.org/a/7zr.exe", seven);
+  if (Number(sevenSize.out.trim().split(/\r?\n/).pop()) < 1000) await download("https://www.7-zip.org/a/7zr.exe", seven, "7-Zip");
   const archive = join(tools, "magick.7z");
-  await download("https://github.com/ImageMagick/ImageMagick/releases/download/7.1.2-34/ImageMagick-7.1.2-34-portable-Q16-x64.7z", archive);
+  await download("https://github.com/ImageMagick/ImageMagick/releases/download/7.1.2-34/ImageMagick-7.1.2-34-portable-Q16-x64.7z", archive, "ImageMagick");
   step("Распаковываю ImageMagick");
   const dest = join(tools, "magick");
   const unpacked = await run(seven, ["x", archive, `-o${dest}`, "-y"], 180_000);
@@ -202,9 +233,9 @@ async function installTool(name: Name, step: (text: string) => void): Promise<st
   return exeDir(dest, "magick");
 }
 
-type Job = { running: boolean; what: string; step: string; error: string };
+type Job = { running: boolean; what: string; step: string; error: string; received: number; total: number };
 
-let job: Job = { running: false, what: "", step: "", error: "" };
+let job: Job = { running: false, what: "", step: "", error: "", received: 0, total: 0 };
 let queue: Promise<void> = Promise.resolve();
 
 function binsOf(found: { ffmpeg: string; python: string; magick: string }, names: Name[]): string[] {
@@ -236,31 +267,32 @@ function startInstall(what: string): Promise<string> {
 
 async function installNames(what: string): Promise<string> {
   const names = wanted(what);
-  job = { running: true, what, step: "Проверяю, чего не хватает", error: "" };
+  job = { running: true, what, step: "Проверяю, чего не хватает", error: "", received: 0, total: 0 };
   const bins: string[] = [];
   try {
     const found = await scan();
     const todo = names.filter((name) => !found[name]);
     if (!todo.length) {
-      job = { running: true, what, step: "Добавляю в PATH", error: "" };
+      if (found.ffmpeg && names.includes("ffmpeg")) await linkBin("ffmpeg", dirname(found.ffmpeg));
+      job = { running: true, what, step: "Добавляю в PATH", error: "", received: 0, total: 0 };
       await addToUserPath(binsOf(found, names));
-      job = { running: false, what, step: "Уже стоят", error: "" };
+      job = { running: false, what, step: "Уже стоят", error: "", received: 0, total: 0 };
       return "";
     }
     for (const name of todo) {
-      const dir = await installTool(name, (step) => { job = { running: true, what, step, error: "" }; });
+      const dir = await installTool(name, (step) => { job = { ...job, running: true, what, step, error: "" }; });
         bins.push(dir);
         if (name === "python") bins.push(join(dir, "Scripts"));
         if (name === "ffmpeg") bins.push(join(toolsDir(), "ffmpeg"));
     }
-    job = { running: true, what, step: "Добавляю в PATH", error: "" };
+    job = { ...job, running: true, what, step: "Добавляю в PATH", error: "", received: 0, total: 0 };
     await addToUserPath(bins);
-    job = { running: false, what, step: "Готово. Новое окно терминала их увидит.", error: "" };
+    job = { running: false, what, step: "Готово. Новое окно терминала их увидит.", error: "", received: 0, total: 0 };
     return "";
   } catch (err) {
     if (bins.length) await addToUserPath(bins).catch(() => undefined);
     const message = err instanceof Error ? err.message : "не установилось";
-    job = { running: false, what, step: "", error: message };
+    job = { running: false, what, step: "", error: message, received: job.received, total: job.total };
     return message;
   }
 }
@@ -291,12 +323,16 @@ li{display:flex;align-items:center;gap:12px;padding:8px 16px}
 .note{color:#6b7280}
 button{font:inherit;cursor:pointer}
 #all{margin:4px 16px 12px}
-#log{margin:0 16px 16px;white-space:pre-wrap}
+#log{margin:0 16px 8px;white-space:pre-wrap}
+#prog{margin:0 16px 16px;display:flex;align-items:center;gap:10px}
+#meter{width:280px;height:16px}
+#pct{color:#374151}
 </style></head><body>
 <h1>Программы</h1>
 <ul id="rows"></ul>
 <button type="button" id="all">Установить все</button>
 <p id="log"></p>
+<p id="prog" hidden><progress id="meter" max="1" value="0"></progress><span id="pct"></span></p>
 <script>
 const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
 let n = 0; const wait = new Map();
@@ -341,8 +377,26 @@ function paint(s) {
   const log = document.getElementById("log");
   if (s.job && s.job.error) log.textContent = s.job.error;
   else if (s.job && (s.job.running || s.job.step)) log.textContent = s.job.step;
+  const prog = document.getElementById("prog");
+  const meter = document.getElementById("meter");
+  const pct = document.getElementById("pct");
+  const downloading = busy && s.job && /^Скачиваю/.test(s.job.step || "");
+  prog.hidden = !downloading;
+  if (downloading) {
+    const got = s.job.received || 0;
+    const total = s.job.total || 0;
+    const mb = (n) => (n / 1048576).toFixed(1).replace(".", ",");
+    if (total > 0) {
+      meter.max = total;
+      meter.value = Math.min(got, total);
+      pct.textContent = mb(got) + " МБ из " + mb(total) + " МБ";
+    } else {
+      meter.removeAttribute("value");
+      pct.textContent = got ? mb(got) + " МБ" : "";
+    }
+  }
   if (busy) {
-    if (!timer) timer = setTimeout(() => { timer = 0; load(); }, 2000);
+    if (!timer) timer = setTimeout(() => { timer = 0; load(); }, downloading ? 500 : 2000);
   }
 }
 async function load() {
