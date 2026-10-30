@@ -51,10 +51,6 @@ function editorFile(rel: string): Response {
     "access-control-allow-origin": "*",
     "cross-origin-resource-policy": "cross-origin",
   };
-  if (ext === ".html") {
-    headers["cross-origin-opener-policy"] = "same-origin";
-    headers["cross-origin-embedder-policy"] = "credentialless";
-  }
   return new Response(readFileSync(file), { headers });
 }
 

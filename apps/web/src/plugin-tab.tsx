@@ -26,8 +26,9 @@ const MAX_POST = 256 * 1024;
 const MAX_IN_FLIGHT = 8;
 
 /**
- * Plugin pages run in `<iframe sandbox="allow-scripts">`: an opaque origin, so they cannot read the token in
- * localStorage, call the API, or touch this page. They ask for data with postMessage
+ * Plugin pages run in `<iframe sandbox="allow-scripts">`: an opaque origin, so they cannot read the token,
+ * call the API, or touch this page. The Diffusion editor is the exception (`allow-same-origin`): its scripts
+ * and storage have to live in the frame. Other tabs stay opaque. They ask for data with postMessage
  * `{ sinty: "tab/1", id, op: "get"|"post", path, body? }`. The bridge forwards only to the same plugin's own
  * routes (`/p/<plugin><path>`), adds the token, and returns JSON. `post` sends a JSON object. Nothing else of the API is reachable from a tab.
  * A session tab is also told which chat is open: `init.sessionId`, then `{ op: "session", sessionId }` on every switch.
@@ -121,7 +122,7 @@ export function PluginTab({ tab, sessionId, projectId }: { tab: PluginTabInfo; s
       {error || !tab.src ? (
         <p class="error">{error || "bad tab path"}</p>
       ) : (
-        <iframe ref={frame} key={tab.src} title={tab.title} src={tab.src} sandbox="allow-scripts" referrerpolicy="no-referrer" allow={tab.plugin === "diffusion" ? "fullscreen; clipboard-read; clipboard-write" : ""} />
+        <iframe ref={frame} key={tab.src} title={tab.title} src={tab.src} sandbox={tab.plugin === "diffusion" ? "allow-scripts allow-same-origin" : "allow-scripts"} referrerpolicy="no-referrer" allow={tab.plugin === "diffusion" ? "fullscreen; clipboard-read; clipboard-write" : ""} />
       )}
     </div>
   );

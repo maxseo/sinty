@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { Router, HashRouter, Route, useLocation } from '@solidjs/router';
+import { HashRouter, Route, useLocation } from '@solidjs/router';
 import { ColorModeProvider } from '@kobalte/core';
 import { Show, createEffect, createMemo, type JSX } from 'solid-js';
 import { Toaster } from "@/components/ui/sonner";
@@ -91,7 +91,9 @@ function EnvironmentOverlays() {
 }
 
 function App() {
-  const RouterComponent = window.desktop ? HashRouter : Router;
+  // The harness serves this app under /p/diffusion/app, so the path is not "/".
+  // Hash routing keeps the editor routes on the hash, the same way the desktop shell does.
+  const RouterComponent = HashRouter;
   return (
     <RouterComponent
       root={(props) => (

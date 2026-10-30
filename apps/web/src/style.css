@@ -739,7 +739,7 @@ nav a:hover,
   cursor: pointer;
 }
 
-.main:has(.kb), .main:has(.cal-page) { height: 100%; overflow: hidden; }
+.main:has(.kb), .main:has(.cal-page), .main:has(.plugin-tab) { height: 100%; overflow: hidden; }
 .cal-page { --cal-bar: #fff; --cal-cell: #fff; --cal-line: #e4e4e7; --cal-slot: #fafafa; --cal-ink: #18181b; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg); color: var(--cal-ink); }
 [data-theme="dark"] .cal-page { --cal-bar: #0c0c0e; --cal-cell: #0f0f11; --cal-line: #27272a; --cal-slot: #18181b; --cal-ink: #fafafa; }
 .cal-top { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px 0; }
