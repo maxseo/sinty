@@ -49,7 +49,19 @@ export async function importFiles(library: AssetLibrary, files: ReadonlyArray<Fi
 		if (path) paths.push(path);
 		else unnamed.push(file);
 	}
-	return { ...(await library.import(paths, { folder })), unnamed };
+	const linked = paths.length ? await library.import(paths, { folder }) : { assets: [], failed: [] as ImportResult['failed'] };
+	const assets = [...linked.assets];
+	const failed = [...linked.failed];
+	// A browser file has no path. Copy it into the project's assets folder.
+	for (const file of unnamed) {
+		const name = file.name || 'media';
+		try {
+			assets.push(await library.store(file, { folder, name }));
+		} catch (error) {
+			failed.push({ source: name, error: error instanceof Error ? error : new Error(String(error)) });
+		}
+	}
+	return { assets, failed, unnamed: [] };
 }
 
 /**

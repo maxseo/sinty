@@ -31,6 +31,7 @@
 
   window.desktop = {
     platform: "win32",
+    harness: true,
     getPathForFile: function () { return ""; },
     send: function (channel, payload) {
       fetch("/p/diffusion/ipc/out", {

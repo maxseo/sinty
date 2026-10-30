@@ -11,3 +11,5 @@ Sign-in, generation, transcription and listen are not the Diffusion Studio cloud
 ```
 
 An empty or missing address answers «не подключено». A set address receives `{ path, input }` as JSON. Supabase, when you want their login screen back, is `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` at editor build time.
+
+The film compiler is `compiler/` next to this plugin (`npm install` there). It has to sit inside the plugin directory: the plugin process may not read the repository. Import media copies the file into the film's `assets/` folder. The browser does not reveal the path of a picked file.
