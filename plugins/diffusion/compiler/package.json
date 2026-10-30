@@ -1,0 +1,11 @@
+{
+  "name": "diffusion-compiler",
+  "private": true,
+  "description": "Packages the film compiler can read. They sit inside the plugin directory, which is the only place the plugin process may read.",
+  "dependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/preset-typescript": "7.29.7",
+    "babel-preset-solid": "1.9.16",
+    "esbuild": "0.28.2"
+  }
+}

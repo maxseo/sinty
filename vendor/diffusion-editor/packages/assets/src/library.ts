@@ -245,7 +245,9 @@ export class AssetLibrary {
 					if (entry.link && !(await enter(source))) continue;
 					await walk(source);
 				} else if (!known.has(source)) {
-					await this.link(source, { folder: dirname(source.slice(ASSETS_DIR.length + 1)) }).catch(() => { });
+					await this.link(source, { folder: dirname(source.slice(ASSETS_DIR.length + 1)) }).catch((error: unknown) => {
+						console.warn(`[assets] could not take in ${source}:`, error);
+					});
 				}
 			}
 		};

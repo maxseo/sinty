@@ -14,6 +14,8 @@ declare global {
     chrome: any;
     desktop?: {
       platform: string;
+      /** Set by the harness stand-in. Files are copied into the film instead of linked by path. */
+      harness?: boolean;
       send(channel: string, payload: unknown): void;
       on(channel: string, cb: (payload: unknown) => void): (() => void);
       getPathForFile(file: File): string;

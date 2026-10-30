@@ -15,6 +15,33 @@ import { isAbsoluteSource } from '@diffusionstudio/assets';
 
 import type { Manifest, ProjectFS } from '@diffusionstudio/assets';
 
+function inHarness(): boolean {
+	return window.desktop?.harness === true;
+}
+
+/** Copies bytes into the film. `path` is project-relative (`assets/clip.mp4`). */
+async function putMedia(dir: string, path: string, blob: Blob): Promise<void> {
+	const url = `/p/diffusion/media?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(path)}`;
+	const res = await fetch(url, { method: 'PUT', body: blob });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+		throw new Error(body?.error?.message || 'Не удалось записать файл');
+	}
+}
+
+/** Reads a file of the film back as a browser File. */
+async function getMedia(dir: string, source: string): Promise<File> {
+	const url = `/p/diffusion/media?dir=${encodeURIComponent(dir)}&path=${encodeURIComponent(source)}`;
+	const res = await fetch(url);
+	if (!res.ok) {
+		const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+		throw new Error(body?.error?.message || 'Не удалось прочитать файл');
+	}
+	const blob = await res.blob();
+	const name = source.split(/[\\/]/).pop() || 'media';
+	return new File([blob], name, { type: blob.type || 'application/octet-stream' });
+}
+
 /** Streams `blob` to an absolute path in chunks. */
 async function writeBlob(path: string, blob: Blob): Promise<void> {
 	const target = new ElectronWritableFileHandle(path);
@@ -48,8 +75,8 @@ export function createProjectFS(dir: string): ProjectFS {
 		writeManifest: (manifest: Manifest) => mainBridge.call(MAIN_CHANNELS.PROJECTS_MANIFEST_WRITE, { dir, manifest }),
 		list: (source) => mainBridge.call(MAIN_CHANNELS.PROJECTS_FS_LIST, { dir, source }),
 		stat: (source) => mainBridge.call(MAIN_CHANNELS.PROJECTS_FS_STAT, { dir, source }),
-		file: (source) => new ElectronFileHandle(absolute(source)).getFile(),
-		write: (path, blob) => writeBlob(absolute(path), blob),
+		file: (source) => inHarness() ? getMedia(dir, source) : new ElectronFileHandle(absolute(source)).getFile(),
+		write: (path, blob) => inHarness() ? putMedia(dir, path, blob) : writeBlob(absolute(path), blob),
 		remove: (path) => mainBridge.call(MAIN_CHANNELS.PROJECTS_FS_REMOVE, { dir, path }),
 		realPath: (source) => mainBridge.call(MAIN_CHANNELS.PROJECTS_FS_REAL_PATH, { dir, source }),
 		pathOf: (file) => window.desktop?.getPathForFile(file) || null,

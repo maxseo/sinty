@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const REQUEST = "main:request";
 const RESPONSE = "main:response";
@@ -170,14 +170,27 @@ function ensureProject(dir: string, displayName: string): ProjectInfo {
   return project;
 }
 
-async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
-  const entry = ["index.tsx", "index.ts", "index.jsx", "index.js"].find((name) => existsSync(join(dir, name)));
-  if (!entry) return { ok: false, error: "нет index.tsx" };
+function readable(file: string): boolean {
+  try { return existsSync(file); } catch { return false; }
+}
+
+/** The compiler packages live next to the plugin. A path outside the grant is not readable, so it is skipped. */
+function compilerPackage(): string | null {
+  const local = join(process.cwd(), "compiler", "package.json");
+  if (readable(local)) return local;
   const noted = join(process.cwd(), "compiler.json");
-  const pkg = existsSync(noted)
-    ? String((JSON.parse(readFileSync(noted, "utf8")) as { packageJson?: string }).packageJson ?? "")
-    : join(process.cwd(), "package.json");
-  if (!pkg || !existsSync(pkg)) return { ok: false, error: "компилятор не найден" };
+  if (!readable(noted)) return null;
+  const raw = JSON.parse(readFileSync(noted, "utf8")) as { packageJson?: string };
+  const pkg = typeof raw.packageJson === "string" ? raw.packageJson : "";
+  const abs = pkg ? (isAbsolute(pkg) ? pkg : join(process.cwd(), pkg)) : "";
+  return abs && readable(abs) ? abs : null;
+}
+
+async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
+  const entry = ["index.tsx", "index.ts", "index.jsx", "index.js"].find((name) => readable(join(dir, name)));
+  if (!entry) return { ok: false, error: "нет index.tsx" };
+  const pkg = compilerPackage();
+  if (!pkg) return { ok: false, error: "компилятор не найден" };
   const script = `
     const { createRequire } = require("node:module");
     const { readFileSync } = require("node:fs");
@@ -293,7 +306,8 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
   if (channel === "projects:watch" || channel === "projects:unwatch") return null;
   if (channel === "projects:manifest-read") {
     const file = join(inside(roots, String(body.dir ?? "")), "assets.yml");
-    return existsSync(file) ? readFileSync(file, "utf8") : null;
+    if (!readable(file)) return null;
+    try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; }
   }
   if (channel === "projects:manifest-write") {
     writeFileSync(join(inside(roots, String(body.dir ?? "")), "assets.yml"), typeof body.manifest === "string" ? body.manifest : JSON.stringify(body.manifest ?? {}), "utf8");
@@ -314,14 +328,19 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
   if (channel === "projects:fs-list") {
     const dir = inside(roots, String(body.dir ?? ""));
     const folder = projectPath(dir, String(body.source ?? "."));
-    return readdirSync(folder, { withFileTypes: true }).map((entry) => {
-      const stat = statSync(join(folder, entry.name));
-      return { name: entry.name, kind: entry.isDirectory() ? "directory" : "file", size: stat.size, mtime: stat.mtimeMs };
-    });
+    if (!readable(folder)) return [];
+    try {
+      return readdirSync(folder, { withFileTypes: true }).map((entry) => {
+        const stat = statSync(join(folder, entry.name));
+        return { name: entry.name, kind: entry.isDirectory() ? "directory" : "file", size: stat.size, mtime: stat.mtimeMs };
+      });
+    } catch {
+      return [];
+    }
   }
   if (channel === "projects:fs-stat") {
     const file = projectPath(inside(roots, String(body.dir ?? "")), String(body.source ?? ""));
-    if (!existsSync(file)) return null;
+    if (!readable(file)) return null;
     const stat = statSync(file);
     return { size: stat.size, mtime: stat.mtimeMs };
   }
@@ -332,6 +351,38 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
   if (channel === "projects:fs-real-path") return projectPath(inside(roots, String(body.dir ?? "")), String(body.source ?? ""));
   if (channel === "projects:find-moved") return null;
   return null;
+}
+
+const MEDIA_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".mkv": "video/x-matroska",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".ogg": "audio/ogg",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+};
+
+/** A file of the film, for the editor to play. `source` is project-relative. */
+export function readMedia(roots: Roots, dir: string, source: string): { bytes: Buffer; type: string } {
+  const file = projectPath(inside(roots, dir), source);
+  if (!readable(file) || statSync(file).isDirectory()) throw new Error("файл не найден");
+  const ext = basename(file).toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+  return { bytes: readFileSync(file), type: MEDIA_TYPES[ext] ?? "application/octet-stream" };
+}
+
+/** Writes bytes into the film. `source` is project-relative, for example `assets/clip.mp4`. */
+export function writeMedia(roots: Roots, dir: string, source: string, bytes: Uint8Array): void {
+  const file = projectPath(inside(roots, dir), source);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, bytes);
 }
 
 function dirnameSafe(dir: string): string {

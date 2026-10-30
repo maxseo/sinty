@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { acceptFromEditor, callTool, cloudCall, createFilm, listFilms, takeInbox } from "./host.js";
+import { acceptFromEditor, callTool, cloudCall, createFilm, listFilms, readMedia, takeInbox, writeMedia } from "./host.js";
 
 const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "logs", "screenshot", "window", "job", "generate"] as const;
 const LONG = new Set(["export", "transcribe", "listen", "grab", "generate"]);
@@ -116,6 +116,31 @@ export default definePlugin({
         if (!body.channel) return json({ error: { message: "нет канала" } }, 400);
         await acceptFromEditor(body.channel, body.payload, roots());
         return json({ ok: true });
+      },
+    });
+    ctx.http({
+      method: "*",
+      path: "/media",
+      public: true,
+      surface: "status",
+      handler: async (req) => {
+        if (req.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+        const url = new URL(req.url);
+        const dir = url.searchParams.get("dir") ?? "";
+        const source = url.searchParams.get("path") ?? "";
+        try {
+          if (req.method === "GET") {
+            const file = readMedia(roots(), dir, source);
+            return cors(new Response(file.bytes, { headers: { "content-type": file.type, "cache-control": "no-store" } }));
+          }
+          if (req.method === "PUT") {
+            writeMedia(roots(), dir, source, new Uint8Array(await req.arrayBuffer()));
+            return json({ ok: true });
+          }
+          return json({ error: { message: "нужен GET или PUT" } }, 405);
+        } catch (error) {
+          return json({ error: { message: error instanceof Error ? error.message : "файл не прочитался" } }, 400);
+        }
       },
     });
     ctx.http({
