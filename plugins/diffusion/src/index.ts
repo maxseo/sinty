@@ -162,7 +162,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one editor command in the open film: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job. The film has to be open in the project's Видео tab. Paths stay in the session workspace.",
+      description: "Run one editor command in the open film: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job. The film has to be open in the Видео pane beside the chat. Paths stay in the session workspace.",
       sideEffects: "external",
       input: z.object({
         command: z.enum(COMMANDS),

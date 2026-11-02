@@ -11,11 +11,17 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: "chat", label: "Chat" },
 ];
 
+/** The harness already has the agent chat beside the film, so this sidebar does not grow a second one. */
+function visibleTabs(): { id: SidebarTab; label: string }[] {
+  return window.desktop?.harness ? TABS.filter((tab) => tab.id === "assets") : TABS;
+}
+
 /** "Assets  Chat" as plain text labels, the unselected one muted. The choice persists. */
 export function SidebarTabs() {
+  const tabs = visibleTabs();
   return (
     <div class="relative z-30 flex items-center gap-4" style="-webkit-app-region: no-drag;" role="tablist">
-      <For each={TABS}>
+      <For each={tabs}>
         {(tab) => (
           <button
             type="button"

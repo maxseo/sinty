@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+const require = createRequire(import.meta.url);
 const REQUEST = "main:request";
 const RESPONSE = "main:response";
 const CALL = "dapi:call";
@@ -34,7 +36,7 @@ export function callTool(tool: string, args: unknown, ms: number): Promise<unkno
   return new Promise((done, reject) => {
     const timer = setTimeout(() => {
       waiting.delete(id);
-      reject(new Error("Откройте фильм во вкладке «Видео» проекта: редактор не отвечает."));
+      reject(new Error("Откройте фильм кнопкой «Видео» в шапке чата: редактор не отвечает."));
     }, ms);
     waiting.set(id, (reply) => {
       clearTimeout(timer);
@@ -208,6 +210,16 @@ function keepEdits(edits: unknown): { skipped: string[]; ids: Record<string, str
   return { skipped: [], ids, unrolled };
 }
 
+/** Persists the cut in the film file. A writer failure keeps the open session as it was, so a clip is not thrown away. */
+function saveEdits(dir: string, edits: unknown): { skipped: string[]; ids: Record<string, string>; unrolled: string[] } {
+  try {
+    const apply = require("../compiler/write.cjs") as (dir: string, edits: unknown) => { skipped: string[]; ids: Record<string, string>; unrolled: string[] };
+    return apply(dir, edits);
+  } catch {
+    return keepEdits(edits);
+  }
+}
+
 async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
   const entry = ["index.tsx", "index.ts", "index.jsx", "index.js"].find((name) => readable(join(dir, name)));
   if (!entry) return { ok: false, error: "нет index.tsx" };
@@ -327,7 +339,7 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
     return null;
   }
   if (channel === "projects:compile") return compile(inside(roots, String(body.dir ?? "")));
-  if (channel === "projects:write") return keepEdits(body.edits);
+  if (channel === "projects:write") return saveEdits(inside(roots, String(body.dir ?? "")), body.edits);
   if (channel === "projects:watch" || channel === "projects:unwatch") return null;
   if (channel === "projects:manifest-read") {
     const file = join(inside(roots, String(body.dir ?? "")), "assets.yml");
