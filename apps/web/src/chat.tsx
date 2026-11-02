@@ -238,39 +238,71 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS, studio = false, stud
   useEffect(() => {
     void loadInfo().catch((e: unknown) => setError(String(e)));
     let seen = 0;
-    return subscribe(
-      (lastId) => `/v1/sessions/${encodeURIComponent(sessionId)}/stream?after=${lastId ?? seen}`,
-      (m) => {
-        const e = JSON.parse(m.data) as SintyEvent;
-        if (e.type === "model.delta") {
-          let streamOn = true;
-          try {
-            const prefs = JSON.parse(localStorage.getItem("sinty.prefs") || "{}") as { streaming?: boolean };
-            streamOn = prefs.streaming !== false;
-          } catch {
-            /* default on */
+    let stop = (): void => {};
+    let cancelled = false;
+    const take = (m: { data: string }): void => {
+      const e = JSON.parse(m.data) as SintyEvent;
+      if (e.type === "model.delta") {
+        let streamOn = true;
+        try {
+          const prefs = JSON.parse(localStorage.getItem("sinty.prefs") || "{}") as { streaming?: boolean };
+          streamOn = prefs.streaming !== false;
+        } catch {
+          /* default on */
+        }
+        if (!streamOn) return;
+        const t = (e.data as { text?: string }).text;
+        if (t) setStreaming((s) => s + t);
+        return;
+      }
+      if (e.type === "tool.call.progress") return;
+      if (e.seq !== undefined) {
+        if (e.seq <= seen) return;
+        seen = e.seq;
+      }
+      if (e.type === "model.response" || e.type === "model.request" || e.type === "turn.completed" || e.type === "turn.failed" || e.type === "turn.interrupted") setStreaming("");
+      setEvents((list) => [...list, e]);
+      if (REFRESH_ON.has(e.type)) {
+        if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+        refreshTimer.current = setTimeout(() => {
+          void loadInfo();
+          onChange();
+        }, 150);
+      }
+    };
+    // The journal is painted in one go. The stream is only for events that arrive after that.
+    void (async () => {
+      const all: SintyEvent[] = [];
+      let after = 0;
+      try {
+        for (;;) {
+          const page = await api<{ events: SintyEvent[] }>(`/v1/sessions/${encodeURIComponent(sessionId)}/events?after=${after}&limit=2000`);
+          if (cancelled) return;
+          const batch = page.events ?? [];
+          if (!batch.length) break;
+          all.push(...batch);
+          const tail = batch[batch.length - 1]?.seq ?? after;
+          if (tail <= after || batch.length < 2000) {
+            after = Math.max(after, tail);
+            break;
           }
-          if (!streamOn) return;
-          const t = (e.data as { text?: string }).text;
-          if (t) setStreaming((s) => s + t);
-          return;
+          after = tail;
         }
-        if (e.type === "tool.call.progress") return;
-        if (e.seq !== undefined) {
-          if (e.seq <= seen) return;
-          seen = e.seq;
-        }
-        if (e.type === "model.response" || e.type === "model.request" || e.type === "turn.completed" || e.type === "turn.failed" || e.type === "turn.interrupted") setStreaming("");
-        setEvents((list) => [...list, e]);
-        if (REFRESH_ON.has(e.type)) {
-          if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
-          refreshTimer.current = setTimeout(() => {
-            void loadInfo();
-            onChange();
-          }, 150);
-        }
-      },
-    );
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+      if (cancelled) return;
+      seen = after;
+      setEvents(all);
+      stop = subscribe(
+        (lastId) => `/v1/sessions/${encodeURIComponent(sessionId)}/stream?after=${lastId ?? seen}`,
+        take,
+      );
+    })();
+    return () => {
+      cancelled = true;
+      stop();
+    };
   }, [sessionId]);
 
   // Child agent.task approvals land on the child session stream; watch the global bus so the parent chat refreshes.
