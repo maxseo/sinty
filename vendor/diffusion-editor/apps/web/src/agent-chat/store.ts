@@ -81,7 +81,11 @@ const root = createRoot(() => {
 
 /** Which tab the left sidebar shows; persists across sessions. */
 export const sidebarTab = root.tab;
-export const setSidebarTab = root.setTab;
+
+/** The harness chat sits beside the film, so the editor sidebar stays on Assets. */
+export function setSidebarTab(tab: SidebarTab): void {
+  root.setTab(window.desktop?.harness && tab === "chat" ? "assets" : tab);
+}
 
 /** The remembered model, whether or not its harness is currently ready. */
 export const storedModel = root.model;

@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- The film opens beside the chat from «Видео» in the chat header, and a cut made on the timeline is written into the film file. Coming back shows the same clips. The editor menu drops the dashboard, credits and account entries, and its own Chat tab.
 - The preview shows the picture or video on the timeline, and dragging one layer no longer moves the others. A query that asks for a shape or a group was matching neither.
 - Dragging a file from Assets onto the timeline inserts the clip. The film compiler stamps each composition tag, and a canvas edit is kept on the open timeline instead of being thrown away.
 - Opening a film inside a project shows Assets, the timeline and the inspector. A saved “hide panels” value no longer leaves only the black canvas.

@@ -55,7 +55,7 @@ export function ProjectMenu() {
     if (!(event.metaKey || event.ctrlKey) || event.altKey || isInputTarget(event)) return;
 
     const key = event.key.toLowerCase();
-    if (event.shiftKey && key === "d") {
+    if (event.shiftKey && key === "d" && !window.desktop?.harness) {
       event.preventDefault();
       handleOpenDashboard();
     } else if (event.shiftKey && key === "s") {
@@ -83,21 +83,25 @@ export function ProjectMenu() {
           type="button"
           class="flex items-center gap-0 h-7 rounded-md text-muted-foreground outline-none focus-ring hover:text-foreground data-expanded:text-foreground"
         >
-          <Icon name="diffusion-logo" />
+          <Show when={window.desktop?.harness} fallback={<Icon name="diffusion-logo" />}>
+            <span class="px-1.5 text-[13px] font-medium text-foreground">Меню</span>
+          </Show>
           <div class="flex items-center justify-center overflow-clip h-6 w-4">
             <Icon name="chevron-down" />
           </div>
         </DropdownMenuTrigger>
         <DropdownMenuPortal>
           <DropdownMenuContent class="w-[196px]">
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={handleOpenDashboard}>
-                Go to dashboard
-                <DropdownMenuShortcut>⇧⌘D</DropdownMenuShortcut>
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
+            <Show when={!window.desktop?.harness}>
+              <DropdownMenuGroup>
+                <DropdownMenuItem onSelect={handleOpenDashboard}>
+                  Go to dashboard
+                  <DropdownMenuShortcut>⇧⌘D</DropdownMenuShortcut>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
 
-            <DropdownMenuSeparator />
+              <DropdownMenuSeparator />
+            </Show>
 
             <DropdownMenuGroup>
               <DropdownMenuSub>
@@ -140,14 +144,16 @@ export function ProjectMenu() {
             <DropdownMenuSeparator />
 
             <DropdownMenuGroup>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>AI credits</DropdownMenuSubTrigger>
-                <DropdownMenuPortal>
-                  <DropdownMenuSubContent class="w-[188px]">
-                    <AiCreditsMenu />
-                  </DropdownMenuSubContent>
-                </DropdownMenuPortal>
-              </DropdownMenuSub>
+              <Show when={!window.desktop?.harness}>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>AI credits</DropdownMenuSubTrigger>
+                  <DropdownMenuPortal>
+                    <DropdownMenuSubContent class="w-[188px]">
+                      <AiCreditsMenu />
+                    </DropdownMenuSubContent>
+                  </DropdownMenuPortal>
+                </DropdownMenuSub>
+              </Show>
 
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>Help</DropdownMenuSubTrigger>
@@ -158,7 +164,9 @@ export function ProjectMenu() {
                 </DropdownMenuPortal>
               </DropdownMenuSub>
 
-              <DropdownMenuItem onSelect={handleOpenAccount}>Account</DropdownMenuItem>
+              <Show when={!window.desktop?.harness}>
+                <DropdownMenuItem onSelect={handleOpenAccount}>Account</DropdownMenuItem>
+              </Show>
             </DropdownMenuGroup>
 
             <Show when={!isDesktop}>

@@ -159,6 +159,7 @@ function Shell() {
 
   const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([]);
   const [leftOpen, setLeftOpen] = useState(localStorage.getItem("sinty.left") !== "0");
+  const [studio, setStudio] = useState(false);
   const [pins, setPins] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("sinty.pins") ?? "[]") as string[]; } catch { return []; }
   });
@@ -182,9 +183,10 @@ function Shell() {
       .catch(() => setTabs([]));
   }, [agent, me]);
   const sideTabs = tabs.filter((t) => t.placement === "sidebar" && can(tabRight(t)));
-  const projectTabs = tabs.filter((t) => t.placement === "project" && can(tabRight(t)));
+  const projectTabs = tabs.filter((t) => t.placement === "project" && t.plugin !== "diffusion" && can(tabRight(t)));
+  const studioTab = tabs.find((t) => t.plugin === "diffusion" && t.placement === "project" && can(tabRight(t))) ?? null;
   const sessionTabs = useMemo(() => tabs.filter((t) => t.placement === "session" && Boolean(me?.can[tabRight(t)]?.view)), [tabs, me]);
-  const openTab = route.page === "tab" ? [...sideTabs, ...projectTabs].find((t) => t.plugin === route.plugin && t.id === route.tab && !t.builtin) : undefined;
+  const openTab = route.page === "tab" ? [...sideTabs, ...projectTabs, ...(studioTab ? [studioTab] : [])].find((t) => t.plugin === route.plugin && t.id === route.tab && !t.builtin) : undefined;
   const builtinOn = (name: string): boolean => tabs.some((t) => t.builtin === name && can(tabRight(t)));
   const loadProjects = useCallback(async () => {
     const r = await api<{ projects: { id: string; name: string; slug: string }[] }>("/v1/roster/projects");
@@ -233,6 +235,13 @@ function Shell() {
     setTheme(next);
   };
 
+  const toggleStudio = (open: boolean): void => {
+    setStudio(open);
+    if (open && leftOpen) {
+      setLeftOpen(false);
+      localStorage.setItem("sinty.left", "0");
+    }
+  };
   const toggleLeft = (): void => {
     const next = !leftOpen;
     setLeftOpen(next);
@@ -383,8 +392,8 @@ function Shell() {
           </div>
         )}
       </aside>
-      <main class="main">
-        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} tabs={sessionTabs} /> : <Empty onNew={newChat} />)}
+      <main class={`main${studio && route.page === "chat" ? " studio" : ""}`}>
+        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} tabs={sessionTabs} studio={studio} studioTab={studioTab} onStudio={toggleStudio} /> : <Empty onNew={newChat} />)}
         {me && route.page === "board" && (builtinOn("board") ? <Board /> : <Denied />)}
         {me && route.page === "agents" && (can("nav:agents") ? <AgentsPage agentId={route.agentId} /> : <Denied />)}
         {me && route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}

@@ -163,7 +163,7 @@ function show(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
-export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: string; onChange: () => void; tabs?: PluginTabInfo[] }) {
+export function Chat({ sessionId, onChange, tabs = NO_TABS, studio = false, studioTab = null, onStudio }: { sessionId: string; onChange: () => void; tabs?: PluginTabInfo[]; studio?: boolean; studioTab?: PluginTabInfo | null; onStudio?: (open: boolean) => void }) {
   const [events, setEvents] = useState<SintyEvent[]>([]);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
@@ -399,9 +399,15 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
         : "Сообщение агенту… (Enter — отправить, Shift+Enter — перенос)";
 
   return (
+    <>
     <section class="chat">
       <header class="bar">
         <h2>{info?.title || sessionId}</h2>
+        {studioTab && info?.projectId && (
+          <button type="button" class={`studio-toggle${studio ? " on" : ""}`} title="Редактор рядом с чатом" onClick={() => onStudio?.(!studio)}>
+            Видео
+          </button>
+        )}
         {members.length > 0 && (
           <select value={replyAgent} onChange={(e) => setReplyAgent(e.currentTarget.value)}>
             {members.map((m) => (
@@ -594,6 +600,12 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS }: { sessionId: strin
       </form>
       {error && <p class="error">{error}</p>}
     </section>
+    {studio && studioTab && info?.projectId && (
+      <div class="studio-pane">
+        <PluginTab key={info.projectId} tab={studioTab} projectId={info.projectId} />
+      </div>
+    )}
+    </>
   );
 }
 

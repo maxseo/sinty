@@ -26,10 +26,10 @@ export function SidebarLeft() {
         <ElectronHeader />
         <ProjectHeader />
       </Show>
-      <div classList={{ contents: sidebarTab() === "assets", hidden: sidebarTab() === "chat" }}>
+      <div classList={{ contents: sidebarTab() !== "chat" || !!window.desktop?.harness, hidden: sidebarTab() === "chat" && !window.desktop?.harness }}>
         <Assets />
       </div>
-      <Show when={sidebarTab() === "chat"}>
+      <Show when={sidebarTab() === "chat" && !window.desktop?.harness}>
         <ChatPanel />
       </Show>
     </div>
@@ -83,7 +83,9 @@ export function EditorTitleBar(props: EditorTitleBarProps) {
           <div class="flex shrink-0 items-center" style="-webkit-app-region: no-drag;">
             <ProjectMenu />
           </div>
-          <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground font-450">Synt Studio</span>
+          <Show when={!window.desktop?.harness}>
+            <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground font-450">Synt Studio</span>
+          </Show>
           <LayoutToggles />
         </>
       }
@@ -218,7 +220,9 @@ export function FloatingProjectHeader() {
   return (
     <div data-traffic-lights={belowTrafficLights()} class="h-10 rounded-lg border border-border shrink-0 flex items-center px-2 gap-1 fixed top-4 data-[traffic-lights=true]:top-10 left-4 z-30 bg-background shadow-lg">
       <ProjectMenu />
-      <span class="text-xs text-muted-foreground font-450">Synt Studio</span>
+      <Show when={!window.desktop?.harness}>
+        <span class="text-xs text-muted-foreground font-450">Synt Studio</span>
+      </Show>
       <Button variant="ghost" size="icon" class="text-muted-foreground ml-2" onClick={toggleUI}>
         <Icon name="sidebar" />
       </Button>
