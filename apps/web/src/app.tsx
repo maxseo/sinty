@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { createPortal } from "preact/compat";
 import { api, ApiError, setUnauthorizedHandler, shortTime, subscribe, token, userSession, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { Board } from "./board.js";
-import { Chat } from "./chat.js";
+import { Chat, prefetchTranscript } from "./chat.js";
 import { AgentsPage, Denied, SettingsPage } from "./pages.js";
 import { useSections } from "./supervisor-ui.js";
 import { CalendarPage } from "./calendar.js";
@@ -134,6 +134,12 @@ function Shell() {
     const [s, p] = await Promise.all([api<{ sessions: SessionInfo[] }>("/v1/sessions?limit=200"), api<{ pending: Pending[] }>("/v1/pending")]);
     setSessions(s.sessions);
     setPending(p.pending);
+    void (async () => {
+      for (const session of s.sessions) {
+        if (isChildSession(session)) continue;
+        await prefetchTranscript(session.id).catch(() => undefined);
+      }
+    })();
   }, []);
 
   const [me, setMe] = useState<Me>();
@@ -393,7 +399,7 @@ function Shell() {
         )}
       </aside>
       <main class={`main${studio && route.page === "chat" ? " studio" : ""}`}>
-        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} onChange={refresh} tabs={sessionTabs} studio={studio} studioTab={studioTab} onStudio={toggleStudio} /> : <Empty onNew={newChat} />)}
+        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} title={sessions.find((s) => s.id === route.sessionId)?.title ?? ""} onChange={refresh} tabs={sessionTabs} studio={studio} studioTab={studioTab} onStudio={toggleStudio} /> : <Empty onNew={newChat} />)}
         {me && route.page === "board" && (builtinOn("board") ? <Board /> : <Denied />)}
         {me && route.page === "agents" && (can("nav:agents") ? <AgentsPage agentId={route.agentId} /> : <Denied />)}
         {me && route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}

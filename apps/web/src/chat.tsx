@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribe, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { IconBrain, IconMic, IconPlus } from "./icons.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
@@ -6,6 +6,68 @@ import { SupervisorView } from "./supervisor-ui.js";
 
 const VIEW_KEY = "sinty.chatView";
 const NO_TABS: PluginTabInfo[] = [];
+
+/** What the chat pane draws. Tool results stay in the journal file; one film chat holds about 150 MB of them. */
+const CHAT_TYPES = [
+  "message.user",
+  "message.agent",
+  "supervisor.notice",
+  "supervisor.escalated",
+  "turn.failed",
+  "turn.interrupted",
+  "turn.blocked",
+  "turn.started",
+  "turn.completed",
+  "plugin.patch.proposed",
+  "plugin.patch.applied",
+  "plugin.patch.rolled_back",
+  "task.completed",
+  "model.response",
+  "tool.call.requested",
+  "tool.call.approval_requested",
+  "tool.call.approved",
+  "tool.call.started",
+  "tool.call.failed",
+  "tool.call.denied",
+].join(",");
+
+const transcriptCache = new Map<string, SintyEvent[]>();
+const transcriptTail = new Map<string, number>();
+const transcriptLoad = new Map<string, Promise<{ events: SintyEvent[]; lastSeq: number }>>();
+
+function sameTranscript(a: SintyEvent[], b: SintyEvent[]): boolean {
+  return a.length === b.length && (a.length === 0 || a[a.length - 1]?.seq === b[b.length - 1]?.seq);
+}
+
+/** Reads the messages the pane shows and remembers them, so the next open does not start blank. */
+export function prefetchTranscript(sessionId: string): Promise<{ events: SintyEvent[]; lastSeq: number }> {
+  const cached = transcriptCache.get(sessionId);
+  if (cached) return Promise.resolve({ events: cached, lastSeq: transcriptTail.get(sessionId) ?? 0 });
+  const ready = transcriptLoad.get(sessionId);
+  if (ready) return ready;
+  const job = (async () => {
+    const events: SintyEvent[] = [];
+    let after = 0;
+    let lastSeq = 0;
+    for (;;) {
+      const page = await api<{ events: SintyEvent[]; lastSeq?: number }>(`/v1/sessions/${encodeURIComponent(sessionId)}/events?after=${after}&limit=2000&types=${encodeURIComponent(CHAT_TYPES)}`);
+      if (typeof page.lastSeq === "number") lastSeq = page.lastSeq;
+      const batch = page.events ?? [];
+      if (!batch.length) break;
+      events.push(...batch);
+      const tail = batch[batch.length - 1]?.seq ?? after;
+      if (tail <= after || batch.length < 2000) break;
+      after = tail;
+    }
+    transcriptCache.set(sessionId, events);
+    transcriptTail.set(sessionId, lastSeq);
+    return { events, lastSeq };
+  })().finally(() => {
+    transcriptLoad.delete(sessionId);
+  });
+  transcriptLoad.set(sessionId, job);
+  return job;
+}
 
 /** A plugin view stays open when the user switches chats (you look at each chat's context in turn); Чат/Журнал do not persist. */
 function savedView(tabs: PluginTabInfo[]): string {
@@ -163,8 +225,8 @@ function show(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
-export function Chat({ sessionId, onChange, tabs = NO_TABS, studio = false, studioTab = null, onStudio }: { sessionId: string; onChange: () => void; tabs?: PluginTabInfo[]; studio?: boolean; studioTab?: PluginTabInfo | null; onStudio?: (open: boolean) => void }) {
-  const [events, setEvents] = useState<SintyEvent[]>([]);
+export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio = false, studioTab = null, onStudio }: { sessionId: string; title?: string; onChange: () => void; tabs?: PluginTabInfo[]; studio?: boolean; studioTab?: PluginTabInfo | null; onStudio?: (open: boolean) => void }) {
+  const [events, setEvents] = useState<SintyEvent[]>(() => transcriptCache.get(sessionId) ?? []);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
   const [info, setInfo] = useState<SessionInfo & { pending: Pending | null; childPending?: Pending[]; childBusy?: number }>();
@@ -238,39 +300,60 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS, studio = false, stud
   useEffect(() => {
     void loadInfo().catch((e: unknown) => setError(String(e)));
     let seen = 0;
-    return subscribe(
-      (lastId) => `/v1/sessions/${encodeURIComponent(sessionId)}/stream?after=${lastId ?? seen}`,
-      (m) => {
-        const e = JSON.parse(m.data) as SintyEvent;
-        if (e.type === "model.delta") {
-          let streamOn = true;
-          try {
-            const prefs = JSON.parse(localStorage.getItem("sinty.prefs") || "{}") as { streaming?: boolean };
-            streamOn = prefs.streaming !== false;
-          } catch {
-            /* default on */
-          }
-          if (!streamOn) return;
-          const t = (e.data as { text?: string }).text;
-          if (t) setStreaming((s) => s + t);
-          return;
+    let stop = (): void => {};
+    let cancelled = false;
+    const take = (m: { data: string }): void => {
+      const e = JSON.parse(m.data) as SintyEvent;
+      if (e.type === "model.delta") {
+        let streamOn = true;
+        try {
+          const prefs = JSON.parse(localStorage.getItem("sinty.prefs") || "{}") as { streaming?: boolean };
+          streamOn = prefs.streaming !== false;
+        } catch {
+          /* default on */
         }
-        if (e.type === "tool.call.progress") return;
-        if (e.seq !== undefined) {
-          if (e.seq <= seen) return;
-          seen = e.seq;
-        }
-        if (e.type === "model.response" || e.type === "model.request" || e.type === "turn.completed" || e.type === "turn.failed" || e.type === "turn.interrupted") setStreaming("");
-        setEvents((list) => [...list, e]);
-        if (REFRESH_ON.has(e.type)) {
-          if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
-          refreshTimer.current = setTimeout(() => {
-            void loadInfo();
-            onChange();
-          }, 150);
-        }
-      },
-    );
+        if (!streamOn) return;
+        const t = (e.data as { text?: string }).text;
+        if (t) setStreaming((s) => s + t);
+        return;
+      }
+      if (e.type === "tool.call.progress") return;
+      if (e.seq !== undefined) {
+        if (e.seq <= seen) return;
+        seen = e.seq;
+        transcriptTail.set(sessionId, seen);
+      }
+      if (e.type === "model.response" || e.type === "model.request" || e.type === "turn.completed" || e.type === "turn.failed" || e.type === "turn.interrupted") setStreaming("");
+      setEvents((list) => {
+        const next = [...list, e];
+        transcriptCache.set(sessionId, next);
+        return next;
+      });
+      if (REFRESH_ON.has(e.type)) {
+        if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+        refreshTimer.current = setTimeout(() => {
+          void loadInfo();
+          onChange();
+        }, 150);
+      }
+    };
+    // Messages only. The stream starts at the session tail, so tool results already in the file are not replayed.
+    void prefetchTranscript(sessionId).then((page) => {
+      if (cancelled) return;
+      const tail = page.events[page.events.length - 1]?.seq ?? 0;
+      seen = Math.max(page.lastSeq, tail);
+      setEvents((cur) => (sameTranscript(cur, page.events) ? cur : page.events));
+      stop = subscribe(
+        (lastId) => `/v1/sessions/${encodeURIComponent(sessionId)}/stream?after=${lastId ?? seen}`,
+        take,
+      );
+    }).catch((e: unknown) => {
+      if (!cancelled) setError(String(e));
+    });
+    return () => {
+      cancelled = true;
+      stop();
+    };
   }, [sessionId]);
 
   // Child agent.task approvals land on the child session stream; watch the global bus so the parent chat refreshes.
@@ -301,11 +384,11 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS, studio = false, stud
   const presence = useMemo(() => liveTurn(events), [events]);
   const liveText = streaming || presence?.text || "";
   const toolLine = presence?.tool ?? "";
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (tab !== "chat") return;
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [tab, items.length, liveText, presence?.tool, streaming, info?.pending, childPending.length]);
+  }, [tab, items.length, liveText, presence?.tool, streaming]);
 
   const pending = info?.pending ?? null;
   const childApprovals = childPending.filter((p) => p.reason === "approval" && p.approvals.length > 0);
@@ -402,7 +485,7 @@ export function Chat({ sessionId, onChange, tabs = NO_TABS, studio = false, stud
     <>
     <section class="chat">
       <header class="bar">
-        <h2>{info?.title || sessionId}</h2>
+        <h2>{info?.title || title || "Чат"}</h2>
         {studioTab && info?.projectId && (
           <button type="button" class={`studio-toggle${studio ? " on" : ""}`} title="Редактор рядом с чатом" onClick={() => onStudio?.(!studio)}>
             Видео
