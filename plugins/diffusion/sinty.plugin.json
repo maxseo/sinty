@@ -13,7 +13,8 @@
   },
   "tools": [
     { "name": "diffusion.run", "description": "Run one editor command in the film open in the project's video tab: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job.", "sideEffects": "external", "idempotent": false },
-    { "name": "diffusion.source", "description": "Read or replace the open film's index.tsx, or copy a chat-project file into the film library.", "sideEffects": "write", "idempotent": false },
+    { "name": "diffusion.film", "description": "Create a film in this chat's project. Its files live in _inbox/assets/<name>.", "sideEffects": "write", "idempotent": false },
+    { "name": "diffusion.source", "description": "Read or replace the open film's index.tsx, or copy a chat-project file into the film library. Library files are copied to _inbox/assets/<film name>.", "sideEffects": "write", "idempotent": false },
     { "name": "diffusion.generate", "description": "Generate media through the connected adapter. Without an address the call says nothing is connected.", "sideEffects": "external", "idempotent": false, "defaultPolicy": "ask" }
   ],
   "ui": {

@@ -7,7 +7,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
+
 ### Fixed
+- A background wait says whether it is an approval, a question, the budget, or the supervisor, in the sidebar and in the chat. A message sent while a turn is still running stays visible as waiting. A tool that is still running is not treated as a stalled turn, and `diffusion.run` can run for ten minutes.
 - Opening a chat or refreshing the page shows the whole transcript at once. The page loads the messages, not the tool results stored beside them, and keeps that transcript so the next switch does not start from a blank pane. The live stream only adds events that arrive after that.
 - While a film is open, the editor recompiles it when the agent writes the file. A save made in the canvas itself does not reload the picture.
 - A cut the agent writes into the open film shows up in the editor without a page reload. Every open copy is told to recompile.

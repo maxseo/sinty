@@ -16,6 +16,7 @@ import { getDefaultExportTemplate, VIDEO_FORMAT_OPTIONS } from "@/components/sid
 import { mainBridge } from "@/lib/ipc";
 import { MAIN_CHANNELS } from "@desktop/main-channels";
 import { requireScene } from "../lib/scene";
+import { renderFrames } from "./composite";
 
 import type { AudioCodec, OutputFormat, VideoCodec } from "mediabunny";
 import type { ExportSettings } from "@diffusionstudio/dapi";
@@ -94,6 +95,15 @@ async function reconcileCodecs(settings: ExportConfig, format: ContainerFormat):
 export const exportScene: ToolHandler<"export"> = async ({ id, path }, ctx) => {
   const { world, project, engine } = ctx.requireSession();
   const scene = requireScene(world, id, "export");
+
+  // The harness frame has no SharedArrayBuffer, so the mp4 encoder cannot
+  // start. Draw every layer to frames; the plugin assembles them with ffmpeg.
+  if (window.desktop?.harness) {
+    if (!path || !isAbsoluteSource(path)) {
+      throw new DapiError("invalid-input", "The output path must be absolute.");
+    }
+    return renderFrames(world, scene, path, project.dir());
+  }
 
   // The scene's entry in the project's package.json (`diffusion.export.<id>`)
   // — the same one the app's export panel writes — so a tool export

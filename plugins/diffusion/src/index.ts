@@ -1,7 +1,7 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { acceptFromEditor, callTool, cloudCall, createFilm, listFilms, noteChange, readMedia, takeInbox, writeMedia } from "./host.js";
+import { acceptFromEditor, assembleFilm, callTool, cloudCall, createFilm, listFilms, mirrorAssets, noteChange, readMedia, rememberProject, safeSegment, takeInbox, writeMedia } from "./host.js";
 
 const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "logs", "screenshot", "window", "job", "generate"] as const;
 const LONG = new Set(["export", "transcribe", "listen", "grab", "generate"]);
@@ -165,27 +165,47 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export writes _out/film.mp4 in the chat project unless a path is given. open with no folder reports the open film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command.",
+      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export draws every timeline layer and ffmpeg writes _out/video/<film name>/film.mp4. open with no folder reports the open film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command. A new film is diffusion.film.",
       sideEffects: "external",
+      timeoutMs: 600_000,
       input: z.object({
         command: z.enum(COMMANDS),
         args: z.array(z.string()).default([]),
       }),
-      async run(input, ctx) {
+      async run(input, toolCtx) {
         if (input.command === "window") return { content: { visible: true } };
         if (input.command === "logs") return { content: { entries: [] } };
         const args = argsOf(input.command, input.args);
         const ms = LONG.has(input.command) ? 600_000 : 180_000;
         try {
-          if (input.command === "open" && !("dir" in args)) return { content: await openFilm() };
-          if (input.command === "export" && ctx.workspace) {
+          if (input.command === "open" && !("dir" in args)) return { content: await openFilm(ctx.paths.data, toolCtx.workspace) };
+          if (input.command === "export" && toolCtx.workspace) {
+            const film = await openFilm(ctx.paths.data, toolCtx.workspace);
             const given = typeof args.path === "string" ? args.path : "";
-            args.path = given && isAbsolute(given) ? given : join(ctx.workspace, given || join("_out", "film.mp4"));
+            const folder = join(toolCtx.workspace, "_out", "video", safeSegment(film.name || "film"));
+            mkdirSync(folder, { recursive: true });
+            args.path = given && isAbsolute(given) ? given : join(folder, basename(given) || "film.mp4");
           }
-          return { content: storePictures(await callTool(input.command, args, ms), ctx.workspace, input.command) };
+          const content = storePictures(await callTool(input.command, args, ms), toolCtx.workspace, input.command);
+          if (input.command === "export") return { content: await finishExport(content) };
+          return { content };
         } catch (error) {
           throw new ToolError("diffusion_run", error instanceof Error ? error.message : "команда не выполнилась");
         }
+      },
+    });
+
+    ctx.tool({
+      name: "diffusion.film",
+      description: "Create a new film in this chat's project. The film shows up in the Видео list. Its asset folder is _inbox/assets/<name>. The film that is open stays the one diffusion.source edits.",
+      sideEffects: "write",
+      input: z.object({ name: z.string().min(1).max(80) }),
+      async run(input, toolCtx) {
+        const open = await openFilm(ctx.paths.data, toolCtx.workspace);
+        const project = basename(dirname(open.dir));
+        if (toolCtx.workspace) rememberProject(ctx.paths.data, project, toolCtx.workspace);
+        const film = createFilm(ctx.paths.data, project, input.name);
+        return { content: { id: film.id, name: film.name, assets: film.assets } };
       },
     });
 
@@ -200,7 +220,7 @@ export default definePlugin({
       }),
       async run(input, toolCtx) {
         try {
-        const film = await openFilm();
+        const film = await openFilm(ctx.paths.data, toolCtx.workspace);
         const file = join(film.dir, "index.tsx");
         if (input.action === "read") return { content: { path: "index.tsx", text: readFileSync(file, "utf8") } };
         if (input.action === "import") {
@@ -214,7 +234,8 @@ export default definePlugin({
           mkdirSync(join(film.dir, "assets"), { recursive: true });
           cpSync(src, join(film.dir, "assets", name));
           noteChange(film.dir, `assets/${name}`);
-          return { content: { libraryPath: name, file: `assets/${name}` } };
+          const assets = mirrorAssets(ctx.paths.data, film.dir);
+          return { content: { libraryPath: name, file: `assets/${name}`, assets } };
         }
         const text = input.text ?? "";
         if (!text.includes("export default")) throw new ToolError("diffusion_source", "в файле должна быть export default function");
@@ -406,7 +427,7 @@ function argsOf(command: string, args: string[]): Record<string, unknown> {
   return record;
 }
 
-async function openFilm(): Promise<{ id: string; name: string; dir: string }> {
+async function openFilm(data: string, workspace?: string): Promise<{ id: string; name: string; dir: string; assets: string | null }> {
   const current = await callTool("context", {}, 30_000) as { projectDir?: string | null };
   const dir = current.projectDir;
   if (!dir) throw new ToolError("diffusion_arg", "Откройте фильм кнопкой «Видео» в шапке чата.");
@@ -419,7 +440,25 @@ async function openFilm(): Promise<{ id: string; name: string; dir: string }> {
   } catch {
     /* the folder is enough */
   }
-  return { id, name, dir };
+  if (workspace) rememberProject(data, basename(dirname(dir)), workspace);
+  return { id, name, dir, assets: mirrorAssets(data, dir) };
+}
+
+async function finishExport(content: unknown): Promise<unknown> {
+  const row = content as { path?: string; framesDir?: string; fps?: number; width?: number; height?: number; duration?: number; frames?: number };
+  if (!row?.framesDir || !row.path || !row.fps) return content;
+  const bytes = await assembleFilm(row.framesDir, row.fps, row.path);
+  rmSync(row.framesDir, { recursive: true, force: true });
+  return {
+    file: row.path,
+    width: row.width,
+    height: row.height,
+    duration: row.duration,
+    frames: row.frames,
+    bytes,
+    picture: "все слои таймлайна",
+    audio: "в файл не входит",
+  };
 }
 
 function pngBytes(value: unknown): Buffer | null {

@@ -149,17 +149,19 @@ export function listFilms(data: string, project: string): { id: string; name: st
   const dir = filmsRoot(data, project);
   if (!existsSync(dir)) return [];
   const films = readdirSync(dir).flatMap((name) => {
-    const info = describe(join(dir, name), false);
+    const folder = join(dir, name);
+    const info = describe(folder, false);
+    if (info) mirrorAssets(data, folder);
     return info ? [{ id: info.id, name: info.displayName, modifiedAt: info.modifiedAt }] : [];
   });
   films.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
   return films;
 }
 
-export function createFilm(data: string, project: string, name: string): { id: string; name: string; modifiedAt: string } {
+export function createFilm(data: string, project: string, name: string): { id: string; name: string; modifiedAt: string; assets: string | null } {
   const title = name.trim().slice(0, 80) || "Без названия";
   const info = ensureProject(join(filmsRoot(data, project), randomUUID()), title);
-  return { id: info.id, name: info.displayName, modifiedAt: info.modifiedAt };
+  return { id: info.id, name: info.displayName, modifiedAt: info.modifiedAt, assets: mirrorAssets(data, info.dir) };
 }
 
 export function findFilm(data: string, id: string): ProjectInfo | null {
@@ -528,6 +530,88 @@ export function writeMedia(roots: Roots, dir: string, source: string, bytes: Uin
   const file = projectPath(inside(roots, dir), source, roots);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, bytes);
+  if (source.replace(/\\/g, "/").startsWith("assets/")) mirrorAssets(roots.data, inside(roots, dir));
+}
+
+/** A path segment that is safe as a folder name on Windows. */
+export function safeSegment(name: string): string {
+  const clean = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ").trim().replace(/[. ]+$/g, "");
+  return clean.slice(0, 80) || "film";
+}
+
+/** Remembers which chat-project folder a film project belongs to. The roster sits outside this plugin's grant. */
+export function rememberProject(data: string, projectId: string, workspace: string): void {
+  if (!projectId || !workspace) return;
+  const file = join(data, "projects.json");
+  let map: Record<string, string> = {};
+  try { map = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>; } catch { /* first film */ }
+  if (map[projectId] === workspace) return;
+  map[projectId] = workspace;
+  writeFileSync(file, JSON.stringify(map), "utf8");
+}
+
+function projectFolder(data: string, projectId: string): string | null {
+  try {
+    const map = JSON.parse(readFileSync(join(data, "projects.json"), "utf8")) as Record<string, string>;
+    if (map[projectId]) return map[projectId];
+  } catch { /* not remembered yet */ }
+  try {
+    const roster = JSON.parse(readFileSync(join(dirname(data), "roster.json"), "utf8")) as { projects?: { id: string; slug: string }[] };
+    const slug = roster.projects?.find((row) => row.id === projectId)?.slug;
+    if (slug) return join(dirname(dirname(data)), "workspace", "projects", slug);
+  } catch { /* roster is outside the grant */ }
+  return null;
+}
+
+/** `_inbox/assets/<film name>` inside the chat project. The editor still reads the film folder; this is the copy the agent can open. */
+export function assetInbox(data: string, filmDir: string): string | null {
+  const info = describe(filmDir, false);
+  if (!info) return null;
+  const root = projectFolder(data, basename(dirname(filmDir)));
+  if (!root) return null;
+  return join(root, "_inbox", "assets", safeSegment(info.displayName));
+}
+
+/** Copies film library files into the chat project. A newer film file replaces the copy. */
+export function mirrorAssets(data: string, filmDir: string): string | null {
+  const dest = assetInbox(data, filmDir);
+  if (!dest) return null;
+  mkdirSync(dest, { recursive: true });
+  const src = join(filmDir, "assets");
+  if (!existsSync(src)) return dest;
+  for (const name of readdirSync(src)) {
+    const from = join(src, name);
+    if (!existsSync(from) || statSync(from).isDirectory()) continue;
+    const to = join(dest, name);
+    if (!existsSync(to) || statSync(from).mtimeMs > statSync(to).mtimeMs) cpSync(from, to);
+  }
+  return dest;
+}
+
+function ffmpegBin(): string {
+  const local = process.env.LOCALAPPDATA;
+  const bundled = local ? join(local, "Sinty", "tools", "ffmpeg", "ffmpeg.exe") : "";
+  if (bundled && existsSync(bundled)) return bundled;
+  return "ffmpeg";
+}
+
+/** Encodes a JPEG sequence into one mp4. The frames are the composited picture. */
+export function assembleFilm(framesDir: string, fps: number, outFile: string): Promise<number> {
+  mkdirSync(dirname(outFile), { recursive: true });
+  const pattern = join(framesDir, "f-%06d.jpg");
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegBin(), ["-y", "-framerate", String(fps), "-start_number", "1", "-i", pattern, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", outFile], { windowsHide: true });
+    let err = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      err += String(chunk);
+      if (err.length > 8000) err = err.slice(-8000);
+    });
+    child.on("error", () => reject(new Error("ffmpeg не запустился")));
+    child.on("close", (code) => {
+      if (code !== 0 || !existsSync(outFile)) reject(new Error(err.trim().split("\n").slice(-4).join(" ") || `ffmpeg ${code}`));
+      else resolve(statSync(outFile).size);
+    });
+  });
 }
 
 function dirnameSafe(dir: string): string {

@@ -20,7 +20,13 @@ The film open in the chat's **Видео** pane is the document. The source file
 2. `diffusion.run` `context` again. Ids follow the order of tags and change when the file changes. Use the new id.
 3. `diffusion.run` `check` with no id. An empty `issues` list means the scene mounted.
 4. Look at a frame: `diffusion.run` `screenshot`, or `capture` with the scene id. The reply has a `file` under the chat project `_out/diffusion`. `vision.look` that path. Do not `fs.read` a PNG.
-5. Export only when the person asked for a file. `diffusion.run` `export` writes `_out/film.mp4` in the chat project.
+5. Export only when the person asked for a file. `diffusion.run` `export` draws every layer on the timeline and ffmpeg writes `_out/video/<film name>/film.mp4`. The picture is the whole cut. The soundtrack is not in that file.
+
+## Files
+
+A new film is `diffusion.film` with a `name`. It shows up in the Видео list. The open film stays the one `diffusion.source` edits until the person opens the new one.
+
+Anything in the film library is copied to `_inbox/assets/<film name>/` in the chat project. Read and copy those files. Do not read the film folder under the harness data directory.
 
 ## Do not
 

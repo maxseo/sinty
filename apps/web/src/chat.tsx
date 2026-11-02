@@ -474,12 +474,21 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
     await loadInfo();
   };
 
+  const waitWord = (reason: string): string => reason === "approval" ? "одобрение" : reason === "ask_human" ? "вопрос" : reason === "budget" ? "бюджет" : "супервизор";
+  const childWait = childPending.find((p) => p.reason !== "approval");
+  const queued = running && items.at(-1)?.kind === "user";
   const placeholder =
     pending?.reason === "ask_human"
       ? `Агент спрашивает: ${pending.detail ?? ""}`
-      : pending?.reason === "supervisor" || pending?.reason === "budget"
-        ? "Ответьте, чтобы продолжить работу"
-        : "Сообщение агенту… (Enter — отправить, Shift+Enter — перенос)";
+      : childWait?.reason === "ask_human"
+        ? `Фон спрашивает: ${childWait.detail ?? ""}`
+        : childWait
+          ? `Фон ждёт: ${waitWord(childWait.reason)}. ${childWait.detail ?? "Это не вопрос."}`
+          : pending?.reason === "supervisor" || pending?.reason === "budget"
+            ? "Ответьте, чтобы продолжить работу"
+            : queued
+              ? "Ход занят. Сообщение уже в очереди."
+              : "Сообщение агенту… (Enter — отправить, Shift+Enter — перенос)";
 
   return (
     <>
@@ -580,6 +589,10 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
               {toolLine || "Агент думает…"}
             </div>
           )}
+          {queued && <div class="note info">Ход занят. Это сообщение дождётся конца текущей команды.</div>}
+          {childPending.filter((p) => p.reason !== "approval").map((p) => (
+            <div key={p.turnId} class="note warn">Фон · {waitWord(p.reason)}. {p.detail ?? "Вопроса нет, отвечать не нужно."}</div>
+          ))}
           <div ref={bottom} />
         </div>
       )}

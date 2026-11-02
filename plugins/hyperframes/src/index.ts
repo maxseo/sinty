@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { readMark, updateAvailable, writeMark, type Remote } from "./updates.js";
@@ -102,7 +102,7 @@ function run(cmd: string, args: string[], cwd: string): Promise<{ code: number; 
     const take = (buf: Buffer) => { out = (out + buf.toString("utf8")).slice(-8000); };
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
-    const timer = setTimeout(() => { child.kill(); resolve({ code: 1, out: out + "\nостановлено по таймауту 3 минуты" }); }, 180_000);
+    const timer = setTimeout(() => { child.kill(); resolve({ code: 1, out: out + "\nостановлено по таймауту 10 минут" }); }, 600_000);
     child.on("error", (err) => { clearTimeout(timer); resolve({ code: 1, out: String(err) }); });
     child.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? 1, out }); });
   });
@@ -157,17 +157,24 @@ export default definePlugin({
 
     ctx.tool({
       name: "hyperframes.render",
-      description: "Run npx hyperframes render in hyperframes/<slug>. Uses the Playwright Chromium already on this machine. If FFmpeg, Python or ImageMagick is missing, call runtimes.install. Stops after 3 minutes.",
+      description: "Render hyperframes/<slug> to MP4. The file is copied to the chat project _out/video/<slug>/film.mp4. Uses the Playwright Chromium already on this machine. If FFmpeg, Python or ImageMagick is missing, call runtimes.install.",
       input: z.object({ slug: z.string() }),
       sideEffects: "external",
+      timeoutMs: 600_000,
       idempotent: false,
-      async run(args) {
+      async run(args, tool) {
         if (!SLUG.test(args.slug)) throw new ToolError("hyperframes_slug", "slug: латиница через дефис");
         const project = join(ctx.paths.workspace, "hyperframes", args.slug);
         const bin = process.platform === "win32" ? "npx.cmd" : "npx";
         const result = await run(bin, ["--yes", "hyperframes", "render"], project);
         if (result.code !== 0) throw new ToolError("hyperframes_render", result.out || `код ${result.code}`);
-        return { content: { dir: project, output: result.out } };
+        const made = readdirSync(project).find((name) => name.toLowerCase().endsWith(".mp4"));
+        const output = tool.workspace && made ? join(tool.workspace, "_out", "video", args.slug, "film.mp4") : made ? join(project, made) : "";
+        if (tool.workspace && made && output) {
+          mkdirSync(join(output, ".."), { recursive: true });
+          copyFileSync(join(project, made), output);
+        }
+        return { content: { dir: project, output: output || result.out } };
       },
     });
 

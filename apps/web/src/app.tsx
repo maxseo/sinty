@@ -308,7 +308,7 @@ function Shell() {
                         const parent = parentId ? sessions.find((x) => x.id === parentId) : undefined;
                         const label = parent?.title || s?.title || p.title || p.sessionId;
                         const why = p.reason === "approval" ? "одобрение" : p.reason === "ask_human" ? "вопрос" : p.reason === "budget" ? "бюджет" : "супервизор";
-                        const childNote = parentId ? "фон" : why;
+                        const childNote = parentId ? `фон · ${why}` : why;
                         return (
                           <div key={p.turnId} class="pending-row">
                             <a
