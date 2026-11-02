@@ -18,8 +18,14 @@
             root.dataset.kbTheme = resolved;
             return mode;
           };
-          var stored = localStorage.getItem("kb-color-mode");
-          if (stored) apply(stored);
+          var inHarness = location.pathname.indexOf("/p/diffusion/") === 0;
+          var sinty = localStorage.getItem("sinty.theme");
+          var stored = sinty === "light" || sinty === "dark"
+            ? sinty
+            : inHarness
+              ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+              : localStorage.getItem("kb-color-mode");
+          if (stored) localStorage.setItem("kb-color-mode", apply(stored));
           else localStorage.setItem("kb-color-mode", apply("dark"));
         } catch (e) {}
 

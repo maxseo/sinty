@@ -22,7 +22,7 @@ export function EngineCanvas(): JSX.Element {
 
 	return (
 		<div ref={containerRef} class="relative size-full">
-			<canvas ref={canvasRef} class="absolute inset-0" />
+			<canvas ref={canvasRef} class="absolute inset-0 bg-[#e8e8e8] dark:bg-[#161616]" />
 		</div>
 	);
 }

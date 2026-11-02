@@ -1454,9 +1454,10 @@ export function renderSystem(world: World): void {
 
 	// The stage background is a preview-only affordance; offline encoding
 	// renders just the scene onto a transparent canvas (the scene paints its
-	// own fill if it has one).
+	// own fill if it has one). In the light theme the preview is a light gray,
+	// whatever color the file stored for the dark stage.
 	if (world.get(Mode)?.value === 'realtime') {
-		ctx.fillStyle = colorToHex(world.get(Root)!.get(Background)?.value ?? 0);
+		ctx.fillStyle = colorToHex(stagePreviewColor(world));
 		ctx.fillRect(0, 0, cw, ch);
 		world.get(HitRegions)?.list.push({
 			target: { kind: 'hud', id: 'canvas', quad: getCanvasQuad(cw, ch) },
@@ -1472,6 +1473,15 @@ export function renderSystem(world: World): void {
 	for (const entity of world.query(Or(Geometry, Group), ChildOf(stage), Not(Culled))) {
 		renderNode(world, entity);
 	}
+}
+
+/** Light-theme preview of the area around the scenes. The file's own stage color is what a dark preview and a render use. */
+const LIGHT_STAGE = 0xe8e8e8;
+
+function stagePreviewColor(world: World): number {
+	const authored = world.get(Root)?.get(Background)?.value ?? 0;
+	if (typeof document !== 'undefined' && document.documentElement.dataset.kbTheme === 'light') return LIGHT_STAGE;
+	return authored;
 }
 
 function getCanvasQuad(width: number, height: number): Quad {

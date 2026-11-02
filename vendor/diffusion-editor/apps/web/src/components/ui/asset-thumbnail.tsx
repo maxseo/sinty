@@ -86,8 +86,6 @@ function MediaThumbnail(props: { asset: Asset; width: number; cache?: AssetCache
   const key = () => `${keyOf(props.asset)}:${props.width}:${props.cache ? 'cached' : ''}`;
 
   const loadThumbnail = async () => {
-    releaseUrl();
-
     try {
       let blob: Blob | null = null;
 
@@ -97,7 +95,10 @@ function MediaThumbnail(props: { asset: Asset; width: number; cache?: AssetCache
         const file = await getAssetFile(props.asset as unknown as ImageAsset | VideoAsset);
         blob = await deriveThumbnail(file, props.asset.mimeType, props.width);
       }
-      objectUrl = blob ? URL.createObjectURL(blob) : undefined;
+      const next = blob ? URL.createObjectURL(blob) : undefined;
+      const previous = objectUrl;
+      objectUrl = next;
+      if (previous) URL.revokeObjectURL(previous);
 
       return objectUrl;
     } catch {
