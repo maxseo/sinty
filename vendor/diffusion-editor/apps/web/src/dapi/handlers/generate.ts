@@ -60,6 +60,9 @@ export const generate: ToolHandler<"generate"> = async (args, ctx) => {
 };
 
 export const job: ToolHandler<"job"> = async ({ id, cancel }, ctx) => {
+  if (typeof id !== "string" || !id.trim()) {
+    throw new DapiError("invalid-input", "Нужен id задания, который вернул generate.");
+  }
   if (isLocalJobId(id)) {
     return localJob(id, cancel ?? false);
   }

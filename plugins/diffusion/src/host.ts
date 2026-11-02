@@ -278,7 +278,7 @@ async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: 
 function projectPath(dir: string, source: string): string {
   const abs = isAbsolute(source) ? resolve(source) : resolve(dir, source);
   const rel = relative(dir, abs);
-  if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("файл снаружи проекта");
+  if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("файл должен лежать в папке фильма (assets/…). Кадр монтажа снимает capture, без пути из чата.");
   return abs;
 }
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { acceptFromEditor, callTool, cloudCall, createFilm, listFilms, readMedia, takeInbox, writeMedia } from "./host.js";
@@ -162,17 +162,20 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one editor command in the open film: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job. The film has to be open in the Видео pane beside the chat. Paths stay in the session workspace.",
+      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (path like assets/clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. screenshot writes editor.png into the chat project. open with no folder reports the open film. window reports the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned.",
       sideEffects: "external",
       input: z.object({
         command: z.enum(COMMANDS),
         args: z.array(z.string()).default([]),
       }),
-      async run(input) {
+      async run(input, ctx) {
+        if (input.command === "window") return { content: { visible: true } };
+        if (input.command === "logs") return { content: { entries: [] } };
         const args = argsOf(input.command, input.args);
         const ms = LONG.has(input.command) ? 600_000 : 180_000;
         try {
-          return { content: await callTool(input.command, args, ms) };
+          if (input.command === "open" && !("dir" in args)) return { content: await openFilm() };
+          return { content: storeShot(await callTool(input.command, args, ms), ctx.workspace) };
         } catch (error) {
           throw new ToolError("diffusion_run", error instanceof Error ? error.message : "команда не выполнилась");
         }
@@ -310,12 +313,9 @@ parent.postMessage({ sinty: PROTO, op: "ready" }, "*");
   });
 }
 
-function argsOf(command: string, args: string[]): Record<string, unknown> {
-  if (command === "open") {
-    const dir = args.find((arg) => !arg.startsWith("-"));
-    if (!dir) throw new ToolError("diffusion_arg", "нужна папка проекта");
-    return { dir };
-  }
+const MEDIA = new Set(["probe", "grab", "transcribe", "filmstrip", "waveform", "listen"]);
+
+function positionals(args: string[]): { record: Record<string, unknown>; rest: string[] } {
   const record: Record<string, unknown> = {};
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -325,7 +325,66 @@ function argsOf(command: string, args: string[]): Record<string, unknown> {
     else if (arg === "--end" || arg === "-e") record.end = Number(args[++i]);
     else if (!arg.startsWith("-")) rest.push(arg);
   }
+  return { record, rest };
+}
+
+function argsOf(command: string, args: string[]): Record<string, unknown> {
+  if (command === "open") {
+    const dir = args.find((arg) => !arg.startsWith("-"));
+    return dir ? { dir } : {};
+  }
+  if (command === "job") {
+    const id = args.find((arg) => !arg.startsWith("-") && arg !== "list");
+    if (!id) throw new ToolError("diffusion_arg", "нужен id задания, который вернул generate");
+    return { id, cancel: args.includes("--cancel") };
+  }
+  const { record, rest } = positionals(args);
+  if (command === "check" || command === "capture") {
+    const id = rest.find((arg) => !/^\d+(\.\d+)?$/.test(arg));
+    const times = rest.filter((arg) => arg !== id).map(Number).filter((n) => Number.isFinite(n));
+    return { ...(id ? { id } : {}), ...(times.length ? { times } : {}), ...record };
+  }
+  if (command === "export") {
+    const file = rest.find((arg) => /\.(mp4|webm|mov|ogg)$/i.test(arg));
+    const id = rest.find((arg) => arg !== file);
+    return { ...(id ? { id } : {}), ...(file ? { path: file } : {}) };
+  }
+  if (MEDIA.has(command)) {
+    const path = rest[0];
+    if (!path) throw new ToolError("diffusion_arg", "нужен файл внутри фильма, например assets/@11.mov. Список даёт context.");
+    return { ...record, path, ...(rest[1] ? { output: rest[1] } : {}) };
+  }
   if (rest[0]) record.path = rest[0];
   if (rest.length > 1) record.output = rest[1];
   return record;
+}
+
+async function openFilm(): Promise<{ id: string; name: string; dir: string }> {
+  const current = await callTool("context", {}, 30_000) as { projectDir?: string | null };
+  const dir = current.projectDir;
+  if (!dir) throw new ToolError("diffusion_arg", "Откройте фильм кнопкой «Видео» в шапке чата.");
+  let id = "";
+  let name = "";
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { projectId?: string; displayName?: string };
+    id = pkg.projectId ?? "";
+    name = pkg.displayName ?? "";
+  } catch {
+    /* the folder is enough */
+  }
+  return { id, name, dir };
+}
+
+function storeShot(data: unknown, workspace: string | undefined): unknown {
+  if (!data || typeof data !== "object" || !("pngBase64" in data)) return data;
+  const row = data as { pngBase64?: unknown; width?: unknown; height?: unknown };
+  const png = typeof row.pngBase64 === "string" ? row.pngBase64 : "";
+  const width = typeof row.width === "number" ? row.width : 0;
+  const height = typeof row.height === "number" ? row.height : 0;
+  if (!png || !workspace) return { width, height };
+  const dir = join(workspace, "_out");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "editor.png");
+  writeFileSync(path, Buffer.from(png, "base64"));
+  return { path, width, height };
 }

@@ -18,6 +18,9 @@ import type { ToolContext } from "../handler";
  * fresh one per request, so nothing is remembered between calls.
  */
 export function resolveAsset(ctx: ToolContext, path: string): Promise<Asset> {
+  if (typeof path !== "string" || !path.trim()) {
+    throw new DapiError("invalid-input", "Нужен файл внутри фильма, например assets/@11.mov. Список файлов есть в context.");
+  }
   const world = ctx.session()?.world;
   if (world) return getLibrary(world).resolve(path);
   if (!isAbsoluteSource(path) && !isUrlSource(path)) {
