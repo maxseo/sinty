@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-02 | [Chat scroll](2026-11-02-chat-scroll.md) | (open) | The chat column beside the editor scrolls down only. Long lines wrap. |
 | 2026-11-02 | [Editor theme](2026-11-02-editor-theme.md) | (open) | The film list and the editor follow the harness theme. Dark stays the current palette. |
 | 2026-11-02 | [Menu export](2026-11-02-menu-export.md) | (open) | The File menu exports one scene with ffmpeg, and the canvas hit list no longer grows with every scene. |
 | 2026-11-02 | [Film in the background](2026-11-02-film-background.md) | (open) | The agent cuts a film without the pane open, and a green dot shows the project while it does. |
