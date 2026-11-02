@@ -15,10 +15,15 @@
     }
   }
 
+  var worker = /(?:\?|&)worker=1(?:&|$)/.test(location.search);
+
   function pull() {
     if (pulling) return;
     pulling = true;
-    fetch("/p/diffusion/ipc/inbox?since=" + seen, { method: "GET" })
+    var query = "since=" + seen;
+    if (watchDir) query += "&dir=" + encodeURIComponent(watchDir);
+    if (worker) query += "&worker=1";
+    fetch("/p/diffusion/ipc/inbox?" + query, { method: "GET" })
       .then(function (res) { return res.ok ? res.json() : []; })
       .then(function (batch) {
         pulling = false;
@@ -89,6 +94,19 @@
     setTimeout(function () { stop(); polling = false; }, 4000);
   }
 
+  function follow() {
+    if (!worker) return;
+    fetch("/p/diffusion/ipc/focus", { method: "GET" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (focus) {
+        if (!focus || !focus.id) return;
+        var want = "#/projects/" + encodeURIComponent(focus.id);
+        if (location.hash !== want) location.hash = want;
+      })
+      .catch(function () {});
+  }
+
   setInterval(pollFilm, 800);
+  setInterval(follow, 700);
   pull();
 })();

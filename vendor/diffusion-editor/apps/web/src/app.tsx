@@ -91,6 +91,7 @@ function EnvironmentOverlays() {
 
 /** Their project list is not ours. Home leaves the editor and returns to the film list of this harness project. */
 function FilmsHome() {
+  if (new URLSearchParams(window.location.search).get("worker") === "1") return null;
   const back = new URLSearchParams(window.location.search).get("back");
   const target = back && back.startsWith("/p/diffusion/films") ? back : "/p/diffusion/films";
   window.location.replace(target);

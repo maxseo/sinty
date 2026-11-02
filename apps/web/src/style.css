@@ -295,6 +295,8 @@ td {
 .side button.nav-item:hover, .side button.menu-item:hover { background: var(--hover); }
 .proj-head, .side-foot { display: flex; align-items: center; gap: 4px; }
 .proj-line { display: flex; align-items: center; }
+.side a.nav-item { display: flex; align-items: center; gap: 8px; }
+.film-worker { position: fixed; left: -2400px; top: 0; width: 1280px; height: 720px; border: 0; pointer-events: none; }
 .proj-line .nav-item { flex: 1; min-width: 0; }
 .side-foot { margin-top: auto; justify-content: space-between; }
 .side-foot > button:not(.icon) { height: var(--control); padding: 0 16px; font-size: 14px; }

@@ -1,6 +1,6 @@
 # Commands
 
-The film must already be open. Every command is `diffusion.run` except `diffusion.source`, `diffusion.film`, and `diffusion.generate`.
+The Видео pane does not have to be open. Every command is `diffusion.run` except `diffusion.source`, `diffusion.film`, and `diffusion.generate`. Pass `film` (name or id) when the project has more than one film. After `diffusion.film`, that new film is the default.
 
 `args` is a list of strings. The first value is the positional (a scene id or a library path). Flags are `--prompt` / `-p`, `--start` / `-s`, `--end` / `-e`. Times are seconds (`1.5`), frames (`45f`), or clock (`1:30`). Replies use seconds.
 
@@ -14,7 +14,7 @@ The film must already be open. Every command is `diffusion.run` except `diffusio
 | `screenshot` | none | one PNG `file` of the open scene at the playhead |
 | `export` | optional scene id, optional file name | draws every timeline layer, mixes the timeline audio, then ffmpeg writes `_out/video/<film name>/film.mp4`. A relative name lands in that folder. |
 | `fonts` | none | family names a `<text fontFamily>` may use |
-| `open` | none | the open film's id, name, and folder |
+| `open` | optional `film` | that film's id and name |
 
 ## What needs a library path from context
 
@@ -35,14 +35,14 @@ Look at a `file` with `vision.look`. The path is absolute and inside the chat pr
 
 ## A new film
 
-`diffusion.film` with `name` creates a film in this chat's project and an empty `_inbox/assets/<name>/`. It does not open it. The person opens it from the Видео list. `diffusion.source` keeps editing the film that is already open.
+`diffusion.film` with `name` creates a film in this chat's project and an empty `_inbox/assets/<name>/`. It becomes the film the next command edits. The person can open it from the Видео list and watch; they do not have to.
 
 ## The source
 
 `diffusion.source`:
 
-- `action: "read"` — the text of `index.tsx`.
-- `action: "write"`, `text` — replace the whole file. It must contain `export default`. The open editor reloads.
+- `action: "read"` — the text of `index.tsx`. Optional `film`.
+- `action: "write"`, `text` — replace the whole file. It must contain `export default`. An open editor reloads. Optional `film`.
 - `action: "import"`, `path` — copy one file from the chat project into the film library and into `_inbox/assets/<film name>/`. The reply's `libraryPath` is what `src` should say (a file `assets/logo.png` is `"logo.png"`). Read the inbox copy, not the film folder.
 
 After `write` or `import`, call `context` again before `check`, `capture`, or `export`.

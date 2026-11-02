@@ -138,6 +138,7 @@ export function EditorPage() {
         // actually mounted, so the record never runs ahead of the canvas.
         rememberProjectBundle(untrack(project.id), result.code).catch((error) =>
           console.error('[projects] could not save the bundle', error));
+        window.desktop?.send('main:request', { id: `ready-${Date.now()}`, channel: 'editor:ready', data: { dir } });
       } catch (error) {
         console.error('[projects] render failed:', error);
         toast.error('Project failed to render', { description: (error as Error).message });

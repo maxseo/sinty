@@ -146,6 +146,18 @@ function Shell() {
   const can = (resource: string, action: AccessAction = "view"): boolean => Boolean(me?.can[resource]?.[action]);
 
   useEffect(() => {
+    let stop = false;
+    const tick = (): void => {
+      api<{ projects?: string[] }>("/p/diffusion/activity")
+        .then((row) => { if (!stop) setMontage(new Set(row.projects ?? [])); })
+        .catch(() => undefined);
+    };
+    tick();
+    const timerId = setInterval(tick, 2000);
+    return () => { stop = true; clearInterval(timerId); };
+  }, []);
+
+  useEffect(() => {
     void api<AgentInfo>("/v1/agent").then(setAgent);
     void api<Me>("/v1/auth/me").then(setMe);
     void refresh();
@@ -166,6 +178,7 @@ function Shell() {
   const [projects, setProjects] = useState<{ id: string; name: string; slug: string }[]>([]);
   const [leftOpen, setLeftOpen] = useState(localStorage.getItem("sinty.left") !== "0");
   const [studio, setStudio] = useState(false);
+  const [montage, setMontage] = useState<Set<string>>(new Set());
   const [pins, setPins] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("sinty.pins") ?? "[]") as string[]; } catch { return []; }
   });
@@ -344,11 +357,11 @@ function Shell() {
                       {can("nav:projects") && projects.map((p) => (
                         <div key={p.id}>
                           <div class="proj-line">
-                            <button class="nav-item" onClick={() => { toggleProjectOpen(p.id); chooseProject(p.id); }}><IconFolder /> <span class="title">{p.name}</span></button>
+                            <button class="nav-item" onClick={() => { toggleProjectOpen(p.id); chooseProject(p.id); }}><IconFolder /> <span class="title">{p.name}</span>{montage.has(p.id) && <span class="dot running" title="Идёт монтаж" />}</button>
                             <button class="icon" title="Новый чат в проекте" onClick={() => openProjectChat(p.id)}><IconPlus /></button>
                           </div>
                           {openProjects.includes(p.id) && projectTabs.map((t) => (
-                            <a key={`${t.plugin}/${t.id}`} class={`nav-item proj-tab ${route.page === "tab" && route.plugin === t.plugin && route.tab === t.id && route.projectId === p.id ? "on" : ""}`} href={href({ page: "tab", plugin: t.plugin, tab: t.id, projectId: p.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>
+                            <a key={`${t.plugin}/${t.id}`} class={`nav-item proj-tab ${route.page === "tab" && route.plugin === t.plugin && route.tab === t.id && route.projectId === p.id ? "on" : ""}`} href={href({ page: "tab", plugin: t.plugin, tab: t.id, projectId: p.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}{t.plugin === "diffusion" && montage.has(p.id) && <span class="dot running" title="Идёт монтаж" />}</a>
                           ))}
                           {openProjects.includes(p.id) && chats.filter((s) => s.projectId === p.id).map((s) => (
                             <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
@@ -457,6 +470,7 @@ function Shell() {
           </div>
         </div>
       )}
+      <iframe class="film-worker" title="Монтаж" src="/p/diffusion/app?worker=1" />
     </div>
     </AccessContext.Provider>
   );

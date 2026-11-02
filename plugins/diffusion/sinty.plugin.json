@@ -12,9 +12,9 @@
     "shell": true
   },
   "tools": [
-    { "name": "diffusion.run", "description": "Run one editor command in the film open in the project's video tab: open, context, capture, check, export, probe, grab, transcribe, filmstrip, waveform, listen, fonts, logs, screenshot, window, job.", "sideEffects": "external", "idempotent": false },
-    { "name": "diffusion.film", "description": "Create a film in this chat's project. Its files live in _inbox/assets/<name>.", "sideEffects": "write", "idempotent": false },
-    { "name": "diffusion.source", "description": "Read or replace the open film's index.tsx, or copy a chat-project file into the film library. Library files are copied to _inbox/assets/<film name>.", "sideEffects": "write", "idempotent": false },
+    { "name": "diffusion.run", "description": "Run one editor command on a film in this chat's project. The video pane does not have to be open. Pass film when there is more than one.", "sideEffects": "external", "idempotent": false },
+    { "name": "diffusion.film", "description": "Create a film in this chat's project and make it the current one. Its files live in _inbox/assets/<name>.", "sideEffects": "write", "idempotent": false },
+    { "name": "diffusion.source", "description": "Read or replace a film's index.tsx, or copy a chat-project file into its library. Pass film when there is more than one. Library files are copied to _inbox/assets/<film name>.", "sideEffects": "write", "idempotent": false },
     { "name": "diffusion.generate", "description": "Generate media through the connected adapter. Without an address the call says nothing is connected.", "sideEffects": "external", "idempotent": false, "defaultPolicy": "ask" }
   ],
   "ui": {
