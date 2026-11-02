@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-02 | [Chat open fast](2026-11-02-chat-open-fast.md) | (open) | A chat opens from its messages, not from the tool results stored beside them. |
 | 2026-11-02 | [Chat open](2026-11-02-chat-open.md) | (open) | A chat opens with the whole transcript, not a replay of the tail. |
 | 2026-11-02 | [Film follow](2026-11-02-film-follow.md) | (open) | An open editor recompiles the film when the agent changes the file. |
 | 2026-11-02 | [Film live](2026-11-02-film-live.md) | (open) | An agent edit of the open film shows in the editor without a page reload. |

@@ -748,8 +748,14 @@ export function createApp(sinty: Sinty): Hono {
   });
 
   app.get("/v1/sessions/:id/events", (c) => {
+    const id = c.req.param("id");
     const after = Number(c.req.query("after") ?? 0);
-    return c.json({ events: sinty.journal.events(c.req.param("id"), { afterSeq: after, limit: Number(c.req.query("limit") ?? 1000) }) });
+    const types = (c.req.query("types") ?? "").split(",").map((t) => t.trim()).filter((t): t is EventType => t.length > 0);
+    const session = sinty.journal.getSession(id);
+    return c.json({
+      events: sinty.journal.events(id, { afterSeq: after, limit: Number(c.req.query("limit") ?? 1000), ...(types.length ? { types } : {}) }),
+      lastSeq: session?.lastSeq ?? 0,
+    });
   });
 
   app.get("/v1/sessions/:id/stream", (c) => {
