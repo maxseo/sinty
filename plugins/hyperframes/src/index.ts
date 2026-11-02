@@ -1,11 +1,22 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, copyFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
+import { compositionMeta, compositionRoot, ensureThumb, findFfmpeg, findVideo, inlineAssets, insideDir, installedVersion, listSlugs, localCli, SLUG } from "./gallery.js";
+import { tabHtml } from "./tab-page.js";
 import { readMark, updateAvailable, writeMark, type Remote } from "./updates.js";
 
-const TAB_CSP = ["default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'", "connect-src 'none'", "form-action 'none'", "base-uri 'none'"].join("; ");
-const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const TAB_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src data:",
+  "media-src data:",
+  "frame-src data: blob:",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+].join("; ");
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
@@ -26,45 +37,6 @@ async function remoteOf(fetch: (url: string, init?: { headers?: Record<string, s
     date: commit.commit?.committer?.date ?? "",
     title: (commit.commit?.message ?? "").split("\n")[0] ?? "",
   };
-}
-
-function tabHtml(): string {
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Hyperframes</title>
-<style>
-body{margin:0;font:14px/1.45 system-ui,sans-serif;color:#1d1d1f}
-h1{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #e5e5ea}
-p,button{margin:12px 16px}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#d1242f;margin-right:6px}
-.ok{color:#6e6e73}
-button{font:inherit;cursor:pointer}
-</style></head><body>
-<h1>Hyperframes</h1>
-<p id="state" class="ok">Проверяю обновления…</p>
-<button type="button" id="seen" hidden>Отметить просмотренным</button>
-<script>
-const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
-let n = 0; const wait = new Map();
-addEventListener("message", (e) => { const m = e.data || {}; if (m.sinty !== "tab/1") return; if (typeof m.id === "number" && wait.has(m.id)) { wait.get(m.id)(m); wait.delete(m.id); } });
-function ask(op, path, body) { const id = ++n; return new Promise((ok) => { wait.set(id, ok); send(op, { id, path, body }); }); }
-function show(data) {
-  const el = document.getElementById("state");
-  const btn = document.getElementById("seen");
-  if (!data || data.error) { el.textContent = "Не удалось спросить GitHub или npm."; return; }
-  if (data.update) {
-    el.className = "";
-    el.innerHTML = '<span class="dot"></span>Есть обновление: npm ' + data.remote.version + ", " + data.remote.title;
-    btn.hidden = false;
-  } else {
-    el.className = "ok";
-    el.textContent = "Обновлений нет. Сейчас npm " + data.remote.version + ".";
-    btn.hidden = true;
-  }
-}
-async function load() { const m = await ask("get", "/status"); show(m.data); }
-document.getElementById("seen").onclick = async () => { await ask("post", "/seen", {}); await load(); };
-load();
-send("ready");
-</script></body></html>`;
 }
 
 /** Playwright keeps Chromium beside the Sinty install. The plugin process cannot read that folder itself. */
@@ -88,7 +60,18 @@ function toolBins(): string[] {
   return [join(tools, "ffmpeg"), join(tools, "python"), join(tools, "python", "Scripts"), join(tools, "magick")];
 }
 
-function run(cmd: string, args: string[], cwd: string): Promise<{ code: number; out: string }> {
+const BS = String.fromCharCode(92);
+const DQ = String.fromCharCode(34);
+
+/** Node on Windows cannot spawn a `.cmd` directly. */
+function wrapArg(value: string): string {
+  if (!/[\s"]/.test(value)) return value;
+  let out = "";
+  for (const ch of value) out += ch === DQ ? BS + DQ : ch;
+  return DQ + out + DQ;
+}
+
+function run(cmd: string, args: string[], cwd: string, timeoutMs = 600_000): Promise<{ code: number; out: string }> {
   const chrome = playwrightChrome();
   const bins = toolBins();
   const env = {
@@ -97,12 +80,16 @@ function run(cmd: string, args: string[], cwd: string): Promise<{ code: number; 
     ...(chrome ? { PUPPETEER_EXECUTABLE_PATH: chrome, CHROME_PATH: chrome } : {}),
   };
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, windowsHide: true, shell: false, env });
+    const win = process.platform === "win32";
+    const line = [cmd, ...args].map(wrapArg).join(" ");
+    const child = win
+      ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", DQ + line + DQ], { cwd, windowsHide: true, windowsVerbatimArguments: true, env })
+      : spawn(cmd, args, { cwd, windowsHide: true, shell: false, env });
     let out = "";
     const take = (buf: Buffer) => { out = (out + buf.toString("utf8")).slice(-8000); };
     child.stdout?.on("data", take);
     child.stderr?.on("data", take);
-    const timer = setTimeout(() => { child.kill(); resolve({ code: 1, out: out + "\nостановлено по таймауту 10 минут" }); }, 600_000);
+    const timer = setTimeout(() => { child.kill(); resolve({ code: 1, out: out + "\nтаймаут" }); }, timeoutMs);
     child.on("error", (err) => { clearTimeout(timer); resolve({ code: 1, out: String(err) }); });
     child.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? 1, out }); });
   });
@@ -122,7 +109,7 @@ export default definePlugin({
         seen = { version: remote.version, sha: remote.sha };
         writeMark(dir, seen);
       }
-      return { update: updateAvailable(seen, remote), seen, remote };
+      return { update: updateAvailable(seen, remote), seen, remote, installed: installedVersion(join(dir, "cli")) };
     }
 
     ctx.tool({
@@ -165,8 +152,9 @@ export default definePlugin({
       async run(args, tool) {
         if (!SLUG.test(args.slug)) throw new ToolError("hyperframes_slug", "slug: латиница через дефис");
         const project = join(ctx.paths.workspace, "hyperframes", args.slug);
-        const bin = process.platform === "win32" ? "npx.cmd" : "npx";
-        const result = await run(bin, ["--yes", "hyperframes", "render"], project);
+        const local = localCli(join(dir, "cli"));
+        const bin = local || (process.platform === "win32" ? "npx.cmd" : "npx");
+        const result = await run(bin, local ? ["render"] : ["--yes", "hyperframes", "render"], project);
         if (result.code !== 0) throw new ToolError("hyperframes_render", result.out || `код ${result.code}`);
         const made = readdirSync(project).find((name) => name.toLowerCase().endsWith(".mp4"));
         const output = tool.workspace && made ? join(tool.workspace, "_out", "video", args.slug, "film.mp4") : made ? join(project, made) : "";
@@ -206,6 +194,89 @@ export default definePlugin({
           return json({ ok: true, update: false, remote });
         } catch (e) {
           return json({ error: e instanceof Error ? e.message : "не сохранилось" }, 502);
+        }
+      },
+    });
+
+    const fail = (message: string, status = 400): Response => json({ error: { message } }, status);
+    const folderOf = (slug: string): string | undefined => {
+      if (!SLUG.test(slug)) return undefined;
+      const root = compositionRoot(ctx.paths.workspace);
+      const folder = join(root, slug);
+      if (!existsSync(join(folder, "index.html")) || !insideDir(root, folder)) return undefined;
+      return folder;
+    };
+
+    ctx.http({
+      method: "GET",
+      path: "/items",
+      surface: "updates",
+      access: "view",
+      handler: () => {
+        try {
+          const ffmpeg = findFfmpeg();
+          const items = listSlugs(ctx.paths.workspace).map((slug) => {
+            const folder = join(compositionRoot(ctx.paths.workspace), slug);
+            const meta = compositionMeta(readFileSync(join(folder, "index.html"), "utf8"));
+            const thumbPath = ensureThumb(folder, ffmpeg);
+            const thumb = thumbPath ? `data:image/jpeg;base64,${readFileSync(thumbPath).toString("base64")}` : "";
+            return { slug, name: meta.id || meta.title || slug, width: meta.width, height: meta.height, hasVideo: Boolean(findVideo(folder)), thumb };
+          });
+          return json({ items });
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : "список не собрался", 500);
+        }
+      },
+    });
+    ctx.http({
+      method: "GET",
+      path: "/open",
+      surface: "updates",
+      access: "view",
+      handler: (req) => {
+        const url = new URL(req.url);
+        const folder = folderOf(url.searchParams.get("slug") ?? "");
+        if (!folder) return fail("нет такой композиции", 404);
+        const view = url.searchParams.get("view") === "html" ? "html" : "video";
+        if (view === "html") return json({ html: inlineAssets(folder, readFileSync(join(folder, "index.html"), "utf8")) });
+        const video = findVideo(folder);
+        if (!video) return fail("у этой композиции нет ролика", 404);
+        const buf = readFileSync(video);
+        if (buf.length > 12_000_000) return fail("ролик больше 12 МБ", 413);
+        return json({ video: buf.toString("base64") });
+      },
+    });
+    ctx.http({
+      method: "POST",
+      path: "/delete",
+      surface: "updates",
+      access: "edit",
+      handler: async (req) => {
+        const body = await req.json() as { slug?: string };
+        const folder = folderOf(body.slug ?? "");
+        if (!folder) return fail("нет такой композиции", 404);
+        rmSync(folder, { recursive: true, force: true });
+        return json({ ok: true });
+      },
+    });
+    ctx.http({
+      method: "POST",
+      path: "/update",
+      surface: "updates",
+      access: "edit",
+      handler: async () => {
+        try {
+          const remote = await remoteOf(fetchPublic);
+          if (!remote.version) return fail("пустой ответ npm", 502);
+          const prefix = join(dir, "cli");
+          mkdirSync(prefix, { recursive: true });
+          const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+          const result = await run(npm, ["install", "--prefix", prefix, "--no-fund", "--no-audit", `hyperframes@${remote.version}`], prefix, 90_000);
+          if (result.code !== 0) return fail(result.out.slice(-500) || "npm не установил пакет", 502);
+          if (remote.sha) writeMark(dir, { version: remote.version, sha: remote.sha });
+          return json({ ok: true, installed: installedVersion(prefix), remote });
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : "не обновилось", 502);
         }
       },
     });

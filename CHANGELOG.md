@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- The Hyperframes tab can install the npm update it reports. It also lists saved compositions with a preview, and can open or delete one.
 - The chat column beside the editor no longer has a horizontal scrollbar. Long lines wrap inside the column.
 - The film list and the editor follow the harness theme button. Dark keeps the current editor palette. Light uses the editor's light surfaces, and the stage around the scenes is light gray. A click on the canvas no longer makes the editor reload the film.
 - File → Export scene and Export specific scene write the chosen scene to `_out/video/<film>/<scene>.mp4`. The canvas hit list is cleared each frame, so many scenes on the stage no longer pile up.

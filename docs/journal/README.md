@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-02 | [Hyperframes library](2026-11-02-hyperframes-library.md) | (open) | The Hyperframes tab installs the reported npm update and lists saved compositions. |
 | 2026-11-02 | [Chat scroll](2026-11-02-chat-scroll.md) | (open) | The chat column beside the editor scrolls down only. Long lines wrap. |
 | 2026-11-02 | [Editor theme](2026-11-02-editor-theme.md) | (open) | The film list and the editor follow the harness theme. Dark stays the current palette. |
 | 2026-11-02 | [Menu export](2026-11-02-menu-export.md) | (open) | The File menu exports one scene with ffmpeg, and the canvas hit list no longer grows with every scene. |
