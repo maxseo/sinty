@@ -1179,6 +1179,9 @@ export class Agent {
   }
 
   private async execute(sessionId: string, turnId: string, stepId: string, call: ToolCallRef, tool: Tool, signal: AbortSignal, alreadyStarted = false): Promise<"done"> {
+    // A running tool is not silence. The tool's own timeout is the hang limit.
+    const beat = setInterval(() => this.running.get(turnId)?.pulseStall?.(), 15_000);
+    try {
     const base = { sessionId, turnId, stepId };
     const idempotencyKey = this.key(turnId, stepId, call.callId);
     if (!alreadyStarted) this.record({ ...base, type: "tool.call.started", actor: SYSTEM, data: { callId: call.callId, tool: tool.name, idempotencyKey } });
@@ -1222,6 +1225,9 @@ export class Agent {
     else this.record({ ...base, type: "tool.call.failed", actor, data: strip({ callId: call.callId, code: outcome.error.code, message: outcome.error.message, hint: outcome.error.hint, durationMs }) });
     await this.observePatch(owner.name, outcome.ok ? { ok: true } : { ok: false, code: outcome.error.code });
     return "done";
+    } finally {
+      clearInterval(beat);
+    }
   }
 
   private async observePatch(plugin: string, outcome: { ok: true } | { ok: false; code: string }): Promise<void> {
