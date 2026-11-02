@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-02 | [Film live](2026-11-02-film-live.md) | (open) | An agent edit of the open film shows in the editor without a page reload. |
 | 2026-11-02 | [Film skill](2026-11-02-film-skill.md) | (open) | Pictures and the export are files in the chat project, and the agent edits the film source through a skill. |
 | 2026-11-02 | [Film tools](2026-11-02-film-tools.md) | (open) | Editor commands use the open scene and the film's files instead of crashing on a missing argument. |
 | 2026-11-02 | [Film beside the chat](2026-11-02-film-beside-chat.md) | (open) | «Видео» opens the editor beside the chat, and the cut is saved in the film file. |
