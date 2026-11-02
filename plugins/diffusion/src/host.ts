@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const require = createRequire(import.meta.url);
@@ -17,6 +18,12 @@ type Reply = { id: string; ok: boolean; data?: unknown; error?: { message?: stri
 
 const outbox: Outgoing[] = [];
 const waiting = new Map<string, (reply: Reply) => void>();
+const openFiles = new Map<string, { path: string; fd: number }>();
+
+/** Tells the open editor a film file changed, so it reloads the source. */
+export function noteChange(dir: string, path: string): void {
+  outbox.push({ channel: "projects:changed", payload: { dir, path } });
+}
 
 const STARTER = `export default function Project() {
   return (
@@ -177,16 +184,50 @@ function readable(file: string): boolean {
   try { return existsSync(file); } catch { return false; }
 }
 
+/** A compiler package is usable only when its own esbuild can be loaded. A forked plugin folder can contain package.json without node_modules. */
+function usableCompiler(pkg: string): string | null {
+  if (!readable(pkg)) return null;
+  try {
+    createRequire(pkg).resolve("esbuild");
+    return pkg;
+  } catch {
+    return null;
+  }
+}
+
 /** The compiler packages live next to the plugin. A path outside the grant is not readable, so it is skipped. */
 function compilerPackage(): string | null {
-  const local = join(process.cwd(), "compiler", "package.json");
-  if (readable(local)) return local;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(process.cwd(), "compiler", "package.json"),
+    join(here, "compiler", "package.json"),
+    join(here, "..", "compiler", "package.json"),
+  ];
   const noted = join(process.cwd(), "compiler.json");
-  if (!readable(noted)) return null;
-  const raw = JSON.parse(readFileSync(noted, "utf8")) as { packageJson?: string };
-  const pkg = typeof raw.packageJson === "string" ? raw.packageJson : "";
-  const abs = pkg ? (isAbsolute(pkg) ? pkg : join(process.cwd(), pkg)) : "";
-  return abs && readable(abs) ? abs : null;
+  if (readable(noted)) {
+    try {
+      const raw = JSON.parse(readFileSync(noted, "utf8")) as { packageJson?: string };
+      if (typeof raw.packageJson === "string" && raw.packageJson) {
+        candidates.push(isAbsolute(raw.packageJson) ? raw.packageJson : join(process.cwd(), raw.packageJson));
+      }
+    } catch {
+      /* a bad note is skipped */
+    }
+  }
+  for (const pkg of candidates) {
+    const usable = usableCompiler(pkg);
+    if (usable) return usable;
+  }
+  return null;
+}
+
+function loadWriter(): (dir: string, edits: unknown) => { skipped: string[]; ids: Record<string, string>; unrolled: string[] } {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const rel of ["compiler/write.cjs", "../compiler/write.cjs"]) {
+    const file = join(here, rel);
+    if (readable(file)) return require(file) as (dir: string, edits: unknown) => { skipped: string[]; ids: Record<string, string>; unrolled: string[] };
+  }
+  throw new Error("нет write.cjs");
 }
 
 /** Lets a canvas edit stay on the stage. The JSX file is not rewritten yet, so a reload shows the file again. Answering with an error makes the editor delete the clip it just added. */
@@ -213,8 +254,7 @@ function keepEdits(edits: unknown): { skipped: string[]; ids: Record<string, str
 /** Persists the cut in the film file. A writer failure keeps the open session as it was, so a clip is not thrown away. */
 function saveEdits(dir: string, edits: unknown): { skipped: string[]; ids: Record<string, string>; unrolled: string[] } {
   try {
-    const apply = require("../compiler/write.cjs") as (dir: string, edits: unknown) => { skipped: string[]; ids: Record<string, string>; unrolled: string[] };
-    return apply(dir, edits);
+    return loadWriter()(dir, edits);
   } catch {
     return keepEdits(edits);
   }
@@ -275,11 +315,34 @@ async function compile(dir: string): Promise<{ ok: true; code: string } | { ok: 
   });
 }
 
-function projectPath(dir: string, source: string): string {
+function under(root: string, file: string): boolean {
+  const rel = relative(root, file);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function projectPath(dir: string, source: string, roots: Roots): string {
   const abs = isAbsolute(source) ? resolve(source) : resolve(dir, source);
   const rel = relative(dir, abs);
-  if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("файл должен лежать в папке фильма (assets/…). Кадр монтажа снимает capture, без пути из чата.");
-  return abs;
+  if (!(rel.startsWith("..") || isAbsolute(rel))) return abs;
+  if (under(roots.workspace, abs) || under(roots.data, abs)) return abs;
+  throw new Error("файл должен лежать в папке фильма или в проекте чата");
+}
+
+function bytesOf(data: unknown): Buffer {
+  if (typeof data === "string") return Buffer.from(data, "base64");
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  if (Array.isArray(data) && data.every((item) => typeof item === "number")) return Buffer.from(data);
+  if (data && typeof data === "object") {
+    const rec = data as Record<string, unknown>;
+    const keys = Object.keys(rec);
+    if (keys.length && keys.every((key) => /^\d+$/.test(key))) {
+      const buf = Buffer.alloc(keys.length);
+      for (const key of keys) buf[Number(key)] = Number(rec[key]) & 0xff;
+      return buf;
+    }
+  }
+  return Buffer.alloc(0);
 }
 
 async function handleMain(channel: string, data: unknown, roots: Roots): Promise<unknown> {
@@ -364,7 +427,7 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
   }
   if (channel === "projects:fs-list") {
     const dir = inside(roots, String(body.dir ?? ""));
-    const folder = projectPath(dir, String(body.source ?? "."));
+    const folder = projectPath(dir, String(body.source ?? "."), roots);
     if (!readable(folder)) return [];
     try {
       return readdirSync(folder, { withFileTypes: true }).map((entry) => {
@@ -376,16 +439,39 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
     }
   }
   if (channel === "projects:fs-stat") {
-    const file = projectPath(inside(roots, String(body.dir ?? "")), String(body.source ?? ""));
+    const file = projectPath(inside(roots, String(body.dir ?? "")), String(body.source ?? ""), roots);
     if (!readable(file)) return null;
     const stat = statSync(file);
     return { size: stat.size, mtime: stat.mtimeMs };
   }
   if (channel === "projects:fs-remove") {
-    rmSync(projectPath(inside(roots, String(body.dir ?? "")), String(body.path ?? "")), { recursive: true, force: true });
+    rmSync(projectPath(inside(roots, String(body.dir ?? "")), String(body.path ?? ""), roots), { recursive: true, force: true });
     return null;
   }
-  if (channel === "projects:fs-real-path") return projectPath(inside(roots, String(body.dir ?? "")), String(body.source ?? ""));
+  if (channel === "projects:fs-real-path") return projectPath(inside(roots, String(body.dir ?? "")), String(body.source ?? ""), roots);
+  if (channel === "file:write-open") {
+    const path = projectPath(roots.workspace, String(body.path ?? ""), roots);
+    mkdirSync(dirname(path), { recursive: true });
+    const id = randomUUID();
+    openFiles.set(id, { path, fd: openSync(path, "w") });
+    return { id };
+  }
+  if (channel === "file:write-chunk") {
+    const open = openFiles.get(String(body.id ?? ""));
+    if (!open) throw new Error("файл уже закрыт");
+    const buf = bytesOf(body.data);
+    writeSync(open.fd, buf, 0, buf.length, Number(body.position ?? 0));
+    return null;
+  }
+  if (channel === "file:write-close" || channel === "file:write-abort") {
+    const id = String(body.id ?? "");
+    const open = openFiles.get(id);
+    if (!open) return null;
+    closeSync(open.fd);
+    openFiles.delete(id);
+    if (channel === "file:write-abort") rmSync(open.path, { force: true });
+    return null;
+  }
   if (channel === "projects:find-moved") return null;
   return null;
 }
@@ -409,7 +495,7 @@ const MEDIA_TYPES: Record<string, string> = {
 
 /** A file of the film, for the editor to play. `source` is project-relative. */
 export function readMedia(roots: Roots, dir: string, source: string): { bytes: Buffer; type: string } {
-  const file = projectPath(inside(roots, dir), source);
+  const file = projectPath(inside(roots, dir), source, roots);
   if (!readable(file) || statSync(file).isDirectory()) throw new Error("файл не найден");
   const ext = basename(file).toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
   return { bytes: readFileSync(file), type: MEDIA_TYPES[ext] ?? "application/octet-stream" };
@@ -417,7 +503,7 @@ export function readMedia(roots: Roots, dir: string, source: string): { bytes: B
 
 /** Writes bytes into the film. `source` is project-relative, for example `assets/clip.mp4`. */
 export function writeMedia(roots: Roots, dir: string, source: string, bytes: Uint8Array): void {
-  const file = projectPath(inside(roots, dir), source);
+  const file = projectPath(inside(roots, dir), source, roots);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, bytes);
 }

@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { acceptFromEditor, callTool, cloudCall, createFilm, listFilms, readMedia, takeInbox, writeMedia } from "./host.js";
+import { acceptFromEditor, callTool, cloudCall, createFilm, listFilms, noteChange, readMedia, takeInbox, writeMedia } from "./host.js";
 
 const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "logs", "screenshot", "window", "job", "generate"] as const;
 const LONG = new Set(["export", "transcribe", "listen", "grab", "generate"]);
@@ -162,7 +162,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (path like assets/clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. screenshot writes editor.png into the chat project. open with no folder reports the open film. window reports the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned.",
+      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export writes _out/film.mp4 in the chat project unless a path is given. open with no folder reports the open film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command.",
       sideEffects: "external",
       input: z.object({
         command: z.enum(COMMANDS),
@@ -175,9 +175,53 @@ export default definePlugin({
         const ms = LONG.has(input.command) ? 600_000 : 180_000;
         try {
           if (input.command === "open" && !("dir" in args)) return { content: await openFilm() };
-          return { content: storeShot(await callTool(input.command, args, ms), ctx.workspace) };
+          if (input.command === "export" && ctx.workspace) {
+            const given = typeof args.path === "string" ? args.path : "";
+            args.path = given && isAbsolute(given) ? given : join(ctx.workspace, given || join("_out", "film.mp4"));
+          }
+          return { content: storePictures(await callTool(input.command, args, ms), ctx.workspace, input.command) };
         } catch (error) {
           throw new ToolError("diffusion_run", error instanceof Error ? error.message : "команда не выполнилась");
+        }
+      },
+    });
+
+    ctx.tool({
+      name: "diffusion.source",
+      description: "Read or replace the open film's index.tsx, or copy one file from the chat project into the film library. The source is the edit. fs cannot see the film folder. write replaces the whole file and the open editor reloads it. import returns the library path to put in src. Read the diffusion-editor skill before the first edit.",
+      sideEffects: "write",
+      input: z.object({
+        action: z.enum(["read", "write", "import"]),
+        text: z.string().optional(),
+        path: z.string().optional(),
+      }),
+      async run(input, toolCtx) {
+        try {
+        const film = await openFilm();
+        const file = join(film.dir, "index.tsx");
+        if (input.action === "read") return { content: { path: "index.tsx", text: readFileSync(file, "utf8") } };
+        if (input.action === "import") {
+          const from = input.path ?? "";
+          if (!from || !toolCtx.workspace) throw new ToolError("diffusion_source", "нужен path файла в проекте чата");
+          const src = resolve(toolCtx.workspace, from);
+          const rel = relative(toolCtx.workspace, src);
+          if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new ToolError("diffusion_source", "файл должен лежать в проекте чата");
+          if (!existsSync(src) || statSync(src).isDirectory()) throw new ToolError("diffusion_source", "файл не найден");
+          const name = basename(src);
+          mkdirSync(join(film.dir, "assets"), { recursive: true });
+          cpSync(src, join(film.dir, "assets", name));
+          noteChange(film.dir, `assets/${name}`);
+          return { content: { libraryPath: name, file: `assets/${name}` } };
+        }
+        const text = input.text ?? "";
+        if (!text.includes("export default")) throw new ToolError("diffusion_source", "в файле должна быть export default function");
+        if (text.length > 200_000) throw new ToolError("diffusion_source", "файл длиннее 200000 символов");
+        writeFileSync(file, text.endsWith("\n") ? text : `${text}\n`, "utf8");
+        noteChange(film.dir, "index.tsx");
+        return { content: { path: "index.tsx", bytes: Buffer.byteLength(text) } };
+        } catch (error) {
+          if (error instanceof ToolError) throw error;
+          throw new ToolError("diffusion_source", error instanceof Error ? error.message : "фильм не открыт");
         }
       },
     });
@@ -375,16 +419,52 @@ async function openFilm(): Promise<{ id: string; name: string; dir: string }> {
   return { id, name, dir };
 }
 
-function storeShot(data: unknown, workspace: string | undefined): unknown {
-  if (!data || typeof data !== "object" || !("pngBase64" in data)) return data;
-  const row = data as { pngBase64?: unknown; width?: unknown; height?: unknown };
-  const png = typeof row.pngBase64 === "string" ? row.pngBase64 : "";
-  const width = typeof row.width === "number" ? row.width : 0;
-  const height = typeof row.height === "number" ? row.height : 0;
-  if (!png || !workspace) return { width, height };
-  const dir = join(workspace, "_out");
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, "editor.png");
-  writeFileSync(path, Buffer.from(png, "base64"));
-  return { path, width, height };
+function pngBytes(value: unknown): Buffer | null {
+  if (typeof value === "string" && value.length > 32) {
+    const buf = Buffer.from(value, "base64");
+    return buf[0] === 0x89 && buf[1] === 0x50 ? buf : null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  const keys = Object.keys(rec);
+  if (keys.length < 8 || !keys.every((key) => /^\d+$/.test(key))) return null;
+  const buf = Buffer.alloc(keys.length);
+  for (const key of keys) {
+    const n = rec[key];
+    if (typeof n !== "number") return null;
+    buf[Number(key)] = n & 0xff;
+  }
+  return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 ? buf : null;
+}
+
+/** Picture tools return PNG bytes. Write them into the chat project and hand back the path. */
+function storePictures(data: unknown, workspace: string | undefined, command: string): unknown {
+  if (!workspace) return data;
+  const dir = join(workspace, "_out", "diffusion");
+  let n = 0;
+  const save = (buf: Buffer): string => {
+    mkdirSync(dir, { recursive: true });
+    n += 1;
+    const file = join(dir, `${command}-${n}.png`);
+    writeFileSync(file, buf);
+    return file;
+  };
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== "object") return node;
+    const next: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === "png" || key === "pngBase64" || key === "image") {
+        const buf = pngBytes(value);
+        if (buf) {
+          next.file = save(buf);
+          next.bytes = buf.length;
+          continue;
+        }
+      }
+      next[key] = walk(value);
+    }
+    return next;
+  };
+  return walk(data);
 }

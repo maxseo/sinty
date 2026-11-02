@@ -2,7 +2,7 @@
 
 The [Diffusion Studio](https://github.com/diffusionstudio/editor) editor runs inside each harness project, on the Видео tab. That tab lists the films of the open project and opens the editor for one of them. Their own project dashboard is not used. The source is `vendor/diffusion-editor` (MPL-2.0), pinned in `COMMIT`. The Electron shell is not used.
 
-`diffusion.run` sends one command to the film open beside the chat. `context` lists the scenes (`id` like `index.tsx:2`) and the assets (`path` like `assets/clip.mov`). `check`, `capture` and `export` use the open scene when no id is given. `probe`, `grab`, `filmstrip`, `waveform`, `transcribe` and `listen` need an asset path from that list. `screenshot` writes `editor.png` into the chat project. `open` with no folder reports the film that is already open. `window` reports that the pane is visible. `logs` is empty. `diffusion.generate` asks first.
+`diffusion.run` sends one command to the film open beside the chat. `context` lists the scenes (`id` like `index.tsx:2`) and the assets (a library path like `clip.mov`). `check`, `capture` and `export` use the open scene when no id is given. Picture commands write PNGs under the chat project's `_out/diffusion` and return the path. `export` writes `_out/film.mp4` there unless a path is given. `diffusion.source` reads or replaces `index.tsx`, or copies a chat-project file into the film library. `window` reports that the pane is visible. `logs` is empty. `diffusion.generate` asks first. The skill `diffusion-editor` is the working loop.
 
 Sign-in, generation, transcription and listen are not the Diffusion Studio cloud. Put URLs in `$SINTY_HOME/data/diffusion/adapters.json`:
 
