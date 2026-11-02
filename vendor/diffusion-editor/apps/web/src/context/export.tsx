@@ -7,13 +7,24 @@ import { toast } from "somoto";
 import { canEncodeVideo } from "mediabunny";
 import { useWorld } from "@diffusionstudio/koota-solid";
 import { computeOutputSize, createImageEncoder } from "@diffusionstudio/encoder";
-import { Computed, Workarea, getActiveEntity, store } from "@diffusionstudio/runtime";
+import { Computed, Name, Workarea, getActiveEntity, store } from "@diffusionstudio/runtime";
+import { MAIN_CHANNELS } from "@desktop/main-channels";
 import { assert, isInputTarget } from "@/utils";
 import { useEngineContext } from "@/engine";
 import { createCapture } from "@/engine/capture";
 import { useProject } from "@/context/project";
+import { mainBridge } from "@/lib/ipc";
+import { renderFrames } from "@/dapi/handlers/composite";
 import { ExportProgress } from "@/components/sidebar-right/inspector/export-progress";
-import { renderScene, renderOverlay, cancelRender, type ExportConfig } from "@/context/render";
+import {
+  renderScene,
+  renderOverlay,
+  cancelRender,
+  setRenderProgress,
+  clearRenderProgress,
+  bindRenderCancel,
+  type ExportConfig,
+} from "@/context/render";
 import {
   MIME_TYPES,
   getDefaultExportTemplate,
@@ -33,6 +44,22 @@ type ExportContextValue = {
 
 const ExportContext = createContext<ExportContextValue>();
 
+async function writeProjectFile(path: string, bytes: Uint8Array): Promise<void> {
+  const opened = await mainBridge.call(MAIN_CHANNELS.FILE_WRITE_OPEN, { path });
+  const chunk = 256 * 1024;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    const slice = bytes.subarray(offset, offset + chunk);
+    let binary = "";
+    for (let i = 0; i < slice.length; i++) binary += String.fromCharCode(slice[i]!);
+    await mainBridge.call(MAIN_CHANNELS.FILE_WRITE_CHUNK, {
+      id: opened.id,
+      data: btoa(binary),
+      position: offset,
+    });
+  }
+  await mainBridge.call(MAIN_CHANNELS.FILE_WRITE_CLOSE, { id: opened.id });
+}
+
 export function ExportProvider(props: { children: JSX.Element }) {
   const engine = useEngineContext();
   const world = useWorld();
@@ -40,8 +67,48 @@ export function ExportProvider(props: { children: JSX.Element }) {
 
   const exporting = () => !!renderOverlay();
 
+  const exportSceneHere = async (scene: Entity) => {
+    const sceneName = scene.get(Name)?.value || "scene";
+    let cancelled = false;
+    engine.stop();
+    setRenderProgress(0);
+    bindRenderCancel(() => {
+      cancelled = true;
+    });
+    try {
+      const target = await mainBridge.call(MAIN_CHANNELS.EXPORT_TARGET, {
+        dir: project.dir(),
+        scene: sceneName,
+      });
+      const drawn = await renderFrames(world, scene, target.path, project.dir(), (done, total) => {
+        setRenderProgress(Math.round((done / total) * 100));
+        return !cancelled;
+      });
+      if (cancelled) return;
+      const made = await mainBridge.call(MAIN_CHANNELS.EXPORT_ASSEMBLE, {
+        path: target.path,
+        framesDir: drawn.framesDir,
+        fps: drawn.fps,
+        ...(drawn.wav ? { wav: drawn.wav } : {}),
+      });
+      toast("Ролик собран", { description: made.file });
+    } catch (error) {
+      if (cancelled || (error instanceof Error && error.message === "отменено")) return;
+      toast.error("Экспорт не собрался", {
+        description: error instanceof Error ? error.message : "ошибка",
+      });
+    } finally {
+      clearRenderProgress();
+      engine.start();
+    }
+  };
+
   const exportScene: ExportContextValue["exportScene"] = async (scene, config) => {
     if (!scene?.isAlive()) return;
+    if (window.desktop?.harness) {
+      await exportSceneHere(scene);
+      return;
+    }
 
     const format = config.format ?? "mp4";
     const mimeType = MIME_TYPES[format];
@@ -142,6 +209,33 @@ export function ExportProvider(props: { children: JSX.Element }) {
     const { height } = computeOutputSize(computed?.width || 1920, computed?.height || 1080, resolution);
 
     const name = project.name().replace(/\s+/g, "-").toLowerCase();
+
+    if (window.desktop?.harness) {
+      const progress = toast.loading("Сохраняю кадр…");
+      let capture: Awaited<ReturnType<typeof createCapture>> | undefined;
+      try {
+        const saved = await mainBridge.call(MAIN_CHANNELS.EXPORT_TARGET, {
+          dir: project.dir(),
+          scene: scene.get(Name)?.value || name,
+          ext: "png",
+        });
+        capture = await createCapture(world, scene, { dir: project.dir() });
+        const encoder = await createImageEncoder(capture.world, { frames: [frame], resolution: height });
+        const result = await encoder.render();
+        if (result.type === "canceled") return;
+        if (result.type === "error") throw result.error;
+        await writeProjectFile(saved.path, result.data[0]!.png);
+        toast("Кадр сохранён", { description: saved.path });
+      } catch (error) {
+        toast.error("Кадр не сохранился", {
+          description: error instanceof Error ? error.message : "ошибка",
+        });
+      } finally {
+        toast.dismiss(progress);
+        capture?.dispose();
+      }
+      return;
+    }
 
     let target: FileSystemFileHandle;
     try {

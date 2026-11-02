@@ -88,7 +88,13 @@ function jpeg(canvas: HTMLCanvasElement): Promise<Uint8Array> {
 }
 
 /** Renders the workarea of `scene` into `<dirname(file)>/frames/f-000001.jpg` and so on. */
-export async function renderFrames(source: World, scene: Entity, file: string, dir: string): Promise<{
+export async function renderFrames(
+  source: World,
+  scene: Entity,
+  file: string,
+  dir: string,
+  onFrame?: (done: number, total: number) => boolean | void,
+): Promise<{
 	path: string;
 	framesDir: string;
 	fps: number;
@@ -169,6 +175,7 @@ export async function renderFrames(source: World, scene: Entity, file: string, d
 
 			const name = String(frame + 1).padStart(6, "0");
 			await writeBytes(`${framesDir}/f-${name}.jpg`, await jpeg(canvas));
+			if (onFrame?.(frame + 1, total) === false) throw new Error("отменено");
 		}
 
 		let wav: string | undefined;

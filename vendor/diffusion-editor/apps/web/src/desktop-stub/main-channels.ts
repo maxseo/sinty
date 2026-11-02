@@ -95,6 +95,8 @@ export const MAIN_CHANNELS = {
   CLI_STATUS: "cli:status",
   CLI_INSTALL: "cli:install",
   CLI_UNINSTALL: "cli:uninstall",
+  EXPORT_TARGET: "export:target",
+  EXPORT_ASSEMBLE: "export:assemble",
 
   // Main→Renderer events
   AUTH_CALLBACK: "auth:callback",
@@ -231,7 +233,7 @@ export type MainRequestMap = {
     response: { id: string };
   };
   [MAIN_CHANNELS.FILE_WRITE_CHUNK]: {
-    request: { id: string; data: Uint8Array; position: number };
+    request: { id: string; data: Uint8Array | string; position: number };
     response: void;
   };
   [MAIN_CHANNELS.FILE_WRITE_CLOSE]: {
@@ -241,6 +243,14 @@ export type MainRequestMap = {
   [MAIN_CHANNELS.FILE_WRITE_ABORT]: {
     request: { id: string };
     response: void;
+  };
+  [MAIN_CHANNELS.EXPORT_TARGET]: {
+    request: { dir: string; scene: string; ext?: string };
+    response: { path: string };
+  };
+  [MAIN_CHANNELS.EXPORT_ASSEMBLE]: {
+    request: { path: string; framesDir: string; fps: number; wav?: string };
+    response: { file: string; bytes: number };
   };
   // Reveals a file or folder in the OS file manager (Finder on macOS).
   [MAIN_CHANNELS.APP_SHOW_IN_FOLDER]: {

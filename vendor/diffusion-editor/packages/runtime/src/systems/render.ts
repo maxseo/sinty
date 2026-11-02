@@ -1443,6 +1443,11 @@ export function renderSystem(world: World): void {
 	const cw = canvas.width;
 	const ch = canvas.height;
 
+	// The list is what the next frame's input reads. It is rebuilt every
+	// frame; without this it keeps every scene from every frame before.
+	const regions = world.get(HitRegions);
+	if (regions) regions.list.length = 0;
+
 	// Clear + background (identity transform for full-canvas clear)
 	ctx.setTransform(1, 0, 0, 1, 0, 0);
 	ctx.clearRect(0, 0, cw, ch);
