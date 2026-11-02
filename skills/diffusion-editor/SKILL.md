@@ -16,7 +16,7 @@ The film open in the chat's **Видео** pane is the document. The source file
 
 ## The loop
 
-1. Change the cut with `diffusion.source` `write`: the whole `index.tsx`, lowercase tags, one `export default`. The open editor reloads.
+1. Change the cut with `diffusion.source` `write`: the whole `index.tsx`, lowercase tags, one `export default`. Every open editor reloads the file on its own. Do not ask the person to refresh the page. A `check` in the same second can still describe the previous cut; look again before saying the file did not apply.
 2. `diffusion.run` `context` again. Ids follow the order of tags and change when the file changes. Use the new id.
 3. `diffusion.run` `check` with no id. An empty `issues` list means the scene mounted.
 4. Look at a frame: `diffusion.run` `screenshot`, or `capture` with the scene id. The reply has a `file` under the chat project `_out/diffusion`. `vision.look` that path. Do not `fs.read` a PNG.

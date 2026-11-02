@@ -13,16 +13,23 @@ const REPLY = "dapi:reply";
 
 export type Roots = { workspace: string; data: string };
 
-type Outgoing = { channel: string; payload: unknown };
+type Outgoing = { channel: string; payload: unknown; id?: number };
 type Reply = { id: string; ok: boolean; data?: unknown; error?: { message?: string } };
 
 const outbox: Outgoing[] = [];
 const waiting = new Map<string, (reply: Reply) => void>();
 const openFiles = new Map<string, { path: string; fd: number }>();
+const changes: { id: number; at: number; dir: string; path: string }[] = [];
+let changeSeq = 0;
 
-/** Tells the open editor a film file changed, so it reloads the source. */
+/** Tells every open editor that a film file changed, so each one recompiles.
+ * The editor listens on `main:event`. The note stays until each editor has
+ * pulled past it, so a second pane is not left on the old cut. */
 export function noteChange(dir: string, path: string): void {
-  outbox.push({ channel: "projects:changed", payload: { dir, path } });
+  const rel = path.replace(/\\/g, "/").replace(/^\.?\//, "");
+  changeSeq += 1;
+  changes.push({ id: changeSeq, at: Date.now(), dir, path: rel });
+  if (changes.length > 30) changes.shift();
 }
 
 const STARTER = `export default function Project() {
@@ -33,8 +40,17 @@ const STARTER = `export default function Project() {
 }
 `;
 
-export function takeInbox(): Outgoing[] {
-  return outbox.splice(0, outbox.length);
+export function takeInbox(since = 0): Outgoing[] {
+  const now = Date.now();
+  const calls = outbox.splice(0, outbox.length);
+  const events = changes
+    .filter((change) => change.id > since && (since > 0 || now - change.at < 1500))
+    .map((change) => ({
+      id: change.id,
+      channel: "main:event",
+      payload: { channel: "projects:changed", data: { dir: change.dir, path: change.path } },
+    }));
+  return [...events, ...calls];
 }
 
 export function callTool(tool: string, args: unknown, ms: number): Promise<unknown> {

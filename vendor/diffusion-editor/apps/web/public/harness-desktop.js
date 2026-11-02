@@ -1,9 +1,9 @@
 /* Harness stand-in for the Electron preload. The editor talks to the Sinty
  * plugin over /p/diffusion/ipc instead of ipcRenderer. MPL-2.0. */
 (function () {
-  var inbox = [];
   var handlers = {};
   var pulling = false;
+  var seen = 0;
 
   function emit(channel, payload) {
     var list = handlers[channel] || [];
@@ -15,12 +15,15 @@
   function pull() {
     if (pulling) return;
     pulling = true;
-    fetch("/p/diffusion/ipc/inbox", { method: "GET" })
+    fetch("/p/diffusion/ipc/inbox?since=" + seen, { method: "GET" })
       .then(function (res) { return res.ok ? res.json() : []; })
       .then(function (batch) {
         pulling = false;
         var items = Array.isArray(batch) ? batch : [];
-        for (var i = 0; i < items.length; i++) emit(items[i].channel, items[i].payload);
+        for (var i = 0; i < items.length; i++) {
+          if (typeof items[i].id === "number" && items[i].id > seen) seen = items[i].id;
+          emit(items[i].channel, items[i].payload);
+        }
         setTimeout(pull, items.length ? 30 : 250);
       })
       .catch(function () {

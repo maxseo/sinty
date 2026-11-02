@@ -102,7 +102,10 @@ export default definePlugin({
       path: "/ipc/inbox",
       public: true,
       surface: "status",
-      handler: () => json(takeInbox()),
+      handler: (req) => {
+        const since = Number(new URL(req.url).searchParams.get("since") ?? "0");
+        return json(takeInbox(Number.isFinite(since) ? since : 0));
+      },
     });
     ctx.http({
       method: "*",
