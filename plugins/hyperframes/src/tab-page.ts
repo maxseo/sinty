@@ -25,7 +25,8 @@ button:disabled{opacity:.6;cursor:default}
 .meta{color:var(--muted);font-size:12px;margin:2px 12px 0}
 .actions{display:flex;gap:8px;padding:10px 12px 12px}
 .empty{color:var(--muted);padding:8px 16px 24px}
-.full{position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;flex-direction:column;z-index:2}
+.full{display:none}
+.full.open{position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;flex-direction:column;z-index:2}
 .full header{display:flex;gap:8px;align-items:center;padding:10px 12px;color:#fff}
 .full header strong{flex:1}
 .full video,.full iframe{flex:1;width:100%;min-height:0;border:0;background:#000}
@@ -42,7 +43,7 @@ button:disabled{opacity:.6;cursor:default}
 <p id="err" class="err" hidden></p>
 <div id="grid" class="grid"></div>
 <p id="empty" class="empty" hidden>Пока нет сохранённых гиперфреймов.</p>
-<div id="full" class="full" hidden>
+<div id="full" class="full">
   <header>
     <strong id="full-title"></strong>
     <button type="button" id="full-html" hidden>Композиция</button>
@@ -164,9 +165,9 @@ async function openItem(item, view) {
   if (!m.ok || !m.data) { setErr((m.error && m.error.message) || "Не открылось."); return; }
   opened = item;
   document.getElementById("full-title").textContent = item.name || item.slug;
-  document.getElementById("full-html").hidden = !item.hasVideo;
-  document.getElementById("full-video").hidden = !item.hasVideo;
-  document.getElementById("full").hidden = false;
+  document.getElementById("full-html").style.display = item.hasVideo ? "inline-block" : "none";
+  document.getElementById("full-video").style.display = item.hasVideo ? "inline-block" : "none";
+  document.getElementById("full").classList.add("open");
   showPiece(view, m.data);
 }
 async function removeItem(item) {
@@ -188,7 +189,7 @@ updateBtn.onclick = async () => {
   await load();
 };
 seenBtn.onclick = async () => { setErr(""); await ask("post", "/seen", {}); await load(); };
-document.getElementById("full-close").onclick = () => { document.getElementById("full").hidden = true; document.getElementById("full-body").replaceChildren(); };
+document.getElementById("full-close").onclick = () => { document.getElementById("full").classList.remove("open"); document.getElementById("full-body").replaceChildren(); };
 document.getElementById("full-html").onclick = () => { if (opened) openItem(opened, "html"); };
 document.getElementById("full-video").onclick = () => { if (opened) openItem(opened, "video"); };
 load();

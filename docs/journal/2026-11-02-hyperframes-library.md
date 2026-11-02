@@ -22,6 +22,8 @@ The tab said a newer npm release existed and only offered «Отметить п�
 
 The preview is one JPEG made with ffmpeg from the mp4, or from a picture in the folder, and kept as `thumb.jpg` until the source is newer. «Открыть» plays the mp4 when there is one, and can also show the HTML composition. Pictures referenced by relative paths are inlined so the preview does not need the folder. Delete removes only that slug directory inside `hyperframes/`.
 
+The preview layer is hidden with `display: none` until it has the class `open`. A `hidden` attribute lost to `display: flex`, so the dark layer and «Закрыть» stayed on screen from the moment the tab opened.
+
 ## Rejected alternatives
 
 Leaving the notice as a mark-as-seen control. The person asked for a way to install the update they were being shown.
