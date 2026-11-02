@@ -165,7 +165,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export draws every timeline layer and ffmpeg writes _out/video/<film name>/film.mp4. open with no folder reports the open film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command. A new film is diffusion.film.",
+      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export draws every timeline layer, mixes the timeline audio, and ffmpeg writes _out/video/<film name>/film.mp4. open with no folder reports the open film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command. A new film is diffusion.film.",
       sideEffects: "external",
       timeoutMs: 600_000,
       input: z.object({
@@ -445,10 +445,11 @@ async function openFilm(data: string, workspace?: string): Promise<{ id: string;
 }
 
 async function finishExport(content: unknown): Promise<unknown> {
-  const row = content as { path?: string; framesDir?: string; fps?: number; width?: number; height?: number; duration?: number; frames?: number };
+  const row = content as { path?: string; framesDir?: string; fps?: number; width?: number; height?: number; duration?: number; frames?: number; wav?: string; audioError?: string };
   if (!row?.framesDir || !row.path || !row.fps) return content;
-  const bytes = await assembleFilm(row.framesDir, row.fps, row.path);
+  const bytes = await assembleFilm(row.framesDir, row.fps, row.path, row.wav);
   rmSync(row.framesDir, { recursive: true, force: true });
+  if (row.wav) rmSync(row.wav, { force: true });
   return {
     file: row.path,
     width: row.width,
@@ -457,7 +458,7 @@ async function finishExport(content: unknown): Promise<unknown> {
     frames: row.frames,
     bytes,
     picture: "все слои таймлайна",
-    audio: "в файл не входит",
+    audio: row.wav ? "сведено с таймлайна" : (row.audioError ?? "в монтаже нет звука"),
   };
 }
 

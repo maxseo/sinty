@@ -20,7 +20,7 @@ The film open in the chat's **Видео** pane is the document. The source file
 2. `diffusion.run` `context` again. Ids follow the order of tags and change when the file changes. Use the new id.
 3. `diffusion.run` `check` with no id. An empty `issues` list means the scene mounted.
 4. Look at a frame: `diffusion.run` `screenshot`, or `capture` with the scene id. The reply has a `file` under the chat project `_out/diffusion`. `vision.look` that path. Do not `fs.read` a PNG.
-5. Export only when the person asked for a file. `diffusion.run` `export` draws every layer on the timeline and ffmpeg writes `_out/video/<film name>/film.mp4`. The picture is the whole cut. The soundtrack is not in that file.
+5. Export only when the person asked for a file. `diffusion.run` `export` draws every layer on the timeline, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`.
 
 ## Files
 

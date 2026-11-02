@@ -595,12 +595,17 @@ function ffmpegBin(): string {
   return "ffmpeg";
 }
 
-/** Encodes a JPEG sequence into one mp4. The frames are the composited picture. */
-export function assembleFilm(framesDir: string, fps: number, outFile: string): Promise<number> {
+/** Encodes a JPEG sequence, and the timeline mix when a wav is present, into one mp4. */
+export function assembleFilm(framesDir: string, fps: number, outFile: string, wav?: string): Promise<number> {
   mkdirSync(dirname(outFile), { recursive: true });
   const pattern = join(framesDir, "f-%06d.jpg");
+  const args = ["-y", "-framerate", String(fps), "-start_number", "1", "-i", pattern];
+  if (wav && existsSync(wav)) args.push("-i", wav);
+  args.push("-c:v", "libx264", "-pix_fmt", "yuv420p");
+  if (wav && existsSync(wav)) args.push("-c:a", "aac", "-b:a", "192k", "-shortest");
+  args.push("-movflags", "+faststart", outFile);
   return new Promise((resolve, reject) => {
-    const child = spawn(ffmpegBin(), ["-y", "-framerate", String(fps), "-start_number", "1", "-i", pattern, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", outFile], { windowsHide: true });
+    const child = spawn(ffmpegBin(), args, { windowsHide: true });
     let err = "";
     child.stderr?.on("data", (chunk: Buffer) => {
       err += String(chunk);

@@ -12,7 +12,7 @@ The film must already be open. Every command is `diffusion.run` except `diffusio
 | `check` | scene id, or omit it | node counts, duration, `issues`. A clip is often `shape`: the editor stores a dropped clip as a rect with a paint. That is not a failure. |
 | `capture` | scene id, then times in seconds | one PNG `file` per time, under the chat project `_out/diffusion` |
 | `screenshot` | none | one PNG `file` of the open scene at the playhead |
-| `export` | optional scene id, optional file name | draws every timeline layer, then ffmpeg writes `_out/video/<film name>/film.mp4`. A relative name lands in that folder. The soundtrack is not in the file. |
+| `export` | optional scene id, optional file name | draws every timeline layer, mixes the timeline audio, then ffmpeg writes `_out/video/<film name>/film.mp4`. A relative name lands in that folder. |
 | `fonts` | none | family names a `<text fontFamily>` may use |
 | `open` | none | the open film's id, name, and folder |
 
