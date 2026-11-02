@@ -30,7 +30,9 @@ Hard-refresh the harness (Ctrl+F5). The film-list page is served with `no-store`
 
 ## Known limitations
 
-Clip colors on the timeline stay the same in both themes. Scene headers drawn on the canvas stay dark chips.
+Clip colors on the timeline stay the same in both themes. Scene headers drawn on the canvas stay dark chips. The light gray stage is the preview only: the file still stores its own stage color, and an export draws the scene, not that gray.
+
+A click that selects or moves something writes the film file. The harness poll compared the file time with `Date.now()`. The file time keeps a fraction of a millisecond and `Date.now()` does not, so the editor's own write looked newer and the pane recompiled. That remount blanked the asset thumbnails, the timeline clips and the source swatch for a moment. The write is now stamped with the file's own time, so it is not treated as someone else's edit.
 
 ## How to test
 

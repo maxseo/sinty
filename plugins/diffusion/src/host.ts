@@ -543,8 +543,13 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
   }
   if (channel === "projects:compile") return compile(inside(roots, String(body.dir ?? "")));
   if (channel === "projects:write") {
-    const result = saveEdits(inside(roots, String(body.dir ?? "")), body.edits);
-    canvasWrite = Date.now();
+    const dir = inside(roots, String(body.dir ?? ""));
+    // Claim the write before it lands. A stat in the same millisecond would
+    // otherwise look newer: file time keeps the fraction, Date.now() does not.
+    canvasWrite = Date.now() + 50;
+    const result = saveEdits(dir, body.edits);
+    const entry = ["index.tsx", "index.ts", "index.jsx", "index.js"].find((name) => existsSync(join(dir, name)));
+    if (entry) canvasWrite = Math.max(canvasWrite, statSync(join(dir, entry)).mtimeMs);
     return result;
   }
   if (channel === "projects:watch" || channel === "projects:unwatch") return null;
