@@ -49,6 +49,20 @@ export function cancelRender() {
   cancelActive?.();
 }
 
+/** Progress for an export that does not go through {@link renderScene}. */
+export function setRenderProgress(progress: number) {
+  setOverlay({ audioOnly: false, progress });
+}
+
+export function clearRenderProgress() {
+  setOverlay(null);
+  cancelActive = undefined;
+}
+
+export function bindRenderCancel(cancel: () => void) {
+  cancelActive = cancel;
+}
+
 export type RenderSceneOptions = {
   /** Scene entity to encode. */
   scene: Entity;

@@ -617,6 +617,33 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
     return null;
   }
   if (channel === "projects:find-moved") return null;
+  if (channel === "export:target") {
+    const filmDir = inside(roots, String(body.dir ?? ""));
+    const info = describe(filmDir, false);
+    const root = projectFolder(roots.data, basename(dirname(filmDir)));
+    if (!info || !root) throw new Error("у этого фильма нет папки проекта чата");
+    const ext = body.ext === "png" ? "png" : "mp4";
+    const scene = safeSegment(String(body.scene ?? "scene")) || "scene";
+    return { path: join(root, "_out", "video", safeSegment(info.displayName), `${scene}.${ext}`) };
+  }
+  if (channel === "export:assemble") {
+    const framesDir = inside(roots, String(body.framesDir ?? ""));
+    const outFile = inside(roots, String(body.path ?? ""));
+    const fps = Number(body.fps);
+    if (!Number.isFinite(fps) || fps <= 0) throw new Error("не задана частота кадров");
+    const wav = typeof body.wav === "string" && body.wav ? inside(roots, body.wav) : undefined;
+    const bytes = await assembleFilm(framesDir, fps, outFile, wav);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        rmSync(framesDir, { recursive: true, force: true });
+        if (wav) rmSync(wav, { force: true });
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
+    return { file: outFile, bytes };
+  }
   return null;
 }
 
@@ -710,8 +737,19 @@ export function mirrorAssets(data: string, filmDir: string): string | null {
 
 function ffmpegBin(): string {
   const local = process.env.LOCALAPPDATA;
-  const bundled = local ? join(local, "Sinty", "tools", "ffmpeg", "ffmpeg.exe") : "";
-  if (bundled && existsSync(bundled)) return bundled;
+  const names = ["ffmpeg.exe"];
+  const dirs = local
+    ? [join(local, "Sinty", "tools", "ffmpeg"), join(local, "Sinty", "tools")]
+    : [];
+  for (const dir of dirs) {
+    const direct = join(dir, "ffmpeg.exe");
+    if (existsSync(direct)) return direct;
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      const nested = join(dir, name, "bin", "ffmpeg.exe");
+      if (names.includes("ffmpeg.exe") && existsSync(nested)) return nested;
+    }
+  }
   return "ffmpeg";
 }
 
