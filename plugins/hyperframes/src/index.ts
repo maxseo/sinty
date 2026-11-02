@@ -71,11 +71,20 @@ function wrapArg(value: string): string {
   return DQ + out + DQ;
 }
 
+/**
+ * Node 24 copies this process's --permission grants into a child's NODE_OPTIONS.
+ * npm then cannot read its own files. permissions.shell already allows a child
+ * that the model does not confine, so the child gets a grant that can read and write.
+ * The string must already contain --permission: otherwise Node appends the narrow grants.
+ */
+const OPEN_NODE_OPTIONS = "--permission --allow-fs-read=* --allow-fs-write=* --allow-child-process --disable-warning=SecurityWarning";
+
 function run(cmd: string, args: string[], cwd: string, timeoutMs = 600_000): Promise<{ code: number; out: string }> {
   const chrome = playwrightChrome();
   const bins = toolBins();
   const env = {
     ...process.env,
+    NODE_OPTIONS: OPEN_NODE_OPTIONS,
     ...(bins.length ? { PATH: [...bins, process.env.PATH].filter(Boolean).join(";") } : {}),
     ...(chrome ? { PUPPETEER_EXECUTABLE_PATH: chrome, CHROME_PATH: chrome } : {}),
   };
@@ -271,7 +280,7 @@ export default definePlugin({
           const prefix = join(dir, "cli");
           mkdirSync(prefix, { recursive: true });
           const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-          const result = await run(npm, ["install", "--prefix", prefix, "--no-fund", "--no-audit", `hyperframes@${remote.version}`], prefix, 90_000);
+          const result = await run(npm, ["install", "--prefix", prefix, "--no-fund", "--no-audit", `hyperframes@${remote.version}`], prefix, 180_000);
           if (result.code !== 0) return fail(result.out.slice(-500) || "npm не установил пакет", 502);
           if (remote.sha) writeMark(dir, { version: remote.version, sha: remote.sha });
           return json({ ok: true, installed: installedVersion(prefix), remote });

@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - The Hyperframes preview layer stays hidden until a composition is opened, and «Закрыть» removes it.
+- «Установить» on the Hyperframes tab can read npm's own files. Node was passing the plugin's narrow file grants to that command, so the install stopped with ERR_ACCESS_DENIED.
 - The Hyperframes tab can install the npm update it reports. It also lists saved compositions with a preview, and can open or delete one.
 - The chat column beside the editor no longer has a horizontal scrollbar. Long lines wrap inside the column.
 - The film list and the editor follow the harness theme button. Dark keeps the current editor palette. Light uses the editor's light surfaces, and the stage around the scenes is light gray. A click on the canvas no longer makes the editor reload the film.

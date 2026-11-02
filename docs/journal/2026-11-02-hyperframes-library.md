@@ -24,6 +24,8 @@ The preview is one JPEG made with ffmpeg from the mp4, or from a picture in the 
 
 The preview layer is hidden with `display: none` until it has the class `open`. A `hidden` attribute lost to `display: flex`, so the dark layer and «Закрыть» stayed on screen from the moment the tab opened.
 
+Node 24 copies the plugin's `--permission` grants into a child's `NODE_OPTIONS`. `npm install` then cannot read its own files and the tab shows `ERR_ACCESS_DENIED`. The install command sets `NODE_OPTIONS` to a grant that can read and write, and that string already contains `--permission`, so Node does not append the narrow grants. The manifest already has `permissions.shell`.
+
 ## Rejected alternatives
 
 Leaving the notice as a mark-as-seen control. The person asked for a way to install the update they were being shown.
