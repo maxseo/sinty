@@ -2,10 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { Computed, Fonts, FrameRate, getActiveEntity } from "@diffusionstudio/runtime";
+import { assetName } from "@diffusionstudio/assets";
+import { Computed, Fonts, FrameRate, Name, Scene, Source, getActiveEntity, getLibrary } from "@diffusionstudio/runtime";
 import { saveFolder } from "@/projects";
 
 import type { ToolHandler } from "../handler";
+import type { ToolResult } from "@diffusionstudio/dapi";
 
 /**
  * What the project's source cannot say. The JSX is the composition — its
@@ -26,6 +28,18 @@ export const context: ToolHandler<"context"> = async (_, ctx) => {
   const frameRate = world.get(FrameRate)?.value || 30;
   const active = getActiveEntity(world);
 
+  const scenes = world.query(Scene).map((entity) => ({
+    id: entity.get(Source)?.value ?? "",
+    name: entity.get(Name)?.value ?? "",
+    active: entity === active,
+  })).filter((scene) => scene.id);
+  const assets = getLibrary(world).list().map((asset) => ({
+    id: asset.id,
+    name: assetName(asset),
+    path: asset.path,
+    type: asset.type,
+  }));
+
   return {
     rootDir,
     projectDir: project.dir(),
@@ -35,5 +49,7 @@ export const context: ToolHandler<"context"> = async (_, ctx) => {
     // What text can be drawn with right now: registered in the world, not
     // merely named in the source. The editor default is always among them.
     fontFamilies: [...new Set(["Inter", ...(world.get(Fonts)?.list ?? []).map((f) => f.family)])],
-  };
+    scenes,
+    assets,
+  } as ToolResult<"context">;
 };

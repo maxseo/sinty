@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Editor commands from the chat use the open scene and the film's files. `context` lists scenes and assets. `check`, `capture` and `export` no longer look up a node named undefined. A media command without a path, and `job` without an id, say what they need. `screenshot` renders the open scene. `window` and `logs` no longer report a missing handler.
 - The film opens beside the chat from «Видео» in the chat header, and a cut made on the timeline is written into the film file. Coming back shows the same clips. The editor menu drops the dashboard, credits and account entries, and its own Chat tab.
 - The preview shows the picture or video on the timeline, and dragging one layer no longer moves the others. A query that asks for a shape or a group was matching neither.
 - Dragging a file from Assets onto the timeline inserts the clip. The film compiler stamps each composition tag, and a canvas edit is kept on the open timeline instead of being thrown away.

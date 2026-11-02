@@ -37,7 +37,9 @@
     platform: "win32",
     harness: true,
     getPathForFile: function () { return ""; },
+    emit: emit,
     send: function (channel, payload) {
+      if (channel === "dapi:reply") emit(channel, payload);
       fetch("/p/diffusion/ipc/out", {
         method: "POST",
         headers: { "content-type": "application/json" },

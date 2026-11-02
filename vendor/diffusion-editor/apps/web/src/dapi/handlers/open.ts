@@ -11,6 +11,11 @@ import type { ToolHandler } from "../handler";
 // against (the CLI resolves one before calling), so it is refused here
 // rather than surfacing as an ENOENT from mkdir.
 export const open: ToolHandler<"open"> = ({ dir }, ctx) => {
+  if (!dir) {
+    const session = ctx.session();
+    if (!session) throw new DapiError("no-project", "Откройте фильм кнопкой «Видео» в шапке чата.");
+    return Promise.resolve({ id: "", name: "", dir: session.project.dir() });
+  }
   if (!isAbsoluteSource(dir)) {
     throw new DapiError("invalid-input", `The project folder must be an absolute path (got "${dir}").`);
   }
