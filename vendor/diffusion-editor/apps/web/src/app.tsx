@@ -4,7 +4,7 @@
 
 import { HashRouter, Route, useLocation } from '@solidjs/router';
 import { ColorModeProvider } from '@kobalte/core';
-import { Show, createEffect, createMemo, type JSX } from 'solid-js';
+import { Show, createEffect, createMemo, onCleanup, onMount, type JSX } from 'solid-js';
 import { Toaster } from "@/components/ui/sonner";
 
 import { AuthProvider, useAuth } from '@/context/auth';
@@ -46,6 +46,39 @@ function BootSplash() {
   createEffect(() => {
     if (auth.isLoading()) return;
     document.getElementById('boot-splash')?.remove();
+  });
+
+  return null;
+}
+
+/** The harness theme button writes `sinty.theme`. This frame follows it; the dark palette stays the one already on screen. */
+function HarnessTheme() {
+  const { setColorMode } = useColorMode();
+
+  onMount(() => {
+    if (!window.desktop?.harness) return;
+    const apply = () => {
+      const stored = localStorage.getItem("sinty.theme");
+      const mode = stored === "light" || stored === "dark"
+        ? stored
+        : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      setColorMode(mode);
+    };
+    apply();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "sinty.theme" || event.key === null) apply();
+    };
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const onMedia = () => {
+      const stored = localStorage.getItem("sinty.theme");
+      if (stored !== "light" && stored !== "dark") apply();
+    };
+    window.addEventListener("storage", onStorage);
+    media.addEventListener("change", onMedia);
+    onCleanup(() => {
+      window.removeEventListener("storage", onStorage);
+      media.removeEventListener("change", onMedia);
+    });
   });
 
   return null;
@@ -120,6 +153,7 @@ function App() {
           <Toaster />
           <EnvironmentOverlays />
           <PersistRoute />
+          <HarnessTheme />
           <TitleBarColorMode />
           <ReportRendering />
         </ColorModeProvider>

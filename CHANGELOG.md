@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- The film list and the editor follow the harness theme button. Dark keeps the current editor palette. Light uses the editor's light surfaces.
 - File → Export scene and Export specific scene write the chosen scene to `_out/video/<film>/<scene>.mp4`. The canvas hit list is cleared each frame, so many scenes on the stage no longer pile up.
 - The ffmpeg export mixes the timeline's audio into the mp4. The picture and the sound are one file.
 - A background wait says whether it is an approval, a question, the budget, or the supervisor, in the sidebar and in the chat. A message sent while a turn is still running stays visible as waiting. A tool that is still running is not treated as a stalled turn, and `diffusion.run` can run for ten minutes.

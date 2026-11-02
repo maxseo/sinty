@@ -310,22 +310,46 @@ function filmsPage(): Response {
 <meta charset="utf-8">
 <title>Видео</title>
 <style>
-  body { margin: 0; font: 15px/1.4 system-ui, sans-serif; color: #18181b; background: #fff; }
+  :root, [data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f4f5; --text: #050505; --muted: #71717a; --line: rgba(0, 0, 0, 0.1);
+    --field: #ffffff; --hover: #fafafa; --btn: #74ff2a; --btn-text: #000000;
+  }
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #050505; --text: #ffffff; --muted: #a1a1aa; --line: rgba(255, 255, 255, 0.1);
+    --field: #141414; --hover: #1c1c1c; --btn: #74ff2a; --btn-text: #000000;
+  }
+  body { margin: 0; font: 15px/1.4 system-ui, sans-serif; color: var(--text); background: var(--bg); }
   main { max-width: 640px; margin: 0 auto; padding: 28px 20px 48px; }
   h1 { font-size: 20px; font-weight: 650; margin: 0 0 16px; }
   form { display: flex; gap: 8px; margin-bottom: 18px; }
-  input { flex: 1; height: 36px; border: 1px solid #e4e4e7; border-radius: 8px; padding: 0 10px; font: inherit; }
-  button { height: 36px; border: 0; border-radius: 8px; padding: 0 14px; background: #18181b; color: #fff; font: inherit; cursor: pointer; }
+  input { flex: 1; height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font: inherit; background: var(--field); color: var(--text); }
+  button { height: 36px; border: 0; border-radius: 8px; padding: 0 14px; background: var(--btn); color: var(--btn-text); font: inherit; cursor: pointer; }
   ul { list-style: none; margin: 0; padding: 0; }
-  li { border-top: 1px solid #f4f4f5; }
+  li { border-top: 1px solid var(--line); }
   a { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px; color: inherit; text-decoration: none; }
-  a:hover { background: #fafafa; }
+  a:hover { background: var(--hover); }
   .name { display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #74ff2a; animation: pulse 1.2s infinite; }
   @keyframes pulse { 50% { opacity: 0.3; } }
-  .when { color: #71717a; font-size: 13px; }
-  .empty, .err { color: #71717a; }
+  .when { color: var(--muted); font-size: 13px; }
+  .empty, .err { color: var(--muted); }
 </style>
+<script>
+(function () {
+  function mode() {
+    try {
+      var stored = localStorage.getItem("sinty.theme");
+      if (stored === "light" || stored === "dark") return stored;
+    } catch (e) {}
+    return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  function apply() { document.documentElement.dataset.theme = mode(); }
+  apply();
+  addEventListener("storage", function (e) { if (!e.key || e.key === "sinty.theme") apply(); });
+})();
+</script>
 <main>
   <h1>Фильмы</h1>
   <p class="err" id="note" hidden></p>
