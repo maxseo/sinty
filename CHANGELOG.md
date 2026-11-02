@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- While a film is open, the editor recompiles it when the agent writes the file. A save made in the canvas itself does not reload the picture.
 - A cut the agent writes into the open film shows up in the editor without a page reload. Every open copy is told to recompile.
 - Film pictures and the export land in the chat project as files, and `diffusion.source` reads or replaces the open film. The skill `diffusion-editor` is the cut loop. A compiler folder without its packages is skipped, so the canvas still mounts.
 - Editor commands from the chat use the open scene and the film's files. `context` lists scenes and assets. `check`, `capture` and `export` no longer look up a node named undefined. A media command without a path, and `job` without an id, say what they need. `screenshot` renders the open scene. `window` and `logs` no longer report a missing handler.

@@ -21,6 +21,8 @@ const waiting = new Map<string, (reply: Reply) => void>();
 const openFiles = new Map<string, { path: string; fd: number }>();
 const changes: { id: number; at: number; dir: string; path: string }[] = [];
 let changeSeq = 0;
+/** When the canvas itself last wrote the film. A newer file is the agent's. */
+let canvasWrite = 0;
 
 /** Tells every open editor that a film file changed, so each one recompiles.
  * The editor listens on `main:event`. The note stays until each editor has
@@ -418,7 +420,11 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
     return null;
   }
   if (channel === "projects:compile") return compile(inside(roots, String(body.dir ?? "")));
-  if (channel === "projects:write") return saveEdits(inside(roots, String(body.dir ?? "")), body.edits);
+  if (channel === "projects:write") {
+    const result = saveEdits(inside(roots, String(body.dir ?? "")), body.edits);
+    canvasWrite = Date.now();
+    return result;
+  }
   if (channel === "projects:watch" || channel === "projects:unwatch") return null;
   if (channel === "projects:manifest-read") {
     const file = join(inside(roots, String(body.dir ?? "")), "assets.yml");
@@ -458,7 +464,7 @@ async function handleMain(channel: string, data: unknown, roots: Roots): Promise
     const file = projectPath(inside(roots, String(body.dir ?? "")), String(body.source ?? ""), roots);
     if (!readable(file)) return null;
     const stat = statSync(file);
-    return { size: stat.size, mtime: stat.mtimeMs };
+    return { size: stat.size, mtime: stat.mtimeMs, external: stat.mtimeMs > canvasWrite };
   }
   if (channel === "projects:fs-remove") {
     rmSync(projectPath(inside(roots, String(body.dir ?? "")), String(body.path ?? ""), roots), { recursive: true, force: true });
