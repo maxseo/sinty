@@ -11,7 +11,7 @@ import { newId } from "./ids.js";
 import type { PluginHost, PluginProcess, RegisteredTool } from "./host/host.js";
 import { appendOnly, buildSnapshot, newTrace, redactPatterns, traceBase, traceContributor, type ContextTrace, type PreviousPrompt } from "./inspect.js";
 import { ProviderError } from "./host/host.js";
-import type { ToolInfo, WireError } from "./host/protocol.js";
+import type { CallCtx, ToolInfo, WireError } from "./host/protocol.js";
 import type { AppendInput, Journal, SessionRow } from "./journal.js";
 import { PatchError, type PatchManager } from "./patches.js";
 import { MemoryError, parseSummaryPayload, trimOldToolResults } from "./memory.js";
@@ -1112,7 +1112,7 @@ export class Agent {
         if (tool.idempotent) return this.execute(sessionId, turnId, stepId, call, tool, signal, true);
         const owner = this.d.host.toolOwner(tool.name);
         if (tool.recoverable && owner) {
-          const outcome = await owner.recover(tool.name, { sessionId, turnId, callId: call.callId, idempotencyKey: status.idempotencyKey, workspace: this.sessionWorkspace(sessionId) });
+          const outcome = await owner.recover(tool.name, this.toolCtx(sessionId, turnId, call.callId, status.idempotencyKey));
           if (outcome.status === "completed") {
             this.record({ ...base, type: "tool.call.completed", actor: { kind: "plugin", id: owner.name }, data: { callId: call.callId, result: outcome.result.content, durationMs: 0 } });
             return "done";
@@ -1212,7 +1212,7 @@ export class Agent {
       if (tool.plugin) await this.observePatch(tool.plugin, { ok: false, code: "plugin_unavailable" });
       return "done";
     }
-    const outcome = await owner.callTool(tool.name, call.args, { sessionId, turnId, callId: call.callId, idempotencyKey, workspace: this.sessionWorkspace(sessionId) }, {
+    const outcome = await owner.callTool(tool.name, call.args, this.toolCtx(sessionId, turnId, call.callId, idempotencyKey), {
       timeoutMs: tool.timeoutMs,
       signal,
       onProgress: (p) => this.streamEvent({ type: "tool.call.progress", sessionId, turnId, ts: new Date().toISOString(), data: { callId: call.callId, ...p } }),
@@ -1582,6 +1582,18 @@ export class Agent {
   }
 
   /** Workspace root for a session: project dir when the chat has a projectId, else the global workspace. */
+  private toolCtx(sessionId: string, turnId: string, callId: string, idempotencyKey: string): CallCtx {
+    const projectId = this.d.journal.getSession(sessionId)?.projectId;
+    return {
+      sessionId,
+      turnId,
+      callId,
+      idempotencyKey,
+      workspace: this.sessionWorkspace(sessionId),
+      ...(projectId ? { projectId } : {}),
+    };
+  }
+
   private sessionWorkspace(sessionId: string): string {
     const projectId = this.d.journal.getSession(sessionId)?.projectId;
     if (!projectId) return this.d.paths.workspace;

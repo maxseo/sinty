@@ -5,12 +5,12 @@ description: Cut a film in the Synt Studio editor beside the chat. Use for timel
 
 # Synt Studio
 
-The film open in the chat's **Видео** pane is the document. The source file is the edit. There is no command that pushes a clip onto the timeline.
+A film in this chat's project is the document. The source file is the edit. There is no command that pushes a clip onto the timeline. The **Видео** pane does not have to be open: create, import, the cut and the export run while the person is in the chat. If they open the film, they see the cut update.
 
 ## Before anything
 
-1. The person must have the film open (button **Видео** in the chat header, left of the agent). If a command says the editor is not answering, ask them to open it. Do not open a second editor tab.
-2. `skill.read_file` `tools.md`, then `jsx.md`. Do not invent flags.
+1. `skill.read_file` `tools.md`, then `jsx.md`. Do not invent flags.
+2. Name the film. `diffusion.film` with `name` creates one and makes it the current film. When the project already has several, pass `film` (the name or the id) to `diffusion.source` and `diffusion.run`. One film in the project is used when `film` is omitted.
 3. `diffusion.run` `context`. That lists the scene id (`index.tsx:2`) and each asset's library path (`@11.mov`).
 4. `diffusion.source` `read` before you change the cut.
 
@@ -24,7 +24,7 @@ The film open in the chat's **Видео** pane is the document. The source file
 
 ## Files
 
-A new film is `diffusion.film` with a `name`. It shows up in the Видео list. The open film stays the one `diffusion.source` edits until the person opens the new one.
+A new film is `diffusion.film` with a `name`. It shows up in the Видео list and is the film the next `diffusion.source` and `diffusion.run` use. Pass `film` to work on a different one. The person does not have to open it first.
 
 Anything in the film library is copied to `_inbox/assets/<film name>/` in the chat project. Read and copy those files. Do not read the film folder under the harness data directory.
 

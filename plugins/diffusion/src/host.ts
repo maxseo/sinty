@@ -42,9 +42,11 @@ const STARTER = `export default function Project() {
 }
 `;
 
-export function takeInbox(since = 0): Outgoing[] {
+export function takeInbox(since = 0, claim?: { dir?: string; worker?: boolean }): Outgoing[] {
   const now = Date.now();
-  const calls = outbox.splice(0, outbox.length);
+  const dir = claim?.dir ? normDir(claim.dir) : "";
+  if (dir) liveAt.set(dir, now);
+  if (dir && !claim?.worker) visibleAt.set(dir, now);
   const events = changes
     .filter((change) => change.id > since && (since > 0 || now - change.at < 1500))
     .map((change) => ({
@@ -52,7 +54,89 @@ export function takeInbox(since = 0): Outgoing[] {
       channel: "main:event",
       payload: { channel: "projects:changed", data: { dir: change.dir, path: change.path } },
     }));
-  return [...events, ...calls];
+  if (!deliverCalls(dir, claim?.worker === true, now)) return events;
+  return [...events, ...outbox.splice(0, outbox.length)];
+}
+
+/** The film the agent is cutting. A hidden editor in the harness opens this id. */
+export type FilmFocus = { id: string; dir: string; name: string; project: string; at: number };
+
+let focus: FilmFocus | null = null;
+const busy = new Map<string, { project: string; name: string; until: number }>();
+const watchAt = new Map<string, number>();
+const readyAt = new Map<string, number>();
+const liveAt = new Map<string, number>();
+const visibleAt = new Map<string, number>();
+
+function normDir(dir: string): string {
+  return resolve(dir).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+/** Calls go to the editor that has this film open. A hidden worker yields when the visible pane is on it. */
+function deliverCalls(dir: string, worker: boolean, now: number): boolean {
+  if (!focus || now - focus.at > 10 * 60_000) return true;
+  if (dir !== normDir(focus.dir)) return false;
+  if (worker && now - (visibleAt.get(dir) ?? 0) < 2500) return false;
+  return true;
+}
+
+export function focusFilm(): FilmFocus | null {
+  return focus && Date.now() - focus.at < 10 * 60_000 ? focus : null;
+}
+
+/** Marks a film as the one being cut and keeps the sidebar dot on. */
+export function engage(info: ProjectInfo): void {
+  const project = basename(dirname(info.dir));
+  focus = { id: info.id, dir: info.dir, name: info.displayName, project, at: Date.now() };
+  hold(info.id, project, info.displayName, 45_000);
+}
+
+export function hold(id: string, project: string, name: string, ms: number): void {
+  busy.set(id, { project, name, until: Date.now() + ms });
+}
+
+/** The dot stays a moment after the command, then goes out. */
+export function release(id: string): void {
+  const row = busy.get(id);
+  if (row) row.until = Date.now() + 8_000;
+}
+
+export function isBusy(id: string): boolean {
+  const row = busy.get(id);
+  return !!row && row.until > Date.now();
+}
+
+export function activity(): { films: { id: string; project: string; name: string }[]; projects: string[] } {
+  const now = Date.now();
+  const films = [...busy.entries()]
+    .filter(([, row]) => row.until > now)
+    .map(([id, row]) => ({ id, project: row.project, name: row.name }));
+  return { films, projects: [...new Set(films.map((film) => film.project))] };
+}
+
+/** True once the harness editor has this folder open and the scene has mounted. */
+export function editorReady(dir: string): boolean {
+  const key = normDir(dir);
+  const watched = watchAt.get(key) ?? 0;
+  const ready = readyAt.get(key) ?? 0;
+  return watched > 0 && ready >= watched - 500 && Date.now() - (liveAt.get(key) ?? 0) < 2500;
+}
+
+export async function awaitEditor(dir: string, ms: number): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (editorReady(dir)) return;
+    await new Promise((done) => setTimeout(done, 250));
+  }
+  throw new Error("Харнес не открыл этот фильм. Обновите вкладку и повторите команду.");
+}
+
+function noteEditor(channel: string, data: unknown): void {
+  const body = (data ?? {}) as { dir?: unknown };
+  const dir = typeof body.dir === "string" ? normDir(body.dir) : "";
+  if (!dir) return;
+  if (channel === "projects:watch") watchAt.set(dir, Date.now());
+  if (channel === "editor:ready") readyAt.set(dir, Date.now());
 }
 
 export function callTool(tool: string, args: unknown, ms: number): Promise<unknown> {
@@ -145,17 +229,52 @@ function filmsRoot(data: string, project: string): string {
   return join(data, "films", projectKey(project));
 }
 
-export function listFilms(data: string, project: string): { id: string; name: string; modifiedAt: string }[] {
+function filmInfos(data: string, project: string): ProjectInfo[] {
   const dir = filmsRoot(data, project);
   if (!existsSync(dir)) return [];
   const films = readdirSync(dir).flatMap((name) => {
     const folder = join(dir, name);
     const info = describe(folder, false);
     if (info) mirrorAssets(data, folder);
-    return info ? [{ id: info.id, name: info.displayName, modifiedAt: info.modifiedAt }] : [];
+    return info ? [info] : [];
   });
   films.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
   return films;
+}
+
+export function listFilms(data: string, project: string): { id: string; name: string; modifiedAt: string; busy: boolean }[] {
+  return filmInfos(data, project).map((info) => ({ id: info.id, name: info.displayName, modifiedAt: info.modifiedAt, busy: isBusy(info.id) }));
+}
+
+/** The named film in this chat project, or the one the agent is already cutting. */
+export function resolveFilm(data: string, project: string, name?: string): ProjectInfo {
+  const all = filmInfos(data, project);
+  const key = name?.trim();
+  if (key) {
+    const hit = all.find((film) => film.id === key || film.displayName === key || film.name === key);
+    if (!hit) throw new Error(`нет фильма «${key}» в этом проекте`);
+    return hit;
+  }
+  const current = focus && focus.project === project ? all.find((film) => film.id === focus?.id) : undefined;
+  if (current) return current;
+  if (all.length === 1) return all[0]!;
+  throw new Error(all.length === 0 ? "В этом проекте ещё нет фильма. Создайте его через diffusion.film." : "Укажите film: имя фильма. В проекте их несколько.");
+}
+
+/** The chat's project id: from the tool context, or from the folder remembered earlier. */
+export function projectOfWorkspace(data: string, workspace?: string, hinted?: string): string {
+  if (hinted && /^[A-Za-z0-9_-]{1,80}$/.test(hinted)) {
+    if (workspace) rememberProject(data, hinted, workspace);
+    return hinted;
+  }
+  if (workspace) {
+    try {
+      const map = JSON.parse(readFileSync(join(data, "projects.json"), "utf8")) as Record<string, string>;
+      const hit = Object.entries(map).find(([, folder]) => normDir(folder) === normDir(workspace));
+      if (hit) return hit[0];
+    } catch { /* not remembered yet */ }
+  }
+  throw new Error("Не вижу проект этого чата.");
 }
 
 export function createFilm(data: string, project: string, name: string): { id: string; name: string; modifiedAt: string; assets: string | null } {
@@ -366,6 +485,7 @@ function bytesOf(data: unknown): Buffer {
 }
 
 async function handleMain(channel: string, data: unknown, roots: Roots): Promise<unknown> {
+  if (channel === "projects:watch" || channel === "editor:ready") noteEditor(channel, data);
   const body = (data ?? {}) as Record<string, unknown>;
   if (channel === "auth:get-pending-callback" || channel === "checkout:get-pending-callback") return null;
   if (channel === "window:is-fullscreen") return false;

@@ -1,10 +1,19 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { acceptFromEditor, assembleFilm, callTool, cloudCall, createFilm, listFilms, mirrorAssets, noteChange, readMedia, rememberProject, safeSegment, takeInbox, writeMedia } from "./host.js";
+import { acceptFromEditor, activity, assembleFilm, awaitEditor, callTool, cloudCall, createFilm, engage, findFilm, focusFilm, hold, listFilms, mirrorAssets, noteChange, projectOfWorkspace, readMedia, release, rememberProject, resolveFilm, safeSegment, takeInbox, writeMedia } from "./host.js";
 
 const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "logs", "screenshot", "window", "job", "generate"] as const;
 const LONG = new Set(["export", "transcribe", "listen", "grab", "generate"]);
+const RUNTIME = new Set(["context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "screenshot", "job", "generate"]);
+
+function pickFilm(data: string, toolCtx: { workspace?: string; projectId?: string }, film?: string) {
+  const project = projectOfWorkspace(data, toolCtx.workspace, toolCtx.projectId);
+  const info = resolveFilm(data, project, film);
+  if (toolCtx.workspace) rememberProject(data, project, toolCtx.workspace);
+  engage(info);
+  return info;
+}
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -64,6 +73,17 @@ export default definePlugin({
     }));
 
     ctx.http({ method: "GET", path: "/films", public: true, surface: "status", handler: () => filmsPage() });
+    ctx.http({ method: "GET", path: "/activity", public: true, surface: "status", handler: () => json(activity()) });
+    ctx.http({
+      method: "GET",
+      path: "/ipc/focus",
+      public: true,
+      surface: "status",
+      handler: () => {
+        const row = focusFilm();
+        return json(row ? { id: row.id, name: row.name, project: row.project } : {});
+      },
+    });
     ctx.http({
       method: "GET",
       path: "/library",
@@ -103,8 +123,10 @@ export default definePlugin({
       public: true,
       surface: "status",
       handler: (req) => {
-        const since = Number(new URL(req.url).searchParams.get("since") ?? "0");
-        return json(takeInbox(Number.isFinite(since) ? since : 0));
+        const url = new URL(req.url);
+        const since = Number(url.searchParams.get("since") ?? "0");
+        const dir = url.searchParams.get("dir") ?? "";
+        return json(takeInbox(Number.isFinite(since) ? since : 0, { ...(dir ? { dir } : {}), worker: url.searchParams.get("worker") === "1" }));
       },
     });
     ctx.http({
@@ -165,63 +187,70 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one command in the film open beside the chat. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export draws every timeline layer, mixes the timeline audio, and ffmpeg writes _out/video/<film name>/film.mp4. open with no folder reports the open film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command. A new film is diffusion.film.",
+      description: "Run one command on a film in this chat's project. The Видео pane does not have to be open. Pass film (name or id) when the project has more than one; after diffusion.film the new film is the default. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export draws every timeline layer, mixes the timeline audio, and ffmpeg writes _out/video/<film name>/film.mp4. open reports the film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command.",
       sideEffects: "external",
       timeoutMs: 600_000,
       input: z.object({
         command: z.enum(COMMANDS),
         args: z.array(z.string()).default([]),
+        film: z.string().min(1).max(80).optional(),
       }),
       async run(input, toolCtx) {
         if (input.command === "window") return { content: { visible: true } };
         if (input.command === "logs") return { content: { entries: [] } };
         const args = argsOf(input.command, input.args);
         const ms = LONG.has(input.command) ? 600_000 : 180_000;
+        const film = pickFilm(ctx.paths.data, toolCtx, input.film);
+        hold(film.id, basename(dirname(film.dir)), film.displayName, ms + 20_000);
         try {
-          if (input.command === "open" && !("dir" in args)) return { content: await openFilm(ctx.paths.data, toolCtx.workspace) };
+          if (input.command === "open") return { content: { id: film.id, name: film.displayName, assets: mirrorAssets(ctx.paths.data, film.dir) } };
           if (input.command === "export" && toolCtx.workspace) {
-            const film = await openFilm(ctx.paths.data, toolCtx.workspace);
             const given = typeof args.path === "string" ? args.path : "";
-            const folder = join(toolCtx.workspace, "_out", "video", safeSegment(film.name || "film"));
+            const folder = join(toolCtx.workspace, "_out", "video", safeSegment(film.displayName || "film"));
             mkdirSync(folder, { recursive: true });
             args.path = given && isAbsolute(given) ? given : join(folder, basename(given) || "film.mp4");
           }
+          if (RUNTIME.has(input.command)) await awaitEditor(film.dir, 45_000);
           const content = storePictures(await callTool(input.command, args, ms), toolCtx.workspace, input.command);
           if (input.command === "export") return { content: await finishExport(content) };
           return { content };
         } catch (error) {
           throw new ToolError("diffusion_run", error instanceof Error ? error.message : "команда не выполнилась");
+        } finally {
+          release(film.id);
         }
       },
     });
 
     ctx.tool({
       name: "diffusion.film",
-      description: "Create a new film in this chat's project. The film shows up in the Видео list. Its asset folder is _inbox/assets/<name>. The film that is open stays the one diffusion.source edits.",
+      description: "Create a film in this chat's project without opening the Видео pane. The film shows up in the Видео list and becomes the one diffusion.source and diffusion.run edit. Its asset folder is _inbox/assets/<name>.",
       sideEffects: "write",
       input: z.object({ name: z.string().min(1).max(80) }),
       async run(input, toolCtx) {
-        const open = await openFilm(ctx.paths.data, toolCtx.workspace);
-        const project = basename(dirname(open.dir));
+        const project = projectOfWorkspace(ctx.paths.data, toolCtx.workspace, toolCtx.projectId);
         if (toolCtx.workspace) rememberProject(ctx.paths.data, project, toolCtx.workspace);
-        const film = createFilm(ctx.paths.data, project, input.name);
-        return { content: { id: film.id, name: film.name, assets: film.assets } };
+        const made = createFilm(ctx.paths.data, project, input.name);
+        const info = findFilm(ctx.paths.data, made.id);
+        if (info) engage(info);
+        return { content: { id: made.id, name: made.name, assets: made.assets } };
       },
     });
 
     ctx.tool({
       name: "diffusion.source",
-      description: "Read or replace the open film's index.tsx, or copy one file from the chat project into the film library. The source is the edit. fs cannot see the film folder. write replaces the whole file and the open editor reloads it. import returns the library path to put in src. Read the diffusion-editor skill before the first edit.",
+      description: "Read or replace a film's index.tsx, or copy one file from the chat project into that film's library. Pass film (name or id) when the project has more than one; otherwise the film created or used last is the one. The pane does not have to be open. fs cannot see the film folder. write replaces the whole file and an open editor reloads it. import returns the library path to put in src. Read the diffusion-editor skill before the first edit.",
       sideEffects: "write",
       input: z.object({
         action: z.enum(["read", "write", "import"]),
+        film: z.string().min(1).max(80).optional(),
         text: z.string().optional(),
         path: z.string().optional(),
       }),
       async run(input, toolCtx) {
-        try {
-        const film = await openFilm(ctx.paths.data, toolCtx.workspace);
+        const film = pickFilm(ctx.paths.data, toolCtx, input.film);
         const file = join(film.dir, "index.tsx");
+        try {
         if (input.action === "read") return { content: { path: "index.tsx", text: readFileSync(file, "utf8") } };
         if (input.action === "import") {
           const from = input.path ?? "";
@@ -246,6 +275,8 @@ export default definePlugin({
         } catch (error) {
           if (error instanceof ToolError) throw error;
           throw new ToolError("diffusion_source", error instanceof Error ? error.message : "фильм не открыт");
+        } finally {
+          release(film.id);
         }
       },
     });
@@ -254,12 +285,20 @@ export default definePlugin({
       name: "diffusion.generate",
       description: "Generate media through the connected model adapter. Asks first. Without an address in adapters.json the call answers that nothing is connected.",
       sideEffects: "external",
-      input: z.object({ args: z.array(z.string()).default([]) }),
-      async run(input) {
+      input: z.object({
+        args: z.array(z.string()).default([]),
+        film: z.string().min(1).max(80).optional(),
+      }),
+      async run(input, toolCtx) {
+        const film = pickFilm(ctx.paths.data, toolCtx, input.film);
+        hold(film.id, basename(dirname(film.dir)), film.displayName, 620_000);
         try {
+          await awaitEditor(film.dir, 45_000);
           return { content: await callTool("generate", argsOf("generate", input.args), 600_000) };
         } catch (error) {
           throw new ToolError("diffusion_generate", error instanceof Error ? error.message : "не подключено");
+        } finally {
+          release(film.id);
         }
       },
     });
@@ -279,8 +318,11 @@ function filmsPage(): Response {
   button { height: 36px; border: 0; border-radius: 8px; padding: 0 14px; background: #18181b; color: #fff; font: inherit; cursor: pointer; }
   ul { list-style: none; margin: 0; padding: 0; }
   li { border-top: 1px solid #f4f4f5; }
-  a { display: flex; justify-content: space-between; gap: 12px; padding: 12px 2px; color: inherit; text-decoration: none; }
+  a { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px; color: inherit; text-decoration: none; }
   a:hover { background: #fafafa; }
+  .name { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #74ff2a; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
   .when { color: #71717a; font-size: 13px; }
   .empty, .err { color: #71717a; }
 </style>
@@ -326,7 +368,14 @@ function draw(films) {
     const a = document.createElement("a");
     a.href = "#";
     const name = document.createElement("span");
-    name.textContent = film.name;
+    name.className = "name";
+    if (film.busy) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      dot.title = "Идёт монтаж";
+      name.append(dot);
+    }
+    name.append(document.createTextNode(film.name));
     const when = document.createElement("span");
     when.className = "when";
     when.textContent = new Date(film.modifiedAt).toLocaleString();
@@ -363,6 +412,7 @@ async function createFilm() {
     else say("Фильм не создался.");
   } catch (err) { say(err.message); }
 }
+setInterval(() => { if (project) load().catch((err) => say(err.message)); }, 2000);
 document.getElementById("create").addEventListener("click", () => { createFilm(); });
 document.getElementById("add").addEventListener("submit", (e) => { e.preventDefault(); createFilm(); });
 const hello = setInterval(() => {
@@ -425,23 +475,6 @@ function argsOf(command: string, args: string[]): Record<string, unknown> {
   if (rest[0]) record.path = rest[0];
   if (rest.length > 1) record.output = rest[1];
   return record;
-}
-
-async function openFilm(data: string, workspace?: string): Promise<{ id: string; name: string; dir: string; assets: string | null }> {
-  const current = await callTool("context", {}, 30_000) as { projectDir?: string | null };
-  const dir = current.projectDir;
-  if (!dir) throw new ToolError("diffusion_arg", "Откройте фильм кнопкой «Видео» в шапке чата.");
-  let id = "";
-  let name = "";
-  try {
-    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { projectId?: string; displayName?: string };
-    id = pkg.projectId ?? "";
-    name = pkg.displayName ?? "";
-  } catch {
-    /* the folder is enough */
-  }
-  if (workspace) rememberProject(data, basename(dirname(dir)), workspace);
-  return { id, name, dir, assets: mirrorAssets(data, dir) };
 }
 
 async function finishExport(content: unknown): Promise<unknown> {

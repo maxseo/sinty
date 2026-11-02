@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-02 | [Film in the background](2026-11-02-film-background.md) | (open) | The agent cuts a film without the pane open, and a green dot shows the project while it does. |
 | 2026-11-02 | [Film audio](2026-11-02-film-audio.md) | (open) | The ffmpeg export mixes the timeline audio into the same mp4. |
 | 2026-11-02 | [Film render](2026-11-02-film-render.md) | (open) | Film assets live in the chat project, and ffmpeg assembles every timeline layer into `_out/video`. |
 | 2026-11-02 | [Chat open fast](2026-11-02-chat-open-fast.md) | (open) | A chat opens from its messages, not from the tool results stored beside them. |

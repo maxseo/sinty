@@ -15,6 +15,8 @@ export interface ToolRunContext {
    * otherwise it is the global workspace. Relative tool paths resolve here.
    */
   workspace?: string;
+  /** Chat project id, when the session belongs to one. */
+  projectId?: string;
   signal: AbortSignal;
   progress(update: { message?: string; ratio?: number }): void;
 }
