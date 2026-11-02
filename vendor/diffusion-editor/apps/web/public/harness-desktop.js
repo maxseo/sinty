@@ -4,6 +4,9 @@
   var handlers = {};
   var pulling = false;
   var seen = 0;
+  var watchDir = "";
+  var watchedMtime = null;
+  var polling = false;
 
   function emit(channel, payload) {
     var list = handlers[channel] || [];
@@ -43,6 +46,9 @@
     emit: emit,
     send: function (channel, payload) {
       if (channel === "dapi:reply") emit(channel, payload);
+      if (channel === "main:request" && payload && payload.channel === "projects:watch" && payload.data && payload.data.dir) {
+        watchDir = payload.data.dir;
+      }
       fetch("/p/diffusion/ipc/out", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -58,5 +64,31 @@
       };
     },
   };
+  // The canvas's own saves are not a reload. A newer file was written by the
+  // agent, and this pane recompiles it with the folder it is already watching.
+  function pollFilm() {
+    if (!watchDir || polling || !window.desktop) return;
+    polling = true;
+    var id = "poll-" + Date.now();
+    window.desktop.send("main:request", { id: id, channel: "projects:fs-stat", data: { dir: watchDir, source: "index.tsx" } });
+    var stop = window.desktop.on("main:response", function (msg) {
+      if (!msg || msg.id !== id) return;
+      stop();
+      polling = false;
+      var row = msg.ok ? msg.data : null;
+      if (!row || typeof row.mtime !== "number") return;
+      if (watchedMtime == null) {
+        watchedMtime = row.mtime;
+        return;
+      }
+      if (row.mtime !== watchedMtime) {
+        watchedMtime = row.mtime;
+        if (row.external) emit("main:event", { channel: "projects:changed", data: { dir: watchDir, path: "index.tsx" } });
+      }
+    });
+    setTimeout(function () { stop(); polling = false; }, 4000);
+  }
+
+  setInterval(pollFilm, 800);
   pull();
 })();
