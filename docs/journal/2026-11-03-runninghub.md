@@ -40,6 +40,10 @@ Installing `developer-kit/mcp-server` as the agent's way to generate. It does no
 
 Add the provider with «Добавить RunningHub» on the Models page if it is not there, paste the Enterprise-Shared key, and save. Enable the plugin and restart `sinty web`. Allow `llm.runninghub.ai`, `www.runninghub.ai` and `raw.githubusercontent.com` in `policy.yaml`. Then Ctrl+F5. Open Settings → RunningHub and press «Обновить реестр».
 
+## Follow-up: a project file was reported as outside the project
+
+`runninghub.run` resolved `_inbox/…` from the process folder, then refused the chat's own voice sample in «Рилс». A relative path is now resolved from the project directory. A path that leaves that directory is still refused.
+
 ## Follow-up: generated files play in the chat
 
 RunningHub writes each result under the project folder `_out/generation/<task id>/`. The core records `chat.media` for those files, and the chat draws them: audio with a play button and an equalizer, video with play, a scrubber and fullscreen, a picture with rounded corners that opens to the full screen. A 3D preview is not in this pass. The model does not see `chat.media`.

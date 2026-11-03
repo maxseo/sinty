@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
+import { fileInRoot } from "./files.js";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { apiError, pollTask, submitTask, uploadFile, type RhFetch } from "./client.js";
 import { moneyOf, openHistory } from "./history.js";
@@ -41,11 +42,6 @@ function fileExt(kind: string, url: string, contentType: string): string {
   if (kind === "video") return ".mp4";
   if (kind === "audio") return ".mp3";
   return ".png";
-}
-
-function insideDir(root: string, file: string): boolean {
-  const rel = relative(resolve(root), resolve(file));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 export default definePlugin({
@@ -126,10 +122,10 @@ export default definePlugin({
         const body: Record<string, unknown> = { ...payload };
         const grouped = new Map<string, string[]>();
         for (const file of files) {
-          if (!insideDir(destRoot, file.path) && !insideDir(ctx.paths.workspace, file.path) && !insideDir(dataDir, file.path)) {
-            throw new ToolError("runninghub_path", `файл вне проекта: ${file.path}`);
-          }
-          const url = await uploadFile(fetchRh, baseUrl(), key, file.path);
+          const abs = fileInRoot(destRoot, file.path) ?? fileInRoot(ctx.paths.workspace, file.path) ?? fileInRoot(dataDir, file.path);
+          if (!abs) throw new ToolError("runninghub_path", `файл вне проекта: ${file.path}`);
+          if (!existsSync(abs)) throw new ToolError("runninghub_path", `файл не найден: ${file.path}`);
+          const url = await uploadFile(fetchRh, baseUrl(), key, abs);
           const list = grouped.get(file.field) ?? [];
           list.push(url);
           grouped.set(file.field, list);
