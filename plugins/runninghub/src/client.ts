@@ -42,6 +42,24 @@ export async function uploadFile(fetch: RhFetch, base: string, apiKey: string, f
   return url;
 }
 
+/** RunningHub puts `taskId` on the object or under `data`, and a refusal comes back as HTTP 200 with `errorMessage`. */
+export function taskIdOf(json: unknown): string {
+  const rec = record(json);
+  const data = record(rec.data);
+  const id = text(rec.taskId) || text(rec.task_id) || text(data.taskId) || text(data.task_id);
+  return id;
+}
+
+export function apiError(json: unknown): string {
+  const rec = record(json);
+  const data = record(rec.data);
+  const code = rec.errorCode ?? rec.error_code ?? data.errorCode ?? data.error_code;
+  const failed = code !== undefined && code !== 0 && code !== "0" && code !== "";
+  const msg = text(rec.errorMessage) || text(rec.error_message) || text(data.errorMessage) || text(data.error_message) || text(rec.message) || text(rec.error) || (failed ? text(rec.msg) || text(data.msg) : "");
+  const codeStr = failed ? String(code) : "";
+  return [codeStr && `код ${codeStr}`, msg].filter(Boolean).join(": ");
+}
+
 export async function submitTask(fetch: RhFetch, base: string, apiKey: string, endpoint: string, payload: Record<string, unknown>): Promise<string> {
   const res = await fetch(joinUrl(base, endpoint), {
     method: "POST",
@@ -50,8 +68,8 @@ export async function submitTask(fetch: RhFetch, base: string, apiKey: string, e
     timeoutMs: 60_000,
   });
   const json = await readJson(res);
-  const taskId = json && typeof json === "object" ? String((json as { taskId?: string; task_id?: string }).taskId || (json as { task_id?: string }).task_id || "") : "";
-  if (!taskId) throw new Error(messageOf(json) || `задача не создалась (${res.status})`);
+  const taskId = taskIdOf(json);
+  if (!taskId) throw new Error(apiError(json) || messageOf(json) || `задача не создалась (${res.status})`);
   return taskId;
 }
 
@@ -63,12 +81,16 @@ export async function queryTask(fetch: RhFetch, base: string, apiKey: string, ta
     timeoutMs: 30_000,
   });
   const raw = await readJson(res);
-  const status = raw && typeof raw === "object" && typeof (raw as { status?: string }).status === "string" ? (raw as { status: string }).status : "";
+  const flat = { ...record(raw), ...record(record(raw).data) };
+  const status = text(flat.status);
+  const err = apiError(raw);
+  if (!status && err) throw new Error(err);
   return { status, raw };
 }
 
 export function outputsOf(raw: unknown): { url: string; outputType: string }[] {
-  const results = raw && typeof raw === "object" ? (raw as { results?: unknown }).results : undefined;
+  const flat = { ...record(raw), ...record(record(raw).data) };
+  const results = flat.results;
   if (!Array.isArray(results)) return [];
   const out: { url: string; outputType: string }[] = [];
   for (const row of results) {
@@ -107,6 +129,14 @@ async function readJson(res: FetchResponse): Promise<unknown> {
   } catch {
     return { message: text.slice(0, 300) };
   }
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function messageOf(json: unknown): string {

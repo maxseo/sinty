@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { pollTask, submitTask, uploadFile, type RhFetch } from "./client.js";
+import { apiError, pollTask, submitTask, uploadFile, type RhFetch } from "./client.js";
 import { cardOf, modelByEndpoint, parseRegistry, searchModels, SEED, validatePayload, type RhModel, type RhRegistry } from "./registry.js";
 import { tabHtml } from "./tab-page.js";
 
@@ -112,7 +112,7 @@ export default definePlugin({
       const timeoutMs = kind === "image" ? 180_000 : 1_200_000;
       const result = await pollTask(fetchRh, baseUrl(), key, taskId, { intervalMs: 5_000, timeoutMs });
       if (result.status !== "SUCCESS") {
-        throw new ToolError("runninghub_task", `задача ${taskId}: ${result.status}`, { hint: "Статус можно посмотреть в Tasks & Billing RunningHub." });
+        throw new ToolError("runninghub_task", [`задача ${taskId}: ${result.status}`, apiError(result.raw)].filter(Boolean).join(" — "), { hint: "Статус можно посмотреть в Tasks & Billing RunningHub." });
       }
       const saved: string[] = [];
       const dir = join(destRoot, "_out", "runninghub", taskId);

@@ -40,6 +40,10 @@ Installing `developer-kit/mcp-server` as the agent's way to generate. It does no
 
 Add the provider with «Добавить RunningHub» on the Models page if it is not there, paste the Enterprise-Shared key, and save. Enable the plugin and restart `sinty web`. Allow `llm.runninghub.ai`, `www.runninghub.ai` and `raw.githubusercontent.com` in `policy.yaml`. Then Ctrl+F5. Open Settings → RunningHub and press «Обновить реестр».
 
+## Follow-up: the submit response
+
+A refusal comes back as HTTP 200 with `errorCode` and `errorMessage`, and a success may put `taskId` under `data`. The first client only read a top-level `taskId`, so the chat saw «задача не создалась (200)» and the agent repeated the call until the supervisor stopped the turn.
+
 ## Follow-up
 
 The public registry has `class_name` and `display_name`, not `id`, and a list option is `{ value }`. The first parser dropped every row, so the page stayed on the two seed cards. Opening the section now downloads the file. A provider base URL that is not a URL is skipped, so that card cannot stop the server from starting.
