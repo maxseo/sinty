@@ -5,6 +5,7 @@ import { Markdown } from "./markdown.js";
 import { MediaView } from "./media.js";
 import { mergeMedia, splitMedia, type MediaRef } from "./media-ref.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
+import { waitNote } from "./wait-note.js";
 import { SupervisorView } from "./supervisor-ui.js";
 
 const VIEW_KEY = "sinty.chatView";
@@ -147,10 +148,7 @@ function build(events: SintyEvent[]): Item[] {
       case "tool.call.denied":
         break;
       case "supervisor.notice":
-        items.push({ kind: "note", key, tone: "warn", text: `Супервизор (${d.detector}): ${d.text}` });
-        break;
       case "supervisor.escalated":
-        items.push({ kind: "note", key, tone: "error", text: `Супервизор остановил работу (${d.detector}): ${d.reason}` });
         break;
       case "turn.failed":
         items.push({ kind: "note", key, tone: "error", text: `Ошибка: ${d.code} — ${d.message}` });
@@ -159,7 +157,6 @@ function build(events: SintyEvent[]): Item[] {
         items.push({ kind: "note", key, tone: "info", text: "Остановлено" });
         break;
       case "turn.blocked":
-        if (d.reason === "budget") items.push({ kind: "note", key, tone: "warn", text: `Бюджет хода исчерпан${d.detail ? `: ${d.detail}` : ""}. Напишите сообщение, чтобы продолжить.` });
         break;
       case "plugin.patch.proposed":
         items.push({ kind: "note", key, tone: "info", text: `Предложен патч плагина ${d.plugin}: ${d.reason}` });
@@ -634,8 +631,9 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
             </div>
           )}
           {queued && <div class="note info">Ход занят. Это сообщение дождётся конца текущей команды.</div>}
-          {childPending.filter((p) => p.reason !== "approval").map((p) => (
-            <div key={p.turnId} class="note warn">Фон · {waitWord(p.reason)}. {p.detail ?? "Вопроса нет, отвечать не нужно."}</div>
+          {pending && <div class="note warn">{waitNote(pending)}</div>}
+          {childPending.map((p) => (
+            <div key={p.turnId} class="note warn">{waitNote(p, true)}</div>
           ))}
           <div ref={bottom} />
         </div>
