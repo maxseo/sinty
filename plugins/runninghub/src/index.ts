@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { apiError, pollTask, submitTask, uploadFile, type RhFetch } from "./client.js";
+import { moneyOf, openHistory } from "./history.js";
 import { cardOf, modelByEndpoint, parseRegistry, searchModels, SEED, validatePayload, type RhModel, type RhRegistry } from "./registry.js";
 import { tabHtml } from "./tab-page.js";
 
@@ -30,6 +31,7 @@ export default definePlugin({
     const dataDir = ctx.paths.data;
     mkdirSync(dataDir, { recursive: true });
     const registryFile = join(dataDir, "registry.json");
+    const history = openHistory(join(dataDir, "generations.db"));
     const settingsFile = join(dataDir, "settings.json");
 
     function baseUrl(): string {
@@ -87,50 +89,82 @@ export default definePlugin({
 
     async function runModel(endpoint: string, payload: Record<string, unknown>, files: { field: string; path: string }[], destRoot: string): Promise<unknown> {
       await ensureRegistry();
+      const started = Date.now();
       const model = modelByEndpoint(readRegistry().registry, endpoint);
       if (!model) throw new ToolError("runninghub_endpoint", `нет endpoint ${endpoint}`, { hint: "Сначала runninghub.search, потом runninghub.schema." });
-      const key = await apiKey();
-      const body: Record<string, unknown> = { ...payload };
-      const grouped = new Map<string, string[]>();
-      for (const file of files) {
-        if (!insideDir(destRoot, file.path) && !insideDir(ctx.paths.workspace, file.path) && !insideDir(dataDir, file.path)) {
-          throw new ToolError("runninghub_path", `файл вне проекта: ${file.path}`);
-        }
-        const url = await uploadFile(fetchRh, baseUrl(), key, file.path);
-        const list = grouped.get(file.field) ?? [];
-        list.push(url);
-        grouped.set(file.field, list);
-      }
-      for (const [field, urls] of grouped) {
-        const param = (model.params ?? []).find((p) => p.fieldKey === field);
-        body[field] = param?.multipleInputs || urls.length > 1 ? urls : urls[0];
-      }
-      const errors = validatePayload(model, body);
-      if (errors.length) throw new ToolError("runninghub_payload", errors.map((e) => `${e.field}: ${e.message}`).join("; "));
-      const taskId = await submitTask(fetchRh, baseUrl(), key, endpoint, body);
-      const kind = (model.output_type ?? "").toLowerCase();
-      const timeoutMs = kind === "image" ? 180_000 : 1_200_000;
-      const result = await pollTask(fetchRh, baseUrl(), key, taskId, { intervalMs: 5_000, timeoutMs });
-      if (result.status !== "SUCCESS") {
-        throw new ToolError("runninghub_task", [`задача ${taskId}: ${result.status}`, apiError(result.raw)].filter(Boolean).join(" — "), { hint: "Статус можно посмотреть в Tasks & Billing RunningHub." });
-      }
+      let taskId = "";
+      let status = "failed";
+      let error = "";
+      let outputs: { url: string; outputType: string }[] = [];
+      let raw: unknown = {};
       const saved: string[] = [];
-      const dir = join(destRoot, "_out", "runninghub", taskId);
-      mkdirSync(dir, { recursive: true });
-      for (const [i, output] of result.outputs.entries()) {
-        if (!/^https?:\/\//i.test(output.url)) continue;
-        try {
-          const res = await ctx.net.public.fetch(output.url, { timeoutMs: 60_000, maxBytes: 20_000_000 });
-          if (!res.ok) continue;
-          const ext = kind === "video" ? ".mp4" : kind === "audio" ? ".mp3" : ".png";
-          const file = join(dir, `${i}${ext}`);
-          writeFileSync(file, Buffer.from(await res.arrayBuffer()));
-          saved.push(file);
-        } catch {
-          /* the url stays in the answer when the file host is outside the allow list or the file is large */
+      try {
+        const key = await apiKey();
+        const body: Record<string, unknown> = { ...payload };
+        const grouped = new Map<string, string[]>();
+        for (const file of files) {
+          if (!insideDir(destRoot, file.path) && !insideDir(ctx.paths.workspace, file.path) && !insideDir(dataDir, file.path)) {
+            throw new ToolError("runninghub_path", `файл вне проекта: ${file.path}`);
+          }
+          const url = await uploadFile(fetchRh, baseUrl(), key, file.path);
+          const list = grouped.get(file.field) ?? [];
+          list.push(url);
+          grouped.set(file.field, list);
         }
+        for (const [field, urls] of grouped) {
+          const param = (model.params ?? []).find((p) => p.fieldKey === field);
+          body[field] = param?.multipleInputs || urls.length > 1 ? urls : urls[0];
+        }
+        const errors = validatePayload(model, body);
+        if (errors.length) throw new ToolError("runninghub_payload", errors.map((e) => `${e.field}: ${e.message}`).join("; "));
+        taskId = await submitTask(fetchRh, baseUrl(), key, endpoint, body);
+        const kind = (model.output_type ?? "").toLowerCase();
+        const timeoutMs = kind === "image" ? 180_000 : 1_200_000;
+        const result = await pollTask(fetchRh, baseUrl(), key, taskId, { intervalMs: 5_000, timeoutMs });
+        raw = result.raw;
+        outputs = result.outputs;
+        status = result.status === "SUCCESS" ? "success" : (result.status || "failed").toLowerCase();
+        if (result.status !== "SUCCESS") {
+          error = apiError(result.raw);
+          throw new ToolError("runninghub_task", [`задача ${taskId}: ${result.status}`, error].filter(Boolean).join(" — "), { hint: "Статус можно посмотреть в Tasks & Billing RunningHub." });
+        }
+        const dir = join(destRoot, "_out", "runninghub", taskId);
+        mkdirSync(dir, { recursive: true });
+        for (const [i, output] of result.outputs.entries()) {
+          if (!/^https?:\/\//i.test(output.url)) continue;
+          try {
+            const res = await ctx.net.public.fetch(output.url, { timeoutMs: 60_000, maxBytes: 20_000_000 });
+            if (!res.ok) continue;
+            const ext = kind === "video" ? ".mp4" : kind === "audio" ? ".mp3" : ".png";
+            const file = join(dir, `${i}${ext}`);
+            writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+            saved.push(file);
+          } catch {
+            /* the url stays in the answer when the file host is outside the allow list or the file is large */
+          }
+        }
+        return { taskId, status: result.status, outputs: result.outputs, files: saved };
+      } catch (e) {
+        if (!error) error = e instanceof Error ? e.message : String(e);
+        throw e;
+      } finally {
+        const money = moneyOf(raw);
+        history.add({
+          taskId,
+          endpoint,
+          name: model.name_en || endpoint,
+          status,
+          startedAt: new Date(started).toISOString(),
+          finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - started,
+          error,
+          payload: JSON.stringify(payload),
+          outputs: JSON.stringify(outputs),
+          coins: money.coins,
+          amount: money.amount,
+          detail: JSON.stringify(raw),
+        });
       }
-      return { taskId, status: result.status, outputs: result.outputs, files: saved };
     }
 
     ctx.tool({
@@ -197,6 +231,13 @@ export default definePlugin({
         try { await ctx.secrets.get("runninghub"); hasKey = true; } catch { /* the models card has no key yet */ }
         return json({ hasKey, baseUrl: baseUrl(), count: registry.models.length, version: registry.version ?? "", source, ...(registryError ? { registryError } : {}) });
       },
+    });
+    ctx.http({
+      method: "GET",
+      path: "/history",
+      surface: "settings",
+      access: "view",
+      handler: () => json({ items: history.list() }),
     });
     ctx.http({
       method: "GET",

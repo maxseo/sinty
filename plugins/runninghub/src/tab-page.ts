@@ -21,11 +21,20 @@ button:disabled{opacity:.6}
 form{padding:0 16px 24px;display:grid;gap:8px;max-width:640px}form[hidden]{display:none}
 label{display:grid;gap:4px}
 pre{white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px}
+table{width:calc(100% - 32px);margin:8px 16px 16px;border-collapse:collapse;background:var(--panel)}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+tr{cursor:pointer}
+#history[hidden],#catalog[hidden]{display:none}
 </style></head><body>
 <header>
   <h1>RunningHub</h1>
   <p id="status">Каталог стандартных моделей. Текстовые модели и ключ — в разделе «Модели», плашка runninghub.</p>
 </header>
+<div class="bar">
+  <button type="button" id="show-catalog" class="primary">Каталог</button>
+  <button type="button" id="show-history">История</button>
+</div>
+<div id="catalog">
 <div class="bar">
   <input id="q" placeholder="поиск: nano, video, suno">
   <select id="kind"><option value="">все</option><option value="image">картинка</option><option value="video">видео</option><option value="audio">звук</option><option value="3d">3D</option></select>
@@ -40,6 +49,14 @@ pre{white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);bo
   <button type="submit" class="primary">Запустить</button>
   <pre id="out" hidden></pre>
 </form>
+</div>
+<div id="history" hidden>
+  <table>
+    <thead><tr><th>Время</th><th>Модель</th><th>Статус</th><th>Длительность</th><th>Задача</th><th>Монеты</th><th>Сумма</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <pre id="detail" hidden></pre>
+</div>
 <script>
 const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
 let n = 0; const wait = new Map();
@@ -151,6 +168,52 @@ document.getElementById("refresh").onclick = async () => {
   await loadStatus();
   await search();
 };
+function clock(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+function showCatalog() {
+  document.getElementById("catalog").hidden = false;
+  document.getElementById("history").hidden = true;
+}
+async function showHistory() {
+  document.getElementById("catalog").hidden = true;
+  document.getElementById("history").hidden = false;
+  setErr("");
+  const m = await ask("get", "/history");
+  const rows = document.getElementById("rows");
+  rows.replaceChildren();
+  if (!m.ok) { setErr((m.error && m.error.message) || "История не открылась."); return; }
+  const items = (m.data && m.data.items) || [];
+  if (!items.length) { setErr("Генераций пока нет."); return; }
+  for (const item of items) {
+    const tr = document.createElement("tr");
+    const cells = [
+      item.startedAt ? new Date(item.startedAt).toLocaleString("ru") : "",
+      item.name || item.endpoint,
+      item.status === "success" ? "успех" : item.status === "failed" ? "ошибка" : item.status,
+      clock(item.durationMs || 0),
+      item.taskId || "—",
+      item.coins || "—",
+      item.amount || "—",
+    ];
+    for (const text of cells) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.append(td);
+    }
+    tr.onclick = () => {
+      const detail = document.getElementById("detail");
+      let outputs = item.outputs || "";
+      try { outputs = JSON.stringify(JSON.parse(item.outputs || "[]"), null, 2); } catch (e) {}
+      detail.hidden = false;
+      detail.textContent = (item.error ? item.error + "\n\n" : "") + (item.payload || "") + "\n\n" + outputs;
+    };
+    rows.append(tr);
+  }
+}
+document.getElementById("show-catalog").onclick = () => { setErr(""); showCatalog(); };
+document.getElementById("show-history").onclick = () => showHistory();
 loadStatus();
 search();
 send("ready");

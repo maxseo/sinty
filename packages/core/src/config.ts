@@ -247,7 +247,7 @@ export type SintyPolicy = z.infer<typeof policySchema>;
  * the prompt; mcp-catalog owns Settings → MCP. All of them were core before plan step 7: an existing config.yaml whose plugins.enabled predates the
  * move keeps them without being rewritten.
  */
-export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "tool-vision", "skills", "responsive-turn", "mcp-catalog"];
+export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "tool-vision", "skills", "responsive-turn", "mcp-catalog", "runninghub"];
 
 /** Appends DEFAULT_ON_PLUGINS that are neither enabled nor disabled, in memory. Idempotent. */
 export function withDefaultPlugins<T extends { plugins: { enabled: string[]; disabled?: string[] | undefined } }>(config: T): T {
