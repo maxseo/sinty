@@ -40,6 +40,10 @@ Installing `developer-kit/mcp-server` as the agent's way to generate. It does no
 
 Add the provider with «Добавить RunningHub» on the Models page if it is not there, paste the Enterprise-Shared key, and save. Enable the plugin and restart `sinty web`. Allow `llm.runninghub.ai`, `www.runninghub.ai` and `raw.githubusercontent.com` in `policy.yaml`. Then Ctrl+F5. Open Settings → RunningHub and press «Обновить реестр».
 
+## Follow-up: the catalog page did not run its script
+
+The history row built its detail text with `"\n\n"` inside the HTML template. That escape became a real line break in the page, so the script failed to parse. The buttons stayed inert and the model list never loaded. The page now emits the two-character escape, and a test checks that the script parses.
+
 ## Follow-up: tools and a generation log
 
 `runninghub` is a default-on plugin, so an agent card does not have to list it. `runninghub.search`, `runninghub.schema` and `runninghub.run` are on every agent unless the card excludes the plugin. Each run is a row in the plugin data database (`generations.db`): task id, endpoint, status, start, duration, error, and coins or dollars when the response includes them. Settings → RunningHub → История shows the table.

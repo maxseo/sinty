@@ -16,6 +16,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- Settings → RunningHub loads the model list. The catalog script had a raw line break inside a string, so the browser skipped the whole script and the buttons did nothing.
 - The Hyperframes preview layer stays hidden until a composition is opened, and «Закрыть» removes it.
 - «Установить» on the Hyperframes tab can read npm's own files. Node was passing the plugin's narrow file grants to that command, so the install stopped with ERR_ACCESS_DENIED.
 - The Hyperframes tab can install the npm update it reports. It also lists saved compositions with a preview, and can open or delete one.

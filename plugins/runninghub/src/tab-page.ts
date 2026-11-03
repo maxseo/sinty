@@ -207,7 +207,7 @@ async function showHistory() {
       let outputs = item.outputs || "";
       try { outputs = JSON.stringify(JSON.parse(item.outputs || "[]"), null, 2); } catch (e) {}
       detail.hidden = false;
-      detail.textContent = (item.error ? item.error + "\n\n" : "") + (item.payload || "") + "\n\n" + outputs;
+      detail.textContent = (item.error ? item.error + "\\n\\n" : "") + (item.payload || "") + "\\n\\n" + outputs;
     };
     rows.append(tr);
   }
