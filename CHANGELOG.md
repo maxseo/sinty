@@ -18,6 +18,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- The chat no longer adds a line when a message is sent during a running turn. The message stays in the transcript and waits for the current command.
 - Supervisor remarks stay on the Supervisor tab. While a chat is waiting, the transcript says what the user has to do: answer the question, approve a tool, or send a message to continue.
 - A picture in the chat keeps its own proportions and sits flush with its rounded frame.
 - `runninghub.run` accepts a project-relative file such as `_inbox/voice.mp3`. The path was resolved from the process folder, so a file inside the project was reported as outside it.

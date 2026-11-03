@@ -630,7 +630,6 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
               {toolLine || "Агент думает…"}
             </div>
           )}
-          {queued && <div class="note info">Ход занят. Это сообщение дождётся конца текущей команды.</div>}
           {pending && <div class="note warn">{waitNote(pending)}</div>}
           {childPending.map((p) => (
             <div key={p.turnId} class="note warn">{waitNote(p, true)}</div>

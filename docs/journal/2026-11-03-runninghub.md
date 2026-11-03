@@ -40,6 +40,10 @@ Installing `developer-kit/mcp-server` as the agent's way to generate. It does no
 
 Add the provider with «Добавить RunningHub» on the Models page if it is not there, paste the Enterprise-Shared key, and save. Enable the plugin and restart `sinty web`. Allow `llm.runninghub.ai`, `www.runninghub.ai` and `raw.githubusercontent.com` in `policy.yaml`. Then Ctrl+F5. Open Settings → RunningHub and press «Обновить реестр».
 
+## Follow-up: no busy line under a queued message
+
+A message sent while the agent is still working stays in the transcript. The chat no longer adds «Ход занят. Это сообщение дождётся конца текущей команды.»
+
 ## Follow-up: supervisor remarks leave the chat
 
 The chat no longer draws `supervisor.notice` and `supervisor.escalated`. Those stay on the Supervisor tab. When the sidebar says a chat is waiting, the transcript shows one line: the question, the tool to approve, or a request to send a message and continue.
