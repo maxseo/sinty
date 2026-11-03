@@ -343,13 +343,18 @@ export function saveModelCatalog(
       continue;
     }
     const protocol = row.protocol === "anthropic" || row.protocol === "openai-responses" ? row.protocol : "openai-compat";
-    if (!known[id] && row.baseUrl) {
-      doc.setIn(["providers", id], { protocol, baseUrl: row.baseUrl.trim() });
-    } else if (row.baseUrl) {
+    const apiKey = row.apiKey?.trim() ? `secret://${id}` : undefined;
+    // A brand-new provider is a plain object. A second setIn for apiKey then fails
+    // ("Expected YAML collection") and the whole save is thrown away.
+    if (!known[id]) {
+      doc.setIn(["providers", id], { protocol, ...(row.baseUrl ? { baseUrl: row.baseUrl.trim() } : {}), ...(apiKey ? { apiKey } : {}) });
+      continue;
+    }
+    if (row.baseUrl) {
       doc.setIn(["providers", id, "baseUrl"], row.baseUrl.trim());
       if (row.protocol) doc.setIn(["providers", id, "protocol"], protocol);
     }
-    if (row.apiKey?.trim()) doc.setIn(["providers", id, "apiKey"], `secret://${id}`);
+    if (apiKey) doc.setIn(["providers", id, "apiKey"], apiKey);
   }
   doc.setIn(["models", "catalog"], clean);
   writeFileSync(paths.config, String(doc));
