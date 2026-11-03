@@ -37,10 +37,18 @@ async function discoverModels(protocol: string, baseUrl: string, apiKey: string)
     return (body.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id)).map((id) => ({ id }));
   }
   const root = baseUrl || "https://api.openai.com/v1";
-  const res = await fetch(`${root}/models`, { headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {} });
+  const headers = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+  const res = await fetch(`${root}/models`, { headers });
   if (!res.ok) throw new AgentError("bad_gateway", `провайдер ответил ${res.status}`, 502);
   const body = (await res.json()) as { data?: { id?: string }[] };
-  return (body.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id)).sort().map((id) => ({ id }));
+  const ids = new Set((body.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id)));
+  // OpenRouter keeps speech models out of the default catalog. They show up on this query.
+  const speech = await fetch(`${root}/models?output_modalities=transcription`, { headers }).catch(() => undefined);
+  if (speech?.ok) {
+    const extra = (await speech.json().catch(() => ({}))) as { data?: { id?: string }[] };
+    for (const id of (extra.data ?? []).map((m) => m.id)) if (id) ids.add(id);
+  }
+  return [...ids].sort().map((id) => ({ id }));
 }
 
 /** Events that the overview stream (`/v1/stream`) carries for all sessions. */
