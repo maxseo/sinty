@@ -42,13 +42,18 @@ async function discoverModels(protocol: string, baseUrl: string, apiKey: string)
   if (!res.ok) throw new AgentError("bad_gateway", `провайдер ответил ${res.status}`, 502);
   const body = (await res.json()) as { data?: { id?: string }[] };
   const ids = new Set((body.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id)));
+  const speechIds = new Set<string>();
   // OpenRouter keeps speech models out of the default catalog. They show up on this query.
   const speech = await fetch(`${root}/models?output_modalities=transcription`, { headers }).catch(() => undefined);
   if (speech?.ok) {
     const extra = (await speech.json().catch(() => ({}))) as { data?: { id?: string }[] };
-    for (const id of (extra.data ?? []).map((m) => m.id)) if (id) ids.add(id);
+    for (const id of (extra.data ?? []).map((m) => m.id)) {
+      if (!id) continue;
+      ids.add(id);
+      speechIds.add(id);
+    }
   }
-  return [...ids].sort().map((id) => ({ id }));
+  return [...ids].sort((a, b) => Number(speechIds.has(b)) - Number(speechIds.has(a)) || a.localeCompare(b)).map((id) => ({ id, ...(speechIds.has(id) ? { speech: true } : {}) }));
 }
 
 /** Events that the overview stream (`/v1/stream`) carries for all sessions. */

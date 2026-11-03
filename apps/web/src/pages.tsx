@@ -109,15 +109,16 @@ function ProviderCard({ p, models, setProviders, setModels }: {
   setProviders: (fn: (cur: { id: string; protocol: string; baseUrl: string; apiKey: string; hasKey: boolean; remove?: boolean }[]) => { id: string; protocol: string; baseUrl: string; apiKey: string; hasKey: boolean; remove?: boolean }[]) => void;
   setModels: (fn: (cur: { route: string; enabled: boolean }[]) => { route: string; enabled: boolean }[]) => void;
 }) {
-  const [remote, setRemote] = useState<string[]>([]);
+  const [remote, setRemote] = useState<{ id: string; speech?: boolean }[]>([]);
+  const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const load = (apiKey: string): void => {
     setBusy(true);
     setErr("");
-    api<{ models: { id: string }[] }>("/v1/models/discover", { method: "POST", body: { id: p.id, baseUrl: p.baseUrl, protocol: p.protocol, apiKey } })
-      .then((body) => { setRemote(body.models.map((m) => m.id)); setPicked([]); })
+    api<{ models: { id: string; speech?: boolean }[] }>("/v1/models/discover", { method: "POST", body: { id: p.id, baseUrl: p.baseUrl, protocol: p.protocol, apiKey } })
+      .then((body) => { setRemote(body.models); setPicked([]); })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
@@ -141,16 +142,19 @@ function ProviderCard({ p, models, setProviders, setModels }: {
       {busy && <p class="small muted">Загрузка моделей…</p>}
       {err && <p class="error">{err}</p>}
       {remote.length > 0 && (
-        <div class="provider-models">
-          {remote.map((id) => {
-            const have = models.some((m) => m.route === `${p.id}/${id}`);
-            return (
-              <label key={id} class="check">
-                <input type="checkbox" checked={have || picked.includes(id)} disabled={have} onChange={() => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id])} />
-                <span>{id}{have && <span class="small muted"> уже в списке</span>}</span>
-              </label>
-            );
-          })}
+        <div>
+          <label class="field">Найти модель<input value={query} placeholder="whisper" onInput={(e) => setQuery(e.currentTarget.value)} /></label>
+          <div class="provider-models">
+            {remote.filter((m) => m.id.toLowerCase().includes(query.trim().toLowerCase())).map((m) => {
+              const have = models.some((row) => row.route === `${p.id}/${m.id}`);
+              return (
+                <label key={m.id} class="check">
+                  <input type="checkbox" checked={have || picked.includes(m.id)} disabled={have} onChange={() => setPicked(picked.includes(m.id) ? picked.filter((x) => x !== m.id) : [...picked, m.id])} />
+                  <span>{m.id}{m.speech && <span class="small muted"> распознавание</span>}{have && <span class="small muted"> уже в списке</span>}</span>
+                </label>
+              );
+            })}
+          </div>
         </div>
       )}
       <div class="provider-foot"><button type="button" disabled={picked.length === 0} onClick={add}>Добавить</button></div>
@@ -179,6 +183,7 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
     cheap: "cheap — дешёвые/служебные вызовы плагинов",
     embed: "embed — эмбеддинги для памяти",
     vision: "vision — описание картинок",
+    stt: "stt — распознавание речи",
     long: "long — длинный контекст",
   };
   useEffect(() => {
@@ -280,6 +285,7 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
         <div class="row">
           <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "llama")) setProviders([...providers, { id: "llama", protocol: "openai-compat", baseUrl: "http://127.0.0.1:8080/v1", apiKey: "", hasKey: false }]); }}>Добавить llama.cpp</button>
           <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "runninghub" && !p.remove)) setProviders([...providers, { id: "runninghub", protocol: "openai-compat", baseUrl: "https://llm.runninghub.ai/v1", apiKey: "", hasKey: false }]); }}>Добавить RunningHub</button>
+          <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "openrouter" && !p.remove)) setProviders([...providers, { id: "openrouter", protocol: "openai-compat", baseUrl: "https://openrouter.ai/api/v1", apiKey: "", hasKey: false }]); }}>Добавить OpenRouter</button>
           <button type="button" class="secondary" onClick={() => setCustom(true)}>Добавить своего провайдера</button>
         </div>
       )}
