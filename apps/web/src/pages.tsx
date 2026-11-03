@@ -174,7 +174,7 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
   const [draft, setDraft] = useState({ id: "", name: "", baseUrl: "https://", protocol: "openai-compat", apiKey: "", models: [{ id: "", title: "" }] });
   const [notice, setNotice] = useState("");
   const [saveError, setSaveError] = useState("");
-  const namedKeys = data?.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "long"];
+  const namedKeys = data?.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "long"];
   const namedLabels: Record<string, string> = {
     cheap: "cheap — дешёвые/служебные вызовы плагинов",
     embed: "embed — эмбеддинги для памяти",
@@ -185,7 +185,7 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
     if (!data) return;
     setModels(data.models.filter((m) => m.enabled));
     setProviders(data.providers.map((p) => ({ id: p.id, protocol: p.protocol, baseUrl: p.baseUrl, apiKey: "", hasKey: p.hasKey })));
-    const keys = data.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "long"];
+    const keys = data.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "long"];
     const next: Record<string, string> = {};
     for (const k of keys) next[k] = data.routes?.[k] ?? "";
     setNamedRoutes(next);

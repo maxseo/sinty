@@ -122,7 +122,7 @@ export interface EventDataMap {
   /** Which experiment arm a session belongs to (once per turn when memory.experiments is set). */
   "memory.experiment": { experiment: string; arm: string; shadow?: string[] };
   /** A plugin called a model through ctx.models. */
-  "models.called": { plugin: string; op: "complete" | "embed"; route: string; provider: string; model: string; inputTokens: number; outputTokens: number; ms: number; ok: boolean; error?: string };
+  "models.called": { plugin: string; op: "complete" | "embed" | "transcribe"; route: string; provider: string; model: string; inputTokens: number; outputTokens: number; ms: number; ok: boolean; error?: string };
 
   /**
    * The turn context: written once, on the first model step of a turn, and shown to the model as a message right

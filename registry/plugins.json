@@ -191,6 +191,14 @@
       ]
     },
     {
+      "name": "tool-stt",
+      "version": "0.1.0",
+      "description": "Transcribe audio files in the workspace: stt.transcribe sends the clip to a speech model and returns text",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
       "name": "tool-vision",
       "version": "0.1.0",
       "description": "Look at image files in the workspace: vision.look sends pixels to a vision model and returns text (describe / OCR / find)",

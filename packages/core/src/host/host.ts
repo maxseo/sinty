@@ -62,7 +62,7 @@ export interface HostEvents {
   readJournal(sessionId: string, afterSeq?: number, types?: EventType[]): SintyEvent[];
   agent?: AgentBridge;
   /** ctx.models from a plugin; the core checks permissions.models, budgets and journals the call. */
-  models?: (plugin: string, allowed: string[] | undefined, op: "complete" | "embed", req: Record<string, unknown>) => Promise<unknown>;
+  models?: (plugin: string, allowed: string[] | undefined, op: "complete" | "embed" | "transcribe", req: Record<string, unknown>) => Promise<unknown>;
 }
 
 interface Pending {
@@ -119,6 +119,7 @@ export class PluginProcess {
   subscriptions: (EventType | "*")[] = [];
   routes: RouteInfo[] = [];
   embedders: string[] = [];
+  transcribers: string[] = [];
   listers: string[] = [];
   memoryProviders: string[] = [];
   memoryProcessors: { name: string; order: number; hooks: string[] }[] = [];
@@ -201,6 +202,7 @@ export class PluginProcess {
           this.subscriptions = msg.subscriptions;
           this.routes = msg.routes;
           this.embedders = msg.embedders ?? [];
+          this.transcribers = msg.transcribers ?? [];
           this.listers = msg.listers ?? [];
           const memory = msg.memory ?? { providers: [], processors: [] };
           if ((memory.providers.length || memory.processors.length) && !m.kinds.includes("memory")) {
@@ -458,6 +460,17 @@ export class PluginProcess {
     }
   }
 
+  async transcribeProvider(protocol: string, req: { endpoint: ProviderWireRequest["endpoint"]; model: string; data: string; mime: string; filename: string; language?: string; prompt?: string }, signal?: AbortSignal, timeoutMs = 300_000): Promise<{ text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }> {
+    const value = await this.request<{ text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }>(
+      (id) => ({ t: "provider.transcribe", id, protocol, req }),
+      (msg) => (msg.t === "provider.transcribed" ? msg : undefined),
+      timeoutMs,
+      `transcription via ${protocol}`,
+      signal,
+    );
+    return value;
+  }
+
   async embedProvider(protocol: string, req: { endpoint: ProviderWireRequest["endpoint"]; model: string; input: string[] }, signal?: AbortSignal, timeoutMs = 60_000): Promise<{ vectors: number[][]; usage?: { inputTokens: number } }> {
     const value = await this.request<{ vectors: number[][]; usage?: { inputTokens: number } }>(
       (id) => ({ t: "provider.embed", id, protocol, req }),
@@ -525,7 +538,7 @@ export class PluginProcess {
     });
   }
 
-  private onModelsCall(id: number, op: "complete" | "embed", req: Record<string, unknown>): void {
+  private onModelsCall(id: number, op: "complete" | "embed" | "transcribe", req: Record<string, unknown>): void {
     const models = this.events.models;
     if (!models) {
       this.send({ t: "models.result", id, ok: false, error: { code: "models_unavailable", message: "this core has no model gateway" } });
@@ -937,6 +950,11 @@ export class PluginHost {
 
   embedderFor(protocol: string): PluginProcess | undefined {
     for (const p of this.plugins.values()) if (!p.disabled && p.embedders.includes(protocol)) return p;
+    return undefined;
+  }
+
+  transcriberFor(protocol: string): PluginProcess | undefined {
+    for (const p of this.plugins.values()) if (!p.disabled && p.transcribers.includes(protocol)) return p;
     return undefined;
   }
 

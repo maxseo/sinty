@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { AgentState, EventType, LiveEvent, SintyEvent, ToolSideEffects } from "./events.js";
 import type { PolicyDecision, ToolDefinition } from "./tool.js";
-import type { EmbedProviderRequest, MemoryProcessorDefinition, MemoryProviderDefinition, ModelsApi } from "./memory.js";
+import type { EmbedProviderRequest, MemoryProcessorDefinition, MemoryProviderDefinition, ModelsApi, TranscribeProviderRequest } from "./memory.js";
 import type { ContextSnapshot } from "./inspect.js";
 import type { SettingsSectionManifest } from "./settings.js";
 
@@ -184,6 +184,8 @@ export interface ProviderDefinition {
   listModels?(endpoint: ProviderEndpoint): Promise<ModelInfo[]>;
   /** Embeddings for `ctx.models.embed` and the builtin vector search. */
   embed?(req: EmbedProviderRequest): Promise<{ vectors: number[][]; usage?: { inputTokens: number } }>;
+  /** Speech-to-text for `ctx.models.transcribe`. */
+  transcribe?(req: TranscribeProviderRequest): Promise<{ text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }>;
 }
 
 // ---- context ----

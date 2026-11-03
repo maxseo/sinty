@@ -60,7 +60,7 @@ function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
   });
 }
 
-function modelsCall<T>(op: "complete" | "embed", req: object): Promise<T> {
+function modelsCall<T>(op: "complete" | "embed" | "transcribe", req: object): Promise<T> {
   const id = ++modelSeq;
   return new Promise<T>((resolve, reject) => {
     modelWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
@@ -239,6 +239,7 @@ async function init(msg: InitMessage): Promise<void> {
     models: {
       complete: (req) => modelsCall("complete", req),
       embed: (req) => modelsCall("embed", req),
+      transcribe: (req) => modelsCall("transcribe", req),
     },
     memory: {
       provider(def) {
@@ -309,6 +310,7 @@ async function init(msg: InitMessage): Promise<void> {
     tools: toolInfos,
     providers: [...providers.keys()],
     embedders: [...providers.values()].filter((p) => typeof p.embed === "function").map((p) => p.protocol),
+    transcribers: [...providers.values()].filter((p) => typeof p.transcribe === "function").map((p) => p.protocol),
     listers: [...providers.values()].filter((p) => typeof p.listModels === "function").map((p) => p.protocol),
     memory: {
       providers: [...memoryProviders.keys()],
@@ -471,6 +473,20 @@ process.on("message", (raw: ToChild) => {
       modelWaiters.delete(raw.id);
       if (raw.ok) w?.resolve(raw.value);
       else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
+      break;
+    }
+    case "provider.transcribe": {
+      const p = providers.get(raw.protocol);
+      if (!p?.transcribe) {
+        send({ t: "provider.transcribed", id: raw.id, ok: false, error: { code: "stt_unsupported", message: `protocol ${raw.protocol} has no transcribe()` } });
+        break;
+      }
+      const ac = new AbortController();
+      running.set(raw.id, ac);
+      p.transcribe({ ...raw.req, signal: ac.signal })
+        .then((value) => send({ t: "provider.transcribed", id: raw.id, ok: true, value }))
+        .catch((e: unknown) => send({ t: "provider.transcribed", id: raw.id, ok: false, error: toWire(e) }))
+        .finally(() => running.delete(raw.id));
       break;
     }
     case "provider.embed": {

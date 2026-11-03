@@ -256,6 +256,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/tool-stt:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/tool-vision:
     dependencies:
       '@sinty/sdk':

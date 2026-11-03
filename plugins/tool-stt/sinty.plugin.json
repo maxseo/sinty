@@ -1,0 +1,61 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "tool-stt",
+  "version": "0.1.0",
+  "description": "Transcribe audio files in the workspace: stt.transcribe sends the clip to a speech model and returns text",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$WORKSPACE", "$SKILLS"] },
+    "models": ["stt", "*"]
+  },
+  "tools": [
+    {
+      "name": "stt.transcribe",
+      "sideEffects": "external",
+      "idempotent": true,
+      "docs": "README.md",
+      "defaultPolicy": "ask"
+    }
+  ],
+  "config": {
+    "modelRoute": "",
+    "maxAudioMb": 25,
+    "language": ""
+  },
+  "settings": {
+    "title": "STT",
+    "description": "stt.transcribe reads an audio or video file in the project and returns the spoken text. The route is models.routes.stt on an openai-compat server that accepts POST /audio/transcriptions.",
+    "fields": [
+      {
+        "key": "modelRoute",
+        "label": "Model / route",
+        "type": "text",
+        "group": "Model",
+        "optional": true,
+        "help": "Empty = models.routes.stt. Override with a models.routes key or provider/model-id (openai-compat speech-to-text, for example openai/whisper-1)."
+      },
+      {
+        "key": "maxAudioMb",
+        "label": "Max audio size",
+        "type": "number",
+        "group": "Limits",
+        "min": 1,
+        "max": 25,
+        "integer": true,
+        "unit": "MB",
+        "help": "OpenAI-compatible transcription accepts one file up to 25 MB."
+      },
+      {
+        "key": "language",
+        "label": "Language",
+        "type": "text",
+        "group": "Model",
+        "optional": true,
+        "help": "ISO-639-1, for example ru. Empty lets the model detect the language. A call can still pass its own language."
+      }
+    ]
+  },
+  "editable": true
+}
