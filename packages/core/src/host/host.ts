@@ -793,7 +793,9 @@ export class PluginProcess {
     const allow = [...this.policy.net.allow];
     if (this.loaded.manifest.kinds.includes("provider")) {
       for (const p of Object.values(this.config.providers)) {
-        if (p.baseUrl) allow.push(new URL(p.baseUrl).hostname);
+        if (p.baseUrl) {
+          try { allow.push(new URL(p.baseUrl).hostname); } catch { /* a provider card can hold text that is not an address */ }
+        }
       }
       if (Object.values(this.config.providers).some((p) => p.protocol === "anthropic" && !p.baseUrl)) allow.push("api.anthropic.com");
     }

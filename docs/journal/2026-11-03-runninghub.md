@@ -40,6 +40,10 @@ Installing `developer-kit/mcp-server` as the agent's way to generate. It does no
 
 Add the provider with «Добавить RunningHub» on the Models page if it is not there, paste the Enterprise-Shared key, and save. Enable the plugin and restart `sinty web`. Allow `llm.runninghub.ai`, `www.runninghub.ai` and `raw.githubusercontent.com` in `policy.yaml`. Then Ctrl+F5. Open Settings → RunningHub and press «Обновить реестр».
 
+## Follow-up
+
+The public registry has `class_name` and `display_name`, not `id`, and a list option is `{ value }`. The first parser dropped every row, so the page stayed on the two seed cards. Opening the section now downloads the file. A provider base URL that is not a URL is skipped, so that card cannot stop the server from starting.
+
 ## Known limitations
 
 AI Apps and workflows are not in the standard-model registry. A result file larger than 20 MB, or hosted on a name that is not in `net.allow`, is returned as a URL. Prices are not shown.

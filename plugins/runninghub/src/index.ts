@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { pollTask, submitTask, uploadFile, type RhFetch } from "./client.js";
@@ -41,6 +41,21 @@ export default definePlugin({
       return (typeof configured === "string" && configured.trim() ? configured : DEFAULT_BASE).replace(/\/+$/, "");
     }
 
+    let refreshOnce: Promise<void> | undefined;
+    let registryError = "";
+
+    /** The page used to stay on the two seed cards until a person pressed refresh, and the public file has no `id`. */
+    async function ensureRegistry(): Promise<void> {
+      if (existsSync(registryFile)) return;
+      if (!refreshOnce) {
+        refreshOnce = refreshRegistry()
+          .then(() => { registryError = ""; })
+          .catch((e: unknown) => { registryError = e instanceof Error ? e.message : "реестр не скачался"; })
+          .finally(() => { refreshOnce = undefined; });
+      }
+      await refreshOnce;
+    }
+
     function readRegistry(): { registry: RhRegistry; source: "registry" | "seed" } {
       try {
         return { registry: parseRegistry(JSON.parse(readFileSync(registryFile, "utf8"))), source: "registry" };
@@ -71,6 +86,7 @@ export default definePlugin({
     const fetchRh: RhFetch = (url, init) => ctx.net.public.fetch(url, init);
 
     async function runModel(endpoint: string, payload: Record<string, unknown>, files: { field: string; path: string }[], destRoot: string): Promise<unknown> {
+      await ensureRegistry();
       const model = modelByEndpoint(readRegistry().registry, endpoint);
       if (!model) throw new ToolError("runninghub_endpoint", `нет endpoint ${endpoint}`, { hint: "Сначала runninghub.search, потом runninghub.schema." });
       const key = await apiKey();
@@ -124,6 +140,7 @@ export default definePlugin({
       sideEffects: "read",
       idempotent: true,
       async run(args) {
+        await ensureRegistry();
         const { registry, source } = readRegistry();
         const items = searchModels(registry, args.query, args.type).map(cardOf);
         return { content: { source, count: registry.models.length, items } };
@@ -137,6 +154,7 @@ export default definePlugin({
       sideEffects: "read",
       idempotent: true,
       async run(args) {
+        await ensureRegistry();
         const model = modelByEndpoint(readRegistry().registry, args.endpoint);
         if (!model) throw new ToolError("runninghub_endpoint", `нет endpoint ${args.endpoint}`);
         return { content: { model } };
@@ -155,6 +173,7 @@ export default definePlugin({
       timeoutMs: 1_200_000,
       idempotent: false,
       async run(args, tool) {
+        await ensureRegistry();
         const root = tool.workspace || ctx.paths.workspace;
         return { content: await runModel(args.endpoint, args.payload, args.files, root) };
       },
@@ -172,10 +191,11 @@ export default definePlugin({
       surface: "settings",
       access: "view",
       handler: async () => {
+        await ensureRegistry();
         const { registry, source } = readRegistry();
         let hasKey = false;
         try { await ctx.secrets.get("runninghub"); hasKey = true; } catch { /* the models card has no key yet */ }
-        return json({ hasKey, baseUrl: baseUrl(), count: registry.models.length, version: registry.version ?? "", source });
+        return json({ hasKey, baseUrl: baseUrl(), count: registry.models.length, version: registry.version ?? "", source, ...(registryError ? { registryError } : {}) });
       },
     });
     ctx.http({
@@ -183,10 +203,14 @@ export default definePlugin({
       path: "/search",
       surface: "settings",
       access: "view",
-      handler: (req) => {
+      handler: async (req) => {
+        await ensureRegistry();
         const url = new URL(req.url);
         const { registry } = readRegistry();
-        return json({ items: searchModels(registry, url.searchParams.get("q") ?? "", url.searchParams.get("type") ?? "").map(cardOf) });
+        const requested = Number(url.searchParams.get("limit") ?? "1000");
+        const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 1000) : 1000;
+        const matched = searchModels(registry, url.searchParams.get("q") ?? "", url.searchParams.get("type") ?? "", 100000);
+        return json({ items: matched.slice(0, limit).map(cardOf), total: matched.length });
       },
     });
     ctx.http({
@@ -194,7 +218,8 @@ export default definePlugin({
       path: "/schema",
       surface: "settings",
       access: "view",
-      handler: (req) => {
+      handler: async (req) => {
+        await ensureRegistry();
         const endpoint = new URL(req.url).searchParams.get("endpoint") ?? "";
         const model: RhModel | undefined = modelByEndpoint(readRegistry().registry, endpoint);
         if (!model) return fail("нет такого endpoint", 404);

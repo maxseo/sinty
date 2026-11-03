@@ -61,17 +61,20 @@ function setErr(text) { errEl.textContent = text || ""; }
 async function loadStatus() {
   const m = await ask("get", "/status");
   const d = m.data || {};
-  document.getElementById("status").textContent = "Моделей в реестре: " + (d.count || 0) + (d.version ? " (" + d.version + ")" : "") + ". Ключ " + (d.hasKey ? "задан на плашке runninghub." : "не задан: введите его в Настройки → Модели, плашка runninghub.") + " Адрес моделей: " + (d.baseUrl || "");
+  document.getElementById("status").textContent = "Моделей в реестре: " + (d.count || 0) + (d.version ? " (" + d.version + ")" : "") + ". Ключ " + (d.hasKey ? "задан на плашке runninghub." : "не задан: введите его в Настройки → Модели, плашка runninghub, и сохраните.") + " Адрес моделей: " + (d.baseUrl || "");
+  if (d.registryError) setErr(d.registryError);
 }
 async function search() {
   setErr("");
   const q = document.getElementById("q").value;
   const kind = document.getElementById("kind").value;
-  const m = await ask("get", "/search?q=" + encodeURIComponent(q) + "&type=" + encodeURIComponent(kind));
+  const m = await ask("get", "/search?limit=1000&q=" + encodeURIComponent(q) + "&type=" + encodeURIComponent(kind));
   if (!m.ok) { setErr((m.error && m.error.message) || "Поиск не выполнился."); return; }
   grid.replaceChildren();
   const items = (m.data && m.data.items) || [];
+  const total = m.data && m.data.total;
   if (!items.length) { setErr("Ничего не найдено."); return; }
+  if (total > items.length) setErr("Показано " + items.length + " из " + total + ". Уточните поиск.");
   for (const item of items) {
     const card = document.createElement("button");
     card.type = "button";
