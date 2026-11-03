@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-03 | [Chat markdown](2026-11-03-chat-markdown.md) | (open) | Agent replies render headings, lists, tables, links and code. |
 | 2026-11-03 | [RunningHub](2026-11-03-runninghub.md) | (open) | Text models are a provider card. The generative catalog opens in Settings. |
 | 2026-11-02 | [Hyperframes library](2026-11-02-hyperframes-library.md) | (open) | The Hyperframes tab installs the reported npm update and lists saved compositions. |
 | 2026-11-02 | [Chat scroll](2026-11-02-chat-scroll.md) | (open) | The chat column beside the editor scrolls down only. Long lines wrap. |

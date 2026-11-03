@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribe, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { IconBrain, IconMic, IconPlus } from "./icons.js";
+import { Markdown } from "./markdown.js";
 import { MediaView } from "./media.js";
 import { mergeMedia, splitMedia, type MediaRef } from "./media-ref.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
@@ -184,7 +185,7 @@ function AgentBody({ text, media, sessionId }: { text: string; media: MediaRef[]
   const files = mergeMedia(media, parsed.files);
   return (
     <>
-      {parsed.text && <div class="msg-text">{parsed.text}</div>}
+      {parsed.text && <Markdown text={parsed.text} />}
       {files.map((file) => <MediaView key={file.path} sessionId={sessionId} file={file} />)}
     </>
   );
