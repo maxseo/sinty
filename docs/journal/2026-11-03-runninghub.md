@@ -40,6 +40,10 @@ Installing `developer-kit/mcp-server` as the agent's way to generate. It does no
 
 Add the provider with «Добавить RunningHub» on the Models page if it is not there, paste the Enterprise-Shared key, and save. Enable the plugin and restart `sinty web`. Allow `llm.runninghub.ai`, `www.runninghub.ai` and `raw.githubusercontent.com` in `policy.yaml`. Then Ctrl+F5. Open Settings → RunningHub and press «Обновить реестр».
 
+## Follow-up: a large chat file is streamed, not base64
+
+Attaching a file read the whole thing into a base64 string, so a 118 MB file closed the tab with Out of Memory. The upload is now the file itself. The server writes it in chunks, up to 512 MB, and the project copy goes to `_inbox`. A file larger than 8 MB is named in the prompt and is not pasted into the model.
+
 ## Follow-up: no busy line under a queued message
 
 A message sent while the agent is still working stays in the transcript. The chat no longer adds «Ход занят. Это сообщение дождётся конца текущей команды.»

@@ -9,7 +9,7 @@ import { streamSSE } from "hono/streaming";
 import { scrubText } from "@sinty/supervisor";
 import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
-import { saveBlob } from "../blobs.js";
+import { BLOB_MAX_BYTES, saveBlob, saveBlobStream } from "../blobs.js";
 import { AccountError, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
 import { accessRegistry, registryIds, routeRight, sectionResource, tabResource, type AccessGroup, type RegistryPlugin } from "../access-registry.js";
 import { rotateApiToken, TokenRotationError } from "../api-token.js";
@@ -724,18 +724,26 @@ export function createApp(sinty: Sinty): Hono {
   });
 
   app.post("/v1/blobs", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { name?: string; mime?: string; dataBase64?: string };
-    if (!body.dataBase64) throw new AgentError("bad_request", "dataBase64 is required");
-    let bytes: Buffer;
+    const type = c.req.header("content-type") ?? "";
     try {
-      bytes = Buffer.from(body.dataBase64, "base64");
-    } catch {
-      throw new AgentError("bad_request", "dataBase64 is not valid");
-    }
-    if (!bytes.length) throw new AgentError("bad_request", "file is empty");
-    try {
-      return c.json(saveBlob(sinty.paths.data, { bytes, mime: body.mime || "application/octet-stream", ...(body.name ? { name: body.name } : {}) }), 201);
+      if (type.includes("application/json")) {
+        const body = (await c.req.json().catch(() => ({}))) as { name?: string; mime?: string; dataBase64?: string };
+        if (!body.dataBase64) throw new AgentError("bad_request", "dataBase64 is required");
+        const bytes = Buffer.from(body.dataBase64, "base64");
+        if (!bytes.length) throw new AgentError("bad_request", "file is empty");
+        return c.json(saveBlob(sinty.paths.data, { bytes, mime: body.mime || "application/octet-stream", ...(body.name ? { name: body.name } : {}) }), 201);
+      }
+      const announced = Number(c.req.header("content-length") ?? "");
+      if (Number.isFinite(announced) && announced > BLOB_MAX_BYTES) throw new AgentError("bad_request", `файл больше ${BLOB_MAX_BYTES} байт`);
+      const rawName = c.req.query("name") ?? "";
+      let name = rawName;
+      try { name = decodeURIComponent(rawName); } catch { /* keep the raw query */ }
+      const body = c.req.raw.body;
+      if (!body) throw new AgentError("bad_request", "файл пустой");
+      const ref = await saveBlobStream(sinty.paths.data, { body, mime: type.split(";")[0]?.trim() || "application/octet-stream", ...(name ? { name } : {}) });
+      return c.json(ref, 201);
     } catch (e) {
+      if (e instanceof AgentError) throw e;
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
     }
   });
