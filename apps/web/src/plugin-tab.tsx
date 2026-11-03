@@ -11,7 +11,7 @@ export interface PluginTabInfo {
   /** A page of this Web UI build (`board`, `calendar`) instead of an iframe. */
   builtin?: string;
   /** `sidebar`: own page in the left nav. `session`: a view toggle in the open chat's header. `project`: a tab inside a project. */
-  placement: "sidebar" | "session" | "project";
+  placement: "sidebar" | "session" | "project" | "settings";
 }
 
 /** Access right of a tab, as in docs/spec/plugin-rules.md. */

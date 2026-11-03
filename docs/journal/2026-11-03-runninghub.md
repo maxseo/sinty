@@ -1,0 +1,49 @@
+# RunningHub is a text provider and a settings catalog
+
+- Date: 2026-11-03
+- Area: plugins/runninghub
+- Plan step: none
+- Commits: this commit
+- PR: (open)
+
+## What and why
+
+RunningHub has two protocols. Language models speak OpenAI-compatible chat at `https://llm.runninghub.ai/v1`, so they are one more provider on Settings → Models, next to OpenRouter, with the same Enterprise-Shared key. Image, video, audio and 3D models are tasks: upload, submit, poll. Those live in plugin `runninghub`. The catalog opens as the RunningHub item in Settings, not in the left navigation. A later syntet.ru plugin can keep the same shape and change the two base addresses.
+
+Model ids from that catalog contain a slash (`openai/gpt-6.1-sol-saver`). The route check now allows slashes after the provider name. The provider is still the first segment.
+
+## Files touched
+
+- `plugins/runninghub/`
+- `packages/core/src/config.ts`
+- `packages/sdk/src/plugin.ts`
+- `packages/core/src/host/manifest.ts`
+- `schemas/plugin-manifest.schema.json`
+- `apps/web/src/supervisor-ui.tsx`
+- `apps/web/src/pages.tsx`
+- `apps/web/src/plugin-tab.tsx`
+- `apps/web/src/style.css`
+
+## Design decisions
+
+The catalog page is a plugin tab with `placement: settings`. The settings section of the same plugin is replaced by that page, so the item sits with Основные and Модели. The official MCP server only reads schemas and does not run a task, so the plugin runs the contract itself: `POST /media/upload/binary`, `POST /{endpoint}`, `POST /query`. The registry file is downloaded into the plugin data directory. Two seed models are enough for the page before that download.
+
+The key is `secret://runninghub`, the name the Models card writes when the provider id is `runninghub`. The catalog does not ask for a second key.
+
+## Rejected alternatives
+
+Putting every generative model on the Models card. That card only lists chat routes.
+
+Installing `developer-kit/mcp-server` as the agent's way to generate. It does not upload, submit or poll.
+
+## Migration notes
+
+Add the provider with «Добавить RunningHub» on the Models page if it is not there, paste the Enterprise-Shared key, and save. Enable the plugin and restart `sinty web`. Allow `llm.runninghub.ai`, `www.runninghub.ai` and `raw.githubusercontent.com` in `policy.yaml`. Then Ctrl+F5. Open Settings → RunningHub and press «Обновить реестр».
+
+## Known limitations
+
+AI Apps and workflows are not in the standard-model registry. A result file larger than 20 MB, or hosted on a name that is not in `net.allow`, is returned as a URL. Prices are not shown.
+
+## How to test
+
+`node --test plugins/runninghub/dist/registry.test.js` and `node --test packages/core/dist/__tests__/model-route.test.js` after the builds. In the harness, the Models card lists RunningHub text models after the key is saved, and Settings → RunningHub lists standard models after the registry refresh.

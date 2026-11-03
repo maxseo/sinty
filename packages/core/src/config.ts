@@ -267,7 +267,8 @@ export function loadPolicy(paths: SintyPaths): SintyPolicy {
 }
 
 const PLUGIN_NAME = /^[a-z0-9][a-z0-9-]*$/;
-const MODEL_ROUTE = /^[a-z0-9][a-z0-9_-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+/** `provider/model-id`. The id may contain slashes (`runninghub/openai/gpt-6.1`); the provider is the first segment. */
+const MODEL_ROUTE = /^[a-z0-9][a-z0-9_-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)*$/;
 
 /** Writes model, fallback and enabled plugins into config.yaml, and the persona into AGENTS.md. Secrets stay untouched. */
 export const DEFAULT_COMPRESS_PROMPT = "Fold the transcript into one summary. Keep the user's goals, decisions, open promises, file paths and ids, and what is already done.";
@@ -475,6 +476,9 @@ net:
     - api.openai.com
     - api.x.ai
     - api.deepseek.com
+    - llm.runninghub.ai
+    - www.runninghub.ai
+    - raw.githubusercontent.com
     - 127.0.0.1
     - localhost
 

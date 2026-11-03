@@ -736,6 +736,8 @@ nav a:hover,
   max-width: 1100px;
 }
 .settings-page { max-width: none; width: 100%; }
+.settings-page:has(.plugin-tab) { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.settings-page:has(.plugin-tab) .plugin-tab { flex: 1; min-height: 0; }
 .settings-sheet { width: min(920px, 100%); }
 .set-row { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .set-row select { width: 180px; height: 36px; }

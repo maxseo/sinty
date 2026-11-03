@@ -279,6 +279,7 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
       ) : (
         <div class="row">
           <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "llama")) setProviders([...providers, { id: "llama", protocol: "openai-compat", baseUrl: "http://127.0.0.1:8080/v1", apiKey: "", hasKey: false }]); }}>Добавить llama.cpp</button>
+          <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "runninghub" && !p.remove)) setProviders([...providers, { id: "runninghub", protocol: "openai-compat", baseUrl: "https://llm.runninghub.ai/v1", apiKey: "", hasKey: false }]); }}>Добавить RunningHub</button>
           <button type="button" class="secondary" onClick={() => setCustom(true)}>Добавить своего провайдера</button>
         </div>
       )}

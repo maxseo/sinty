@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { SkillsPane } from "./skills-pane";
 import { McpPane } from "./mcp-pane";
+import { PluginTab, type PluginTabInfo } from "./plugin-tab";
 import { api, shortTime, type SintyEvent } from "./api.js";
 import { href } from "./route.js";
 
@@ -170,8 +171,30 @@ function toDraft(s: SectionInfo): Draft {
   return d;
 }
 
+/** A plugin tab with placement `settings` fills that plugin's settings section. */
+function useSettingsCatalog(plugin: string): PluginTabInfo | null | undefined {
+  const [tab, setTab] = useState<PluginTabInfo | null | undefined>(plugin ? undefined : null);
+  useEffect(() => {
+    if (!plugin) return;
+    api<{ plugins: { name: string; tabs?: { id: string; title: string; src?: string; placement?: string }[] }[] }>("/v1/plugins")
+      .then((r) => {
+        const found = r.plugins.find((p) => p.name === plugin)?.tabs?.find((t) => t.placement === "settings" && t.src);
+        setTab(found?.src ? { plugin, id: found.id, title: found.title, src: found.src, placement: "settings" } : null);
+      })
+      .catch(() => setTab(null));
+  }, [plugin]);
+  return tab;
+}
+
+function RunningHubSettings() {
+  const catalog = useSettingsCatalog("runninghub");
+  if (!catalog) return catalog === undefined ? null : <p class="error">Каталог RunningHub не запущен. Включите плагин и перезапустите sinty web.</p>;
+  return <PluginTab tab={catalog} />;
+}
+
 /** One section as a form; only changed fields are sent. */
 export function SectionPane({ id }: { id: string }) {
+  if (id === "plugin.runninghub") return <RunningHubSettings />;
   if (id === "plugin.mcp-catalog") return <McpPane />;
   if (id === "plugin.skills") return <SkillsPane />;
   const [section, setSection] = useState<SectionInfo>();

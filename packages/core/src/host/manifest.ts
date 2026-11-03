@@ -17,7 +17,7 @@ const uiTabSchema = z
       .refine((p) => !p.split("/").some((seg) => seg === ".." || seg === "."), "path must not contain . or .. segments")
       .optional(),
     builtin: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).optional(),
-    placement: z.enum(["sidebar", "session", "project"]).optional(),
+    placement: z.enum(["sidebar", "session", "project", "settings"]).optional(),
   })
   .strict()
   .refine((t) => (t.path === undefined) !== (t.builtin === undefined), { message: 'a tab needs exactly one of "path" and "builtin"' });

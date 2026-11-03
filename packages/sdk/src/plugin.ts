@@ -51,12 +51,13 @@ export interface UiTab {
    * `session`: a view toggle in the header of an open chat, next to "Чат" and "Журнал"; the bridge tells the page
    * which session is open (`init.sessionId`, then `{ op: "session" }` when the user switches chats).
    * `project`: a tab inside a project; the bridge tells the page `init.projectId`.
+   * `settings`: shown as that plugin's settings section, not in the left navigation.
    * Every tab is an access right `ui:<plugin>/<id>` (docs/spec/plugin-rules.md).
    */
   placement?: UiTabPlacement;
 }
 
-export type UiTabPlacement = "sidebar" | "session" | "project";
+export type UiTabPlacement = "sidebar" | "session" | "project" | "settings";
 
 export interface ManifestTool {
   name: string;

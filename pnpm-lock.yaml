@@ -187,6 +187,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/runninghub:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/runtimes:
     dependencies:
       '@sinty/sdk':
