@@ -20,7 +20,8 @@ import { installMcpPlugin, McpInstallError, type McpInstallInput } from "../mcp-
 import { installHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
 import { discoverPlugins } from "../discover.js";
 import { loadRegistry } from "../registry.js";
-import { deleteAgent, deleteProject, listAgents, listProjects, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
+import { openGenerationFile } from "../media-file.js";
+import { deleteAgent, deleteProject, ensureProjectDirs, listAgents, listProjects, projectDir, saveAgent, saveProject, setSharedPlugins, sharedPlugins, type AgentRecord } from "../roster.js";
 import { assignPolicy, listSections, saveSection } from "../settings-sections.js";
 import { matchRoute, serveStatic } from "./static.js";
 import type { RouteInfo } from "../host/protocol.js";
@@ -745,6 +746,26 @@ export function createApp(sinty: Sinty): Hono {
     if (!text) throw new AgentError("bad_request", "text is required");
     const r = sinty.agent.send(c.req.param("id"), text, { idempotencyKey: c.req.header("idempotency-key"), channel: body.channel, attachments: body.attachments, agentId: body.agentId });
     return c.json(r, 202);
+  });
+
+  app.get("/v1/sessions/:id/media", (c) => {
+    const id = c.req.param("id");
+    const session = sinty.journal.getSession(id);
+    if (!session) throw new AgentError("not_found", "session not found", 404);
+    const project = session.projectId ? listProjects(sinty.paths).find((p) => p.id === session.projectId) : undefined;
+    if (project) ensureProjectDirs(sinty.paths, project);
+    const root = project ? projectDir(sinty.paths, project) : sinty.paths.workspace;
+    const opened = openGenerationFile(root, c.req.query("path") ?? "");
+    if (!opened) throw new AgentError("not_found", "file not found", 404);
+    const bytes = readFileSync(opened.file);
+    return new Response(bytes, {
+      headers: {
+        "content-type": opened.type,
+        "content-length": String(bytes.length),
+        "cache-control": "private, max-age=3600",
+        "x-content-type-options": "nosniff",
+      },
+    });
   });
 
   app.get("/v1/sessions/:id/events", (c) => {

@@ -20,6 +20,29 @@ const TAB_CSP = [
 const DEFAULT_BASE = "https://www.runninghub.ai/openapi/v2";
 const DEFAULT_REGISTRY = "https://raw.githubusercontent.com/HM-RunningHub/ComfyUI_RH_OpenAPI/main/developer-kit/model-registry.public.json";
 
+function fileExt(kind: string, url: string, contentType: string): string {
+  const fromType: Record<string, string> = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "video/quicktime": ".mov",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/mp4": ".m4a",
+    "audio/ogg": ".ogg",
+  };
+  const typed = fromType[contentType.split(";")[0]?.trim().toLowerCase() ?? ""];
+  if (typed) return typed;
+  const named = /\.(png|jpe?g|webp|gif|mp4|webm|mov|mp3|wav|m4a|ogg)(?:$|\?)/i.exec(url);
+  if (named?.[1]) return `.${named[1].toLowerCase().replace("jpeg", "jpg")}`;
+  if (kind === "video") return ".mp4";
+  if (kind === "audio") return ".mp3";
+  return ".png";
+}
+
 function insideDir(root: string, file: string): boolean {
   const rel = relative(resolve(root), resolve(file));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
@@ -128,17 +151,19 @@ export default definePlugin({
           error = apiError(result.raw);
           throw new ToolError("runninghub_task", [`задача ${taskId}: ${result.status}`, error].filter(Boolean).join(" — "), { hint: "Статус можно посмотреть в Tasks & Billing RunningHub." });
         }
-        const dir = join(destRoot, "_out", "runninghub", taskId);
+        const safeId = taskId.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80) || "task";
+        const dir = join(destRoot, "_out", "generation", safeId);
         mkdirSync(dir, { recursive: true });
         for (const [i, output] of result.outputs.entries()) {
           if (!/^https?:\/\//i.test(output.url)) continue;
           try {
             const res = await ctx.net.public.fetch(output.url, { timeoutMs: 60_000, maxBytes: 20_000_000 });
             if (!res.ok) continue;
-            const ext = kind === "video" ? ".mp4" : kind === "audio" ? ".mp3" : ".png";
+            const ext = fileExt(kind, output.url, res.headers.get("content-type") ?? "");
             const file = join(dir, `${i}${ext}`);
             writeFileSync(file, Buffer.from(await res.arrayBuffer()));
-            saved.push(file);
+            const rel = relative(destRoot, file).replace(/\\/g, "/");
+            saved.push(rel.startsWith("..") ? file : rel);
           } catch {
             /* the url stays in the answer when the file host is outside the allow list or the file is large */
           }
@@ -197,7 +222,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "runninghub.run",
-      description: "Submit one RunningHub standard model and wait for the result. files are { field, path } inside the chat project; local paths are uploaded first. Image, video and audio URLs in the payload must already be remote addresses.",
+      description: "Submit one RunningHub standard model and wait for the result. files are { field, path } inside the chat project; local paths are uploaded first. Image, video and audio URLs in the payload must already be remote addresses. Saved results are project-relative paths under _out/generation. The chat plays those files. Tell the user the result is ready and include each saved path; do not paste the remote URL.",
       input: z.object({
         endpoint: z.string(),
         payload: z.record(z.string(), z.unknown()).default({}),

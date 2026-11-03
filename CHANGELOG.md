@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The chat plays generated media. Audio is a card with a play button and an equalizer, video has play, a scrubber and fullscreen, and a picture opens to the full screen and closes with the cross. Files land in the project folder `_out/generation`.
 - Plugin `runninghub` opens the standard-model catalog (image, video, audio, 3D) in Settings. Text models stay on the Models card as provider `runninghub` (`https://llm.runninghub.ai/v1`). A model id may contain slashes after the provider name.
 - The RunningHub catalog reads the public registry (484 models). A provider address that is not a URL no longer stops the server from starting.
 - `runninghub.run` reports the `errorMessage` RunningHub sends with HTTP 200. A task id under `data` is accepted.

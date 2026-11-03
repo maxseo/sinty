@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribe, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { IconBrain, IconMic, IconPlus } from "./icons.js";
+import { MediaView } from "./media.js";
+import { mergeMedia, splitMedia, type MediaRef } from "./media-ref.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
 import { SupervisorView } from "./supervisor-ui.js";
 
@@ -11,6 +13,7 @@ const NO_TABS: PluginTabInfo[] = [];
 const CHAT_TYPES = [
   "message.user",
   "message.agent",
+  "chat.media",
   "supervisor.notice",
   "supervisor.escalated",
   "turn.failed",
@@ -91,23 +94,47 @@ interface ToolCall {
 
 type Item =
   | { kind: "user"; key: string; text: string; ts: string; files: string[] }
-  | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string }
+  | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string; media: MediaRef[] }
   | { kind: "tool"; key: string; call: ToolCall }
   | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
+
+function mediaOf(value: unknown): MediaRef[] {
+  if (!Array.isArray(value)) return [];
+  const files: MediaRef[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { path?: unknown; kind?: unknown };
+    if (typeof row.path !== "string") continue;
+    if (row.kind !== "audio" && row.kind !== "video" && row.kind !== "image") continue;
+    files.push({ path: row.path, kind: row.kind });
+  }
+  return files;
+}
 
 const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "session.policy_grant", "task.completed", "task.progress"]);
 
 function build(events: SintyEvent[]): Item[] {
   const items: Item[] = [];
+  let pending: MediaRef[] = [];
+  const flush = (): void => {
+    if (!pending.length) return;
+    items.push({ kind: "agent", key: `media-${items.length}`, text: "", ts: "", media: pending });
+    pending = [];
+  };
   for (const e of events) {
     const d = e.data as Record<string, any>;
     const key = String(e.seq ?? e.id);
     switch (e.type) {
+      case "chat.media":
+        pending = mergeMedia(pending, mediaOf(d.files));
+        break;
       case "message.user":
+        flush();
         items.push({ kind: "user", key, text: d.text, ts: e.ts, files: (d.attachments ?? []).map((a: { name?: string }) => a.name || "файл") });
         break;
       case "message.agent":
-        if (d.text) items.push({ kind: "agent", key, text: d.text, ts: e.ts, name: d.agentName });
+        if (d.text || pending.length) items.push({ kind: "agent", key, text: d.text ?? "", ts: e.ts, name: d.agentName, media: pending });
+        pending = [];
         break;
       case "model.response":
       case "tool.call.requested":
@@ -148,7 +175,19 @@ function build(events: SintyEvent[]): Item[] {
         break;
     }
   }
+  flush();
   return items;
+}
+
+function AgentBody({ text, media, sessionId }: { text: string; media: MediaRef[]; sessionId: string }) {
+  const parsed = splitMedia(text);
+  const files = mergeMedia(media, parsed.files);
+  return (
+    <>
+      {parsed.text && <div class="msg-text">{parsed.text}</div>}
+      {files.map((file) => <MediaView key={file.path} sessionId={sessionId} file={file} />)}
+    </>
+  );
 }
 
 
@@ -570,7 +609,7 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
                 return (
                   <div key={it.key} class={`msg agent${it.interim ? " interim" : ""}`}>
                     {it.name && <div class="muted small">{it.name}</div>}
-                    {it.text}
+                    <AgentBody text={it.text} media={it.media} sessionId={sessionId} />
                   </div>
                 );
               case "note":
@@ -583,7 +622,11 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
                 return null;
             }
           })}
-          {liveText && <div class="msg agent interim">{liveText}</div>}
+          {liveText && (
+            <div class="msg agent interim">
+              <AgentBody text={liveText} media={[]} sessionId={sessionId} />
+            </div>
+          )}
           {(toolLine || (running && !liveText)) && (
             <div class={`typing shimmer${presence?.warn ? " warn" : ""}`} aria-live="polite">
               {toolLine || "Агент думает…"}
