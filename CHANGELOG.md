@@ -18,6 +18,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- The Видео film list opens when a newer library file cannot replace its inbox copy. Windows reported that copy as completed successfully, and the list stayed empty.
 - Attaching a large file to the chat no longer loads it into the tab as base64. The file is streamed to disk, up to 512 MB, and a copy lands in the project `_inbox`.
 - The chat no longer adds a line when a message is sent during a running turn. The message stays in the transcript and waits for the current command.
 - Supervisor remarks stay on the Supervisor tab. While a chat is waiting, the transcript says what the user has to do: answer the question, approve a tool, or send a message to continue.

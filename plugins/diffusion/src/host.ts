@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -735,7 +735,10 @@ export function mirrorAssets(data: string, filmDir: string): string | null {
     const from = join(src, name);
     if (!existsSync(from) || statSync(from).isDirectory()) continue;
     const to = join(dest, name);
-    if (!existsSync(to) || statSync(from).mtimeMs > statSync(to).mtimeMs) cpSync(from, to);
+    if (!existsSync(to) || statSync(from).mtimeMs > statSync(to).mtimeMs) {
+      try { copyFileSync(from, to); }
+      catch { /* replacing an inbox copy can fail on Windows; the film list still opens */ }
+    }
   }
   return dest;
 }
