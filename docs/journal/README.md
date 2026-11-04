@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-04 | [Plugin library](2026-11-04-plugin-library.md) | (open) | Disabling a plugin hides its tabs and tools at once. Deleting a home plugin erases its data. |
 | 2026-11-03 | [STT](2026-11-03-stt.md) | (open) | `stt.transcribe` returns the spoken text of a project audio file. |
 | 2026-11-03 | [Film list copy](2026-11-03-film-list-copy.md) | (open) | The film list opens when Windows refuses to replace an inbox copy. |
 | 2026-11-03 | [Chat markdown](2026-11-03-chat-markdown.md) | (open) | Agent replies render headings, lists, tables, links and code. |

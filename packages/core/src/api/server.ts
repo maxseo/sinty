@@ -17,7 +17,7 @@ import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, NAMED_MODEL_ROUTES, saveModelCatalog, saveNamedRoutes, saveSettings } from "../config.js";
 import { installMcpPlugin, McpInstallError, type McpInstallInput } from "../mcp-install.js";
-import { installHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
+import { installHomePlugin, removeHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
 import { discoverPlugins } from "../discover.js";
 import { loadRegistry } from "../registry.js";
 import { openGenerationFile } from "../media-file.js";
@@ -388,7 +388,11 @@ export function createApp(sinty: Sinty): Hono {
       compress: sinty.config.service.compress || DEFAULT_COMPRESS_PROMPT,
       facts: sinty.config.service.facts || DEFAULT_FACTS_PROMPT,
       stallSeconds: sinty.config.supervisor.stallSeconds,
-      plugins: [...catalog.map((p) => ({ ...p, enabled: enabled.has(p.name) })), ...extra],
+      plugins: [...catalog.map((p) => ({
+        ...p,
+        enabled: enabled.has(p.name),
+        removable: existsSync(join(sinty.paths.plugins, p.name, "sinty.plugin.json")) && !existsSync(join(sinty.paths.bundledPlugins, p.name, "sinty.plugin.json")),
+      })), ...extra],
     });
   });
 
@@ -432,7 +436,19 @@ export function createApp(sinty: Sinty): Hono {
     sinty.config.plugins.disabled = next.plugins.disabled;
     sinty.config.service = next.service;
     sinty.config.supervisor.stallSeconds = next.supervisor.stallSeconds;
-    return c.json({ ok: true, restart: true, model: sinty.config.models.default ?? "", enabled: sinty.config.plugins.enabled });
+    const running = new Set(sinty.host.plugins.keys());
+    const wanted = new Set(next.plugins.enabled);
+    for (const name of running) {
+      if (!wanted.has(name)) await sinty.host.unload(name);
+    }
+    const pluginErrors: string[] = [];
+    for (const name of wanted) {
+      if (running.has(name)) continue;
+      const err = await sinty.host.reload(name);
+      if (err) pluginErrors.push(`${name}: ${err}`);
+    }
+    sinty.supervisor?.setTools(sinty.agent.supervisedTools());
+    return c.json({ ok: true, restart: false, model: sinty.config.models.default ?? "", enabled: sinty.config.plugins.enabled, ...(pluginErrors.length ? { pluginErrors } : {}) });
   });
 
   app.get("/v1/agent", (c) =>
@@ -637,6 +653,25 @@ export function createApp(sinty: Sinty): Hono {
     return c.json({ ok: true });
   });
 
+
+  /** Deletes a home plugin: folder, data directory, saved settings, and roster references. Bundled plugins stay. */
+  app.delete("/v1/plugins/:name", async (c) => {
+    if (!allows(c, "nav:plugins", "delete") && !allows(c, "nav:plugins", "edit")) return forbid(c);
+    try {
+      await removeHomePlugin(sinty.paths, sinty.host, c.req.param("name"));
+      const next = loadConfig(sinty.paths);
+      sinty.config.plugins = next.plugins;
+      sinty.supervisor?.setTools(sinty.agent.supervisedTools());
+      return c.json({ ok: true });
+    } catch (e) {
+      if (e instanceof PluginInstallError) {
+        const status = e.code === "bundled" ? 409 : e.code === "not_found" ? 404 : 400;
+        const msg = e.hint ? `${e.message}. ${e.hint}` : e.message;
+        throw new AgentError(e.code, msg, status);
+      }
+      throw e;
+    }
+  });
 
   /** Install a custom/local (or npm) Sinty plugin into $SINTY_HOME/plugins (Settings → Plugins → Добавить). */
   app.post("/v1/plugins/install", async (c) => {

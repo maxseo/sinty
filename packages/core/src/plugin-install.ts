@@ -5,8 +5,11 @@ import { spawnSync } from "node:child_process";
 import type { SintyConfig } from "./config.js";
 import type { PluginHost } from "./host/host.js";
 import { parseManifest } from "./host/manifest.js";
-import { enablePluginInConfig } from "./mcp-install.js";
+import { markAgentMade } from "./agent-plugins.js";
+import { enablePluginInConfig, forgetPluginInConfig } from "./mcp-install.js";
+import { pluginDataDir } from "./host/manifest.js";
 import { isInside, type SintyPaths } from "./paths.js";
+import { dropPluginFromRoster } from "./roster.js";
 
 const PLUGIN_NAME = /^[a-z][a-z0-9-]{1,63}$/;
 const RESERVED_FOLDERS = new Set([".staging", ".git", "node_modules"]);
@@ -180,6 +183,34 @@ async function finishInstall(
         ? `Plugin ${name} was written/enabled; fix startError or restart sinty web.`
         : `Plugin ${name} copied to $SINTY_HOME/plugins (not enabled). Turn it on in Settings → Plugins.`,
   };
+}
+
+/**
+ * Removes a home plugin from the library. The process stops, the folder and its data directory go away,
+ * and config.yaml drops the plugin's settings. A bundled plugin stays: it can only be turned off.
+ */
+export async function removeHomePlugin(paths: SintyPaths, host: PluginHost, name: string): Promise<void> {
+  const id = name.trim();
+  if (!PLUGIN_NAME.test(id)) throw new PluginInstallError("bad_name", `plugin name ${id} is invalid`);
+  if (existsSync(join(paths.bundledPlugins, id, "sinty.plugin.json"))) {
+    throw new PluginInstallError("bundled", `плагин ${id} встроен в установку`, "Его можно выключить. Из библиотеки убираются только добавленные плагины.");
+  }
+  const homeDir = join(paths.plugins, id);
+  if (!existsSync(join(homeDir, "sinty.plugin.json"))) {
+    throw new PluginInstallError("not_found", `плагина ${id} нет в библиотеке`);
+  }
+  assertSafeHomeDir(paths, homeDir, id);
+  const dataDir = pluginDataDir(paths, id);
+  const dataResolved = resolve(dataDir);
+  if (existsSync(dataDir) && (!isInside(dataResolved, paths.data) || dataResolved === resolve(paths.data))) {
+    throw new PluginInstallError("bad_name", "отказ стереть данные вне папки плагина");
+  }
+  await host.unload(id);
+  forgetPluginInConfig(paths, id);
+  dropPluginFromRoster(paths, id);
+  markAgentMade(paths, id, false);
+  if (existsSync(dataDir)) rmSync(dataResolved, { recursive: true, force: true });
+  rmSync(resolve(homeDir), { recursive: true, force: true });
 }
 
 function resolvePath(paths: SintyPaths, raw: string): string {

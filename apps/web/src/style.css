@@ -857,6 +857,7 @@ nav a:hover,
 .appear { display: flex; gap: 8px; }
 .plugin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .plugin-tile { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.plugin-tile.on { border-color: var(--ok); background: var(--accent-soft); }
 .skill-card { display: grid; gap: 4px; width: 100%; height: auto; min-height: 64px; padding: 12px; border-radius: 12px; background: var(--panel); color: var(--text); text-align: left; font-weight: 400; box-shadow: none; }
 .skill-card b { font-weight: 650; }
 .cmd-line { display: flex; gap: 8px; align-items: center; }

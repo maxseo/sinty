@@ -328,6 +328,29 @@ function secretName(s: string): string {
   throw new McpInstallError("bad_request", `bad secret reference ${JSON.stringify(s)}`, "Use a name like github.token or secret://github.token.");
 }
 
+/** Drops a plugin from config.yaml: the enabled list, the disabled list, and its saved settings. Models and secrets stay. */
+export function forgetPluginInConfig(paths: SintyPaths, name: string): void {
+  const doc = parseDocument(existsSync(paths.config) ? readFileSync(paths.config, "utf8") : "");
+  const readList = (path: string[]): string[] => {
+    const node = doc.getIn(path);
+    const raw =
+      node && typeof (node as { toJSON?: () => unknown }).toJSON === "function"
+        ? ((node as { toJSON: () => unknown }).toJSON() as unknown[])
+        : Array.isArray(node)
+          ? (node as unknown[])
+          : [];
+    return raw.filter((x): x is string => typeof x === "string");
+  };
+  doc.setIn(["plugins", "enabled"], readList(["plugins", "enabled"]).filter((n) => n !== name));
+  if (doc.hasIn(["plugins", "disabled"])) {
+    const disabled = readList(["plugins", "disabled"]).filter((n) => n !== name);
+    if (disabled.length) doc.setIn(["plugins", "disabled"], disabled);
+    else doc.deleteIn(["plugins", "disabled"]);
+  }
+  if (doc.hasIn(["plugins", "config", name])) doc.deleteIn(["plugins", "config", name]);
+  writeFileSync(paths.config, String(doc));
+}
+
 /** Appends `name` to config.yaml plugins.enabled without touching models/secrets. */
 export function enablePluginInConfig(paths: SintyPaths, name: string): void {
   const doc = parseDocument(existsSync(paths.config) ? readFileSync(paths.config, "utf8") : "");

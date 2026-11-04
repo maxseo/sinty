@@ -19,6 +19,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- Turning a plugin off hides its tabs and drops its tools from the agent immediately. Its settings and data stay until the plugin is deleted from the library. Enabled plugin cards are highlighted. A home plugin can be deleted after a confirmation; a bundled plugin cannot.
 - Saving a new provider together with its API key no longer aborts. The card stayed only in the browser and disappeared on refresh.
 - Settings → Models asks OpenRouter for speech models as well as the chat catalog, and lists them first. A search box on the provider card finds `openai/whisper-1` among the rest.
 - The Видео film list opens when a newer library file cannot replace its inbox copy. Windows reported that copy as completed successfully, and the list stayed empty.
