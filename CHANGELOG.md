@@ -8,10 +8,29 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `stt.transcribe` reads an audio or video file in the project and returns the spoken text. The route is Settings → STT, or `models.routes.stt` on an openai-compat speech model. Plugin `tool-stt` is on by default.
+- Agent replies in the chat are drawn as formatted Markdown: headings, lists, tables, links and code. A link that is not a web or mail address stays plain text.
+- The chat plays generated media. Audio is a card with a play button and an equalizer, video has play, a scrubber and fullscreen, and a picture opens to the full screen and closes with the cross. Files land in the project folder `_out/generation`.
+- Plugin `runninghub` opens the standard-model catalog (image, video, audio, 3D) in Settings. Text models stay on the Models card as provider `runninghub` (`https://llm.runninghub.ai/v1`). A model id may contain slashes after the provider name.
+- The RunningHub catalog reads the public registry (484 models). A provider address that is not a URL no longer stops the server from starting.
+- `runninghub.run` reports the `errorMessage` RunningHub sends with HTTP 200. A task id under `data` is accepted.
+- Enabling `runninghub` gives every agent `runninghub.search`, `runninghub.schema` and `runninghub.run`, unless the agent card excludes the plugin. Each run is stored and listed under Settings → RunningHub → История.
 - The agent can create a film, import assets, edit the cut and export it without the Видео pane open. A green dot blinks beside that project, and beside the film in the list, while the command runs.
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- CI on the RunningHub tip: refresh golden prompts for default-on `runninghub`/`tool-stt`, keep the fallback-window test off DEFAULT_ON plugins, match the new `agent.task` background copy, and seed kanban cards with roster `assigneeId`/`reviewerId`.
+- The context-inspector session tab tests run again. `drawSteps` uses `querySelector(".step.on")`; the FakeEl harness now implements that call so a missing method no longer aborts `refresh` before the snapshot request.
+- Turning a plugin off hides its tabs and drops its tools from the agent immediately. Its settings and data stay until the plugin is deleted from the library. Enabled plugin cards are highlighted. A home plugin can be deleted after a confirmation; a bundled plugin cannot.
+- Saving a new provider together with its API key no longer aborts. The card stayed only in the browser and disappeared on refresh.
+- Settings → Models asks OpenRouter for speech models as well as the chat catalog, and lists them first. A search box on the provider card finds `openai/whisper-1` among the rest.
+- The Видео film list opens when a newer library file cannot replace its inbox copy. Windows reported that copy as completed successfully, and the list stayed empty.
+- Attaching a large file to the chat no longer loads it into the tab as base64. The file is streamed to disk, up to 512 MB, and a copy lands in the project `_inbox`.
+- The chat no longer adds a line when a message is sent during a running turn. The message stays in the transcript and waits for the current command.
+- Supervisor remarks stay on the Supervisor tab. While a chat is waiting, the transcript says what the user has to do: answer the question, approve a tool, or send a message to continue.
+- A picture in the chat keeps its own proportions and sits flush with its rounded frame.
+- `runninghub.run` accepts a project-relative file such as `_inbox/voice.mp3`. The path was resolved from the process folder, so a file inside the project was reported as outside it.
+- Settings → RunningHub loads the model list. The catalog script had a raw line break inside a string, so the browser skipped the whole script and the buttons did nothing.
 - The Hyperframes preview layer stays hidden until a composition is opened, and «Закрыть» removes it.
 - «Установить» on the Hyperframes tab can read npm's own files. Node was passing the plugin's narrow file grants to that command, so the install stopped with ERR_ACCESS_DENIED.
 - The Hyperframes tab can install the npm update it reports. It also lists saved compositions with a preview, and can open or delete one.

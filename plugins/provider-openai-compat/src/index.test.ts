@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ProviderRequest } from "@sinty/sdk";
-import { buildBody, usageOf } from "./index.js";
+import { buildBody, transcriptionOf, usageOf } from "./index.js";
 
 const req = (baseUrl: string, options?: Record<string, unknown>): ProviderRequest => ({
   endpoint: { baseUrl, ...(options ? { options } : {}) },
@@ -43,6 +43,17 @@ test("openai-compat: reasoning off disables DeepSeek thinking and sets no max_to
   assert.equal(on.reasoning_effort, "medium");
   const openai = buildBody({ ...req("https://api.openai.com/v1"), reasoning: "off" });
   assert.equal(openai.thinking, undefined);
+});
+
+test("openai-compat: transcription JSON keeps text, language and duration", () => {
+  assert.deepEqual(transcriptionOf({ text: "  привет  ", language: "ru", duration: 1.5 }, 2000), {
+    text: "привет",
+    language: "ru",
+    durationSec: 1.5,
+    usage: { inputTokens: 2, outputTokens: 2 },
+  });
+  assert.equal(transcriptionOf({ text: "" }, 10).text, "");
+  assert.throws(() => transcriptionOf({ error: { message: "no" } }, 10), /no/);
 });
 
 test("openai-compat: usage reads DeepSeek hit/miss fields and OpenAI cached_tokens", () => {

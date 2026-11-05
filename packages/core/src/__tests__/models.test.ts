@@ -128,6 +128,56 @@ test("provider-openai-compat: embed() posts to /embeddings and keeps input order
   }
 });
 
+test("provider-openai-compat: transcribe() posts multipart audio to /audio/transcriptions", async () => {
+  const seen: { url?: string; type?: string; auth?: string; body?: string }[] = [];
+  const server: Server = createServer((req, res) => {
+    if (req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"data":[]}');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c as Buffer));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      const type = req.headers["content-type"];
+      seen.push({ ...(req.url ? { url: req.url } : {}), ...(typeof type === "string" ? { type } : {}), ...(typeof req.headers.authorization === "string" ? { auth: req.headers.authorization } : {}), body });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ text: "привет", language: "russian", duration: 1.25 }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const { home, cleanup } = tempHome();
+  const sinty = new Sinty({
+    home,
+    config: {
+      providers: { oa: { protocol: "openai-compat", baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: "test-key" } },
+      models: { default: "oa/chat", fallback: [], routes: { stt: "oa/whisper-1" }, catalog: [], maxOutputTokens: 1000 },
+      plugins: { enabled: ["provider-openai-compat"], config: {}, searchPaths: [] },
+    },
+  });
+  try {
+    const { failedPlugins } = await sinty.start();
+    assert.deepEqual(failedPlugins, []);
+    const r = await sinty.models.transcribe({ data: Buffer.from("hello-audio").toString("base64"), mime: "audio/mpeg", filename: "a.mp3", language: "ru" });
+    assert.equal(r.text, "привет");
+    assert.equal(r.model, "whisper-1");
+    assert.equal(r.language, "russian");
+    assert.equal(r.durationSec, 1.25);
+    assert.equal(seen[0]?.url, "/v1/audio/transcriptions");
+    assert.equal(seen[0]?.auth, "Bearer test-key");
+    assert.match(seen[0]?.type ?? "", /multipart\/form-data/);
+    assert.match(seen[0]?.body ?? "", /name="model"[\s\S]*whisper-1/);
+    assert.match(seen[0]?.body ?? "", /hello-audio/);
+    assert.match(seen[0]?.body ?? "", /name="language"[\s\S]*ru/);
+  } finally {
+    await sinty.stop();
+    server.close();
+    cleanup();
+  }
+});
+
 test("ctx.models: the plugin token budget survives a restart", async () => {
   const { home, cleanup } = tempHome();
   const ask = async (sinty: Sinty): Promise<unknown> => {

@@ -4,7 +4,7 @@
 
 | Protocol plugin | Covers |
 |---|---|
-| `provider-openai-compat` | xAI Grok, DeepSeek, OpenRouter, Groq, Together, Ollama, vLLM, LM Studio, any `/v1/chat/completions` gateway |
+| `provider-openai-compat` | xAI Grok, DeepSeek, OpenRouter, Groq, Together, Ollama, vLLM, LM Studio, RunningHub LLM (`https://llm.runninghub.ai/v1`), any `/v1/chat/completions` gateway |
 | `provider-openai-responses` | OpenAI Responses API |
 | `provider-anthropic` | Anthropic Messages API, Claude via Bedrock/Vertex gateways |
 

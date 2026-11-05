@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { AgentState, EventType, LiveEvent, SintyEvent, ToolSideEffects } from "./events.js";
 import type { PolicyDecision, ToolDefinition } from "./tool.js";
-import type { EmbedProviderRequest, MemoryProcessorDefinition, MemoryProviderDefinition, ModelsApi } from "./memory.js";
+import type { EmbedProviderRequest, MemoryProcessorDefinition, MemoryProviderDefinition, ModelsApi, TranscribeProviderRequest } from "./memory.js";
 import type { ContextSnapshot } from "./inspect.js";
 import type { SettingsSectionManifest } from "./settings.js";
 
@@ -51,12 +51,13 @@ export interface UiTab {
    * `session`: a view toggle in the header of an open chat, next to "Чат" and "Журнал"; the bridge tells the page
    * which session is open (`init.sessionId`, then `{ op: "session" }` when the user switches chats).
    * `project`: a tab inside a project; the bridge tells the page `init.projectId`.
+   * `settings`: shown as that plugin's settings section, not in the left navigation.
    * Every tab is an access right `ui:<plugin>/<id>` (docs/spec/plugin-rules.md).
    */
   placement?: UiTabPlacement;
 }
 
-export type UiTabPlacement = "sidebar" | "session" | "project";
+export type UiTabPlacement = "sidebar" | "session" | "project" | "settings";
 
 export interface ManifestTool {
   name: string;
@@ -183,6 +184,8 @@ export interface ProviderDefinition {
   listModels?(endpoint: ProviderEndpoint): Promise<ModelInfo[]>;
   /** Embeddings for `ctx.models.embed` and the builtin vector search. */
   embed?(req: EmbedProviderRequest): Promise<{ vectors: number[][]; usage?: { inputTokens: number } }>;
+  /** Speech-to-text for `ctx.models.transcribe`. */
+  transcribe?(req: TranscribeProviderRequest): Promise<{ text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }>;
 }
 
 // ---- context ----

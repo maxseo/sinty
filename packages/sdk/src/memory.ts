@@ -179,10 +179,34 @@ export interface EmbedResult {
   usage?: { inputTokens: number };
 }
 
+export interface TranscribeRequest {
+  /** Default "stt" (`models.routes.stt`). A `provider/model` id is also a route. */
+  route?: string;
+  /** Base64 audio (mp3, wav, m4a, mp4, webm, ogg, flac). */
+  data: string;
+  mime: string;
+  filename: string;
+  /** ISO-639-1, for example `ru`. Empty lets the model detect it. */
+  language?: string;
+  /** Short hint for names and spellings. */
+  prompt?: string;
+  sessionId?: string;
+}
+
+export interface TranscribeResult {
+  text: string;
+  provider: string;
+  model: string;
+  language?: string;
+  durationSec?: number;
+  usage: { inputTokens: number; outputTokens: number };
+}
+
 /** `ctx.models`: needs `permissions.models` in the manifest listing the routes the plugin may use. */
 export interface ModelsApi {
   complete(req: CompleteRequest): Promise<CompleteResult>;
   embed(req: EmbedRequest): Promise<EmbedResult>;
+  transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
 }
 
 /** Provider plugins may implement embeddings next to `stream`. */
@@ -190,6 +214,18 @@ export interface EmbedProviderRequest {
   endpoint: ProviderEndpoint;
   model: string;
   input: string[];
+  signal: AbortSignal;
+}
+
+/** Provider plugins may implement speech-to-text next to `stream`. OpenAI-compatible servers use `POST /audio/transcriptions`. */
+export interface TranscribeProviderRequest {
+  endpoint: ProviderEndpoint;
+  model: string;
+  data: string;
+  mime: string;
+  filename: string;
+  language?: string;
+  prompt?: string;
   signal: AbortSignal;
 }
 

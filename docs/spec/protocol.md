@@ -34,7 +34,7 @@ Every journal entry and every streamed event uses one envelope:
 |---|---|
 | Session | `session.created`, `session.updated`, `session.archived` |
 | Turn | `turn.started`, `turn.completed`, `turn.failed`, `turn.interrupted`, `turn.blocked`, `turn.resumed` |
-| Messages | `message.user`, `message.agent`, `message.channel` |
+| Messages | `message.user`, `message.agent`, `message.channel`, `chat.media` (a generated picture, video or audio file; the chat draws it, the model does not read it) |
 | Model | `model.request`, `model.delta` *(stream only, not journaled)*, `model.response`, `model.fallback` |
 | Tools | `tool.call.requested`, `tool.call.approval_requested`, `tool.call.approved`, `tool.call.denied`, `tool.call.started`, `tool.call.progress` *(stream only)*, `tool.call.completed`, `tool.call.failed` |
 | Supervisor | `supervisor.notice`, `supervisor.escalated`, `supervisor.incident_resolved` |

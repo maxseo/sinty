@@ -40,6 +40,7 @@ interface PluginInfo {
   permissions: Record<string, unknown>;
   forAll?: boolean;
   defaultOn?: boolean;
+  removable?: boolean;
 }
 
 interface SettingsPlugin {
@@ -48,6 +49,7 @@ interface SettingsPlugin {
   description: string;
   kinds: string[];
   enabled: boolean;
+  removable?: boolean;
 }
 
 interface SettingsData {
@@ -109,15 +111,16 @@ function ProviderCard({ p, models, setProviders, setModels }: {
   setProviders: (fn: (cur: { id: string; protocol: string; baseUrl: string; apiKey: string; hasKey: boolean; remove?: boolean }[]) => { id: string; protocol: string; baseUrl: string; apiKey: string; hasKey: boolean; remove?: boolean }[]) => void;
   setModels: (fn: (cur: { route: string; enabled: boolean }[]) => { route: string; enabled: boolean }[]) => void;
 }) {
-  const [remote, setRemote] = useState<string[]>([]);
+  const [remote, setRemote] = useState<{ id: string; speech?: boolean }[]>([]);
+  const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const load = (apiKey: string): void => {
     setBusy(true);
     setErr("");
-    api<{ models: { id: string }[] }>("/v1/models/discover", { method: "POST", body: { id: p.id, baseUrl: p.baseUrl, protocol: p.protocol, apiKey } })
-      .then((body) => { setRemote(body.models.map((m) => m.id)); setPicked([]); })
+    api<{ models: { id: string; speech?: boolean }[] }>("/v1/models/discover", { method: "POST", body: { id: p.id, baseUrl: p.baseUrl, protocol: p.protocol, apiKey } })
+      .then((body) => { setRemote(body.models); setPicked([]); })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
@@ -141,16 +144,19 @@ function ProviderCard({ p, models, setProviders, setModels }: {
       {busy && <p class="small muted">Загрузка моделей…</p>}
       {err && <p class="error">{err}</p>}
       {remote.length > 0 && (
-        <div class="provider-models">
-          {remote.map((id) => {
-            const have = models.some((m) => m.route === `${p.id}/${id}`);
-            return (
-              <label key={id} class="check">
-                <input type="checkbox" checked={have || picked.includes(id)} disabled={have} onChange={() => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id])} />
-                <span>{id}{have && <span class="small muted"> уже в списке</span>}</span>
-              </label>
-            );
-          })}
+        <div>
+          <label class="field">Найти модель<input value={query} placeholder="whisper" onInput={(e) => setQuery(e.currentTarget.value)} /></label>
+          <div class="provider-models">
+            {remote.filter((m) => m.id.toLowerCase().includes(query.trim().toLowerCase())).map((m) => {
+              const have = models.some((row) => row.route === `${p.id}/${m.id}`);
+              return (
+                <label key={m.id} class="check">
+                  <input type="checkbox" checked={have || picked.includes(m.id)} disabled={have} onChange={() => setPicked(picked.includes(m.id) ? picked.filter((x) => x !== m.id) : [...picked, m.id])} />
+                  <span>{m.id}{m.speech && <span class="small muted"> распознавание</span>}{have && <span class="small muted"> уже в списке</span>}</span>
+                </label>
+              );
+            })}
+          </div>
         </div>
       )}
       <div class="provider-foot"><button type="button" disabled={picked.length === 0} onClick={add}>Добавить</button></div>
@@ -174,18 +180,19 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
   const [draft, setDraft] = useState({ id: "", name: "", baseUrl: "https://", protocol: "openai-compat", apiKey: "", models: [{ id: "", title: "" }] });
   const [notice, setNotice] = useState("");
   const [saveError, setSaveError] = useState("");
-  const namedKeys = data?.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "long"];
+  const namedKeys = data?.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "long"];
   const namedLabels: Record<string, string> = {
     cheap: "cheap — дешёвые/служебные вызовы плагинов",
     embed: "embed — эмбеддинги для памяти",
     vision: "vision — описание картинок",
+    stt: "stt — распознавание речи",
     long: "long — длинный контекст",
   };
   useEffect(() => {
     if (!data) return;
     setModels(data.models.filter((m) => m.enabled));
     setProviders(data.providers.map((p) => ({ id: p.id, protocol: p.protocol, baseUrl: p.baseUrl, apiKey: "", hasKey: p.hasKey })));
-    const keys = data.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "long"];
+    const keys = data.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "long"];
     const next: Record<string, string> = {};
     for (const k of keys) next[k] = data.routes?.[k] ?? "";
     setNamedRoutes(next);
@@ -279,6 +286,8 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
       ) : (
         <div class="row">
           <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "llama")) setProviders([...providers, { id: "llama", protocol: "openai-compat", baseUrl: "http://127.0.0.1:8080/v1", apiKey: "", hasKey: false }]); }}>Добавить llama.cpp</button>
+          <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "runninghub" && !p.remove)) setProviders([...providers, { id: "runninghub", protocol: "openai-compat", baseUrl: "https://llm.runninghub.ai/v1", apiKey: "", hasKey: false }]); }}>Добавить RunningHub</button>
+          <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "openrouter" && !p.remove)) setProviders([...providers, { id: "openrouter", protocol: "openai-compat", baseUrl: "https://openrouter.ai/api/v1", apiKey: "", hasKey: false }]); }}>Добавить OpenRouter</button>
           <button type="button" class="secondary" onClick={() => setCustom(true)}>Добавить своего провайдера</button>
         </div>
       )}
@@ -395,6 +404,7 @@ function PluginsSettings({
   const [path, setPath] = useState("");
   const [npm, setNpm] = useState("");
   const [replace, setReplace] = useState(false);
+  const [drop, setDrop] = useState<string | null>(null);
   // Settings→Plugins must list the install catalog (incl. opt-in off plugins like scheduler)
   // and home installs. GET /v1/plugins only returns currently loaded plugins.enabled entries.
   const loaded = new Map((data?.plugins ?? []).map((p) => [p.name, p]));
@@ -414,6 +424,7 @@ function PluginsSettings({
       permissions: p?.permissions ?? {},
       forAll: p?.forAll,
       defaultOn: p?.defaultOn,
+      removable: c.removable === true,
     };
   });
   for (const p of data?.plugins ?? []) {
@@ -433,13 +444,32 @@ function PluginsSettings({
     setBusy(true);
     try {
       const enabledNow = on ? [...new Set([...enabled, name])] : enabled.filter((n) => n !== name);
-      await api("/v1/settings", { method: "PUT", body: { model, enabled: enabledNow } });
+      const saved = await api<{ pluginErrors?: string[] }>("/v1/settings", { method: "PUT", body: { model, enabled: enabledNow } });
       setEnabled(enabledNow);
+      if (saved.pluginErrors?.length) setLocalError(saved.pluginErrors.join(" "));
       setNotice(
         on
-          ? "Включён в config.yaml. Подхватится после перезапуска sinty web (если ещё не загружен)."
-          : "Выключен в config.yaml. Действует после перезапуска sinty web.",
+          ? "Включён. Вкладки и инструменты снова доступны. Прежние настройки на месте."
+          : "Выключен. Вкладки и инструменты скрыты. Настройки и данные плагина сохранены.",
       );
+      onCatalogChange();
+      reload();
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (name: string): Promise<void> => {
+    setLocalError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      await api(`/v1/plugins/${encodeURIComponent(name)}`, { method: "DELETE" });
+      setDrop(null);
+      setEnabled(enabled.filter((n) => n !== name));
+      setNotice(`Плагин ${name} удалён из библиотеки вместе с настройками и данными.`);
       onCatalogChange();
       reload();
     } catch (e) {
@@ -491,6 +521,18 @@ function PluginsSettings({
       </div>
       {(error || localError) && <p class="error">{error || localError}</p>}
       {notice && <p class="small">{notice}</p>}
+      {drop && (
+        <div class="overlay" onClick={() => { if (!busy) setDrop(null); }}>
+          <div class="dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Удалить {drop}?</h3>
+            <p>Плагин будет стёрт из библиотеки. Его настройки и данные удалятся безвозвратно. Выключение этого не делает: при выключении всё сохраняется.</p>
+            <footer class="dialog-actions">
+              <button type="button" class="secondary" disabled={busy} onClick={() => setDrop(null)}>Отмена</button>
+              <button type="button" class="danger" disabled={busy} onClick={() => void remove(drop)}>Удалить</button>
+            </footer>
+          </div>
+        </div>
+      )}
       {tab === "list" ? (
         <>
           <label class="search"><input placeholder="Поиск плагинов" value={q} onInput={(e) => setQ(e.currentTarget.value)} /></label>
@@ -499,7 +541,7 @@ function PluginsSettings({
               const on = enabled.includes(p.name) || p.name === "ui-web";
               const everyone = p.forAll !== false;
               return (
-                <div key={p.name} class="plugin-tile">
+                <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
                   <div>
                     <b>{p.name}</b>
                     <div class="small muted">{p.version} · {p.location} · {(p.kinds ?? []).join(", ") || "—"}</div>
@@ -508,6 +550,7 @@ function PluginsSettings({
                   <span class="tile-actions">
                     <button type="button" class={everyone ? "secondary sm" : "ghost sm"} disabled={busy || p.defaultOn} title={p.defaultOn ? "Встроенный плагин: есть у всех агентов, убрать можно в карточке агента" : undefined} onClick={() => void setShared(p.name, !everyone)}>{everyone ? "у всех" : "не у всех"}</button>
                     <button type="button" class={on ? "secondary sm" : "ghost sm"} disabled={busy || p.name === "ui-web"} onClick={() => void setOn(p.name, !on)}>{on ? "включён" : "выключен"}</button>
+                    {p.removable && <button type="button" class="danger sm" disabled={busy} onClick={() => setDrop(p.name)}>Удалить</button>}
                   </span>
                 </div>
               );
@@ -830,7 +873,7 @@ function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: PluginRow[]
       {rows.map((p) => {
         const on = chosen.includes(p.name);
         return (
-          <div key={p.name} class="plugin-tile">
+          <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
             <div><b>{p.name}</b>{p.defaultOn && <span class="small muted"> встроенный, у всех агентов</span>}<div class="small muted">{p.description}</div></div>
             <button type="button" class={on ? "secondary sm" : "ghost sm"} onClick={() => onToggle(p.name)}>{on ? "включён" : "выключен"}</button>
           </div>

@@ -48,6 +48,13 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-05 | [runninghub-ci](2026-11-05-runninghub-ci.md) | PR #85 CI: goldens for runninghub/stt, disable DEFAULT_ON in window-cap, kanban assigneeId, agent.task copy |
+| 2026-11-05 | [Context inspector querySelector](2026-11-05-context-inspector-queryselector.md) | #85 | FakeEl implements querySelector so session tab tests request snapshots again. |
+| 2026-11-04 | [Plugin library](2026-11-04-plugin-library.md) | (open) | Disabling a plugin hides its tabs and tools at once. Deleting a home plugin erases its data. |
+| 2026-11-03 | [STT](2026-11-03-stt.md) | (open) | `stt.transcribe` returns the spoken text of a project audio file. |
+| 2026-11-03 | [Film list copy](2026-11-03-film-list-copy.md) | (open) | The film list opens when Windows refuses to replace an inbox copy. |
+| 2026-11-03 | [Chat markdown](2026-11-03-chat-markdown.md) | (open) | Agent replies render headings, lists, tables, links and code. |
+| 2026-11-03 | [RunningHub](2026-11-03-runninghub.md) | (open) | Text models are a provider card. The generative catalog opens in Settings. |
 | 2026-11-02 | [Hyperframes library](2026-11-02-hyperframes-library.md) | (open) | The Hyperframes tab installs the reported npm update and lists saved compositions. |
 | 2026-11-02 | [Chat scroll](2026-11-02-chat-scroll.md) | (open) | The chat column beside the editor scrolls down only. Long lines wrap. |
 | 2026-11-02 | [Editor theme](2026-11-02-editor-theme.md) | (open) | The film list and the editor follow the harness theme. Dark stays the current palette. |

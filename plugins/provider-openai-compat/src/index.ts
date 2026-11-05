@@ -82,6 +82,27 @@ export default definePlugin({
         }
         return { vectors: rows.map((r) => r.embedding!), ...(body.usage?.prompt_tokens !== undefined ? { usage: { inputTokens: body.usage.prompt_tokens } } : {}) };
       },
+      /** POST {baseUrl}/audio/transcriptions (OpenAI Whisper and compatible servers). */
+      async transcribe(req) {
+        const baseUrl = (req.endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+        const form = new FormData();
+        form.append("file", new Blob([Buffer.from(req.data, "base64")], { type: req.mime }), req.filename);
+        form.append("model", req.model);
+        form.append("response_format", "json");
+        if (req.language) form.append("language", req.language);
+        if (req.prompt) form.append("prompt", req.prompt);
+        const res = await ctx.net.fetch(`${baseUrl}/audio/transcriptions`, {
+          method: "POST",
+          signal: req.signal,
+          headers: {
+            ...(req.endpoint.apiKey ? { authorization: `Bearer ${req.endpoint.apiKey}` } : {}),
+            ...req.endpoint.headers,
+          },
+          body: form,
+        });
+        if (!res.ok) throw await httpError(res);
+        return transcriptionOf(await res.json(), Buffer.from(req.data, "base64").byteLength);
+      },
     });
   },
 });
@@ -91,6 +112,18 @@ export default definePlugin({
  * per-session `cacheKey`), `false` never does. Unset: only for api.openai.com, because some compatible servers reject
  * unknown fields. DeepSeek caches prefixes on its own and needs no key.
  */
+/** The JSON body of `POST /audio/transcriptions`. An empty `text` is silence, not a failure. */
+export function transcriptionOf(body: unknown, bytes: number): { text: string; language?: string; durationSec?: number; usage: { inputTokens: number; outputTokens: number } } {
+  const row = body && typeof body === "object" ? (body as { text?: unknown; language?: unknown; duration?: unknown; error?: { message?: unknown } }) : {};
+  if (row.error && typeof row.error.message === "string") throw new ToolError("provider_error", row.error.message);
+  if (typeof row.text !== "string") throw new ToolError("provider_error", "transcription answer has no text");
+  const text = row.text.trim();
+  const language = typeof row.language === "string" && row.language ? row.language : undefined;
+  const durationSec = typeof row.duration === "number" && Number.isFinite(row.duration) ? row.duration : undefined;
+  const usage = { inputTokens: Math.max(1, Math.ceil(bytes / 1000)), outputTokens: Math.ceil(text.length / 4) };
+  return { text, ...(language ? { language } : {}), ...(durationSec !== undefined ? { durationSec } : {}), usage };
+}
+
 export function buildBody(req: ProviderRequest): Record<string, unknown> {
   const { promptCacheKey, ...options } = req.endpoint.options ?? {};
   const baseUrl = req.endpoint.baseUrl ?? "https://api.openai.com/v1";

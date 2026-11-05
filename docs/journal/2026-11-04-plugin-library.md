@@ -1,0 +1,3 @@
+# Plugin on/off and delete
+
+Turning a plugin off used to write `plugins.disabled` and wait for a restart, so its tabs and tools stayed in the running process. `PUT /v1/settings` now unloads plugins that left `plugins.enabled` and starts the ones that joined. Settings in `plugins.config` and the data directory stay. Deleting a home plugin (`DELETE /v1/plugins/:name`) removes the folder, the data directory, the config block and the name from every agent card, after a confirmation in Settings. A bundled plugin returns 409. Enabled tiles are green in Settings and on the agent card. The per-agent checklist stays: it only narrows tools, it does not install or delete.

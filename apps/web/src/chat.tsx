@@ -1,7 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, subscribe, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
+import { api, subscribe, token, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { IconBrain, IconMic, IconPlus } from "./icons.js";
+import { Markdown } from "./markdown.js";
+import { MediaView } from "./media.js";
+import { mergeMedia, splitMedia, type MediaRef } from "./media-ref.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
+import { waitNote } from "./wait-note.js";
 import { SupervisorView } from "./supervisor-ui.js";
 
 const VIEW_KEY = "sinty.chatView";
@@ -11,6 +15,7 @@ const NO_TABS: PluginTabInfo[] = [];
 const CHAT_TYPES = [
   "message.user",
   "message.agent",
+  "chat.media",
   "supervisor.notice",
   "supervisor.escalated",
   "turn.failed",
@@ -91,23 +96,47 @@ interface ToolCall {
 
 type Item =
   | { kind: "user"; key: string; text: string; ts: string; files: string[] }
-  | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string }
+  | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string; media: MediaRef[] }
   | { kind: "tool"; key: string; call: ToolCall }
   | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
+
+function mediaOf(value: unknown): MediaRef[] {
+  if (!Array.isArray(value)) return [];
+  const files: MediaRef[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { path?: unknown; kind?: unknown };
+    if (typeof row.path !== "string") continue;
+    if (row.kind !== "audio" && row.kind !== "video" && row.kind !== "image") continue;
+    files.push({ path: row.path, kind: row.kind });
+  }
+  return files;
+}
 
 const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "session.policy_grant", "task.completed", "task.progress"]);
 
 function build(events: SintyEvent[]): Item[] {
   const items: Item[] = [];
+  let pending: MediaRef[] = [];
+  const flush = (): void => {
+    if (!pending.length) return;
+    items.push({ kind: "agent", key: `media-${items.length}`, text: "", ts: "", media: pending });
+    pending = [];
+  };
   for (const e of events) {
     const d = e.data as Record<string, any>;
     const key = String(e.seq ?? e.id);
     switch (e.type) {
+      case "chat.media":
+        pending = mergeMedia(pending, mediaOf(d.files));
+        break;
       case "message.user":
+        flush();
         items.push({ kind: "user", key, text: d.text, ts: e.ts, files: (d.attachments ?? []).map((a: { name?: string }) => a.name || "файл") });
         break;
       case "message.agent":
-        if (d.text) items.push({ kind: "agent", key, text: d.text, ts: e.ts, name: d.agentName });
+        if (d.text || pending.length) items.push({ kind: "agent", key, text: d.text ?? "", ts: e.ts, name: d.agentName, media: pending });
+        pending = [];
         break;
       case "model.response":
       case "tool.call.requested":
@@ -119,10 +148,7 @@ function build(events: SintyEvent[]): Item[] {
       case "tool.call.denied":
         break;
       case "supervisor.notice":
-        items.push({ kind: "note", key, tone: "warn", text: `Супервизор (${d.detector}): ${d.text}` });
-        break;
       case "supervisor.escalated":
-        items.push({ kind: "note", key, tone: "error", text: `Супервизор остановил работу (${d.detector}): ${d.reason}` });
         break;
       case "turn.failed":
         items.push({ kind: "note", key, tone: "error", text: `Ошибка: ${d.code} — ${d.message}` });
@@ -131,7 +157,6 @@ function build(events: SintyEvent[]): Item[] {
         items.push({ kind: "note", key, tone: "info", text: "Остановлено" });
         break;
       case "turn.blocked":
-        if (d.reason === "budget") items.push({ kind: "note", key, tone: "warn", text: `Бюджет хода исчерпан${d.detail ? `: ${d.detail}` : ""}. Напишите сообщение, чтобы продолжить.` });
         break;
       case "plugin.patch.proposed":
         items.push({ kind: "note", key, tone: "info", text: `Предложен патч плагина ${d.plugin}: ${d.reason}` });
@@ -148,7 +173,19 @@ function build(events: SintyEvent[]): Item[] {
         break;
     }
   }
+  flush();
   return items;
+}
+
+function AgentBody({ text, media, sessionId }: { text: string; media: MediaRef[]; sessionId: string }) {
+  const parsed = splitMedia(text);
+  const files = mergeMedia(media, parsed.files);
+  return (
+    <>
+      {parsed.text && <Markdown text={parsed.text} />}
+      {files.map((file) => <MediaView key={file.path} sessionId={sessionId} file={file} />)}
+    </>
+  );
 }
 
 
@@ -211,13 +248,6 @@ function liveTurn(events: SintyEvent[]): { text: string; tool: string; warn: boo
   }
   if (!text && !tool && !open) return null;
   return { text, tool, warn };
-}
-
-function toBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
 }
 
 function show(v: unknown): string {
@@ -399,14 +429,32 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
   const policyTrust = info?.metadata?.policyTrust === true;
 
   const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number }[]>([]);
+  const [uploading, setUploading] = useState("");
 
   const addFiles = async (list: FileList | null): Promise<void> => {
     if (!list?.length) return;
     setError("");
-    for (const file of [...list].slice(0, 8 - files.length)) {
-      const dataBase64 = toBase64(await file.arrayBuffer());
-      const ref = await api<typeof files[number]>("/v1/blobs", { body: { name: file.name, mime: file.type || "application/octet-stream", dataBase64 } });
-      setFiles((cur) => [...cur, { name: file.name, blob: ref.blob, mime: ref.mime, bytes: ref.bytes }]);
+    const room = 8 - files.length;
+    for (const file of [...list].slice(0, room)) {
+      if (file.size > 512 * 1024 * 1024) {
+        setError(`${file.name}: файл больше 512 МБ`);
+        continue;
+      }
+      setUploading(file.name);
+      try {
+        const res = await fetch(`/v1/blobs?name=${encodeURIComponent(file.name)}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token.get()}`, "content-type": file.type || "application/octet-stream" },
+          body: file,
+        });
+        const body = (await res.json().catch(() => ({}))) as { error?: { message?: string }; blob?: string; mime?: string; bytes?: number; name?: string };
+        if (!res.ok || !body.blob) throw new Error(body.error?.message || `загрузка не прошла (${res.status})`);
+        setFiles((cur) => [...cur, { name: body.name || file.name, blob: body.blob!, mime: body.mime || file.type || "application/octet-stream", bytes: body.bytes ?? file.size }]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setUploading("");
+      }
     }
   };
 
@@ -570,7 +618,7 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
                 return (
                   <div key={it.key} class={`msg agent${it.interim ? " interim" : ""}`}>
                     {it.name && <div class="muted small">{it.name}</div>}
-                    {it.text}
+                    <AgentBody text={it.text} media={it.media} sessionId={sessionId} />
                   </div>
                 );
               case "note":
@@ -583,15 +631,19 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
                 return null;
             }
           })}
-          {liveText && <div class="msg agent interim">{liveText}</div>}
+          {liveText && (
+            <div class="msg agent interim">
+              <AgentBody text={liveText} media={[]} sessionId={sessionId} />
+            </div>
+          )}
           {(toolLine || (running && !liveText)) && (
             <div class={`typing shimmer${presence?.warn ? " warn" : ""}`} aria-live="polite">
               {toolLine || "Агент думает…"}
             </div>
           )}
-          {queued && <div class="note info">Ход занят. Это сообщение дождётся конца текущей команды.</div>}
-          {childPending.filter((p) => p.reason !== "approval").map((p) => (
-            <div key={p.turnId} class="note warn">Фон · {waitWord(p.reason)}. {p.detail ?? "Вопроса нет, отвечать не нужно."}</div>
+          {pending && <div class="note warn">{waitNote(pending)}</div>}
+          {childPending.map((p) => (
+            <div key={p.turnId} class="note warn">{waitNote(p, true)}</div>
           ))}
           <div ref={bottom} />
         </div>
@@ -655,7 +707,7 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
 
       <form class="composer" onSubmit={send}>
         <div class="composer-card">
-          {files.length > 0 && (
+          {(files.length > 0 || uploading) && (
             <div class="files">
               {files.map((f) => (
                 <span>
@@ -663,6 +715,7 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
                   <button type="button" onClick={() => setFiles(files.filter((x) => x !== f))}>×</button>
                 </span>
               ))}
+              {uploading && <span>Загрузка {uploading}…</span>}
             </div>
           )}
           <textarea
@@ -680,7 +733,7 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
           <div class="composer-bar">
             <label class="icon composer-plus" title="Файл">
               <IconPlus />
-              <input type="file" multiple accept="image/*,.pdf,.xlsx,.csv,.txt,.md,.json" onChange={(e) => void addFiles(e.currentTarget.files)} />
+              <input type="file" multiple onChange={(e) => { const input = e.currentTarget; void addFiles(input.files).finally(() => { input.value = ""; }); }} />
             </label>
             {members.length > 0 && (
               <span class="composer-model"><IconBrain /> {members.find((m) => m.id === replyAgent)?.name}</span>

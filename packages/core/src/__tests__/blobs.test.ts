@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { eventsToMessages } from "../agent.js";
-import { materializeAttachmentsToDir, saveBlob } from "../blobs.js";
+import { materializeAttachmentsToDir, saveBlob, saveBlobStream } from "../blobs.js";
 import type { SintyEvent } from "@sinty/sdk";
 
 test("a text attachment is inlined and an image is passed beside the text", () => {
@@ -22,6 +22,42 @@ test("a text attachment is inlined and an image is passed beside the text", () =
     assert.match(messages[0]!.content, /alpha,beta/);
     assert.match(messages[0]!.content, /Hello PDF/);
     assert.equal(messages[0]!.images?.[0]?.mime, "image/png");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a large attachment is named in the prompt and its bytes stay on disk", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sinty-blob-"));
+  try {
+    const huge = { blob: `sha256:${"ab".repeat(32)}`, mime: "video/mp4", bytes: 118_000_000, name: "clip.mp4" };
+    const messages = eventsToMessages(
+      [{ type: "message.user", data: { text: "смотри", attachments: [huge] } } as SintyEvent],
+      dir,
+    );
+    assert.match(messages[0]!.content, /clip\.mp4/);
+    assert.match(messages[0]!.content, /_inbox/);
+    assert.equal(messages[0]!.images, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a streamed upload is stored under its hash without a second copy in memory", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sinty-blob-"));
+  try {
+    const payload = new Uint8Array([1, 2, 3, 4, 5]);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(payload.subarray(0, 2));
+        controller.enqueue(payload.subarray(2));
+        controller.close();
+      },
+    });
+    const ref = await saveBlobStream(dir, { body, mime: "application/octet-stream", name: "chunk.bin" });
+    assert.equal(ref.bytes, 5);
+    assert.equal(ref.name, "chunk.bin");
+    assert.equal(readFileSync(join(dir, "blobs", ref.blob.slice(7))).length, 5);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

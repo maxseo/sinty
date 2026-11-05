@@ -112,6 +112,29 @@ export function saveAgent(paths: SintyPaths, input: Partial<AgentRecord> & { nam
   return next;
 }
 
+/** Takes a removed plugin off every agent card and off the shared list. Skills and personas stay. */
+export function dropPluginFromRoster(paths: SintyPaths, name: string): void {
+  const roster = loadRoster(paths);
+  let changed = false;
+  for (const agent of roster.agents) {
+    const plugins = agent.plugins.filter((n) => n !== name);
+    const excluded = agent.excludedPlugins.filter((n) => n !== name);
+    if (plugins.length !== agent.plugins.length || excluded.length !== agent.excludedPlugins.length) {
+      agent.plugins = plugins;
+      agent.excludedPlugins = excluded;
+      changed = true;
+    }
+  }
+  if (roster.sharedPlugins) {
+    const shared = roster.sharedPlugins.filter((n) => n !== name);
+    if (shared.length !== roster.sharedPlugins.length) {
+      roster.sharedPlugins = shared;
+      changed = true;
+    }
+  }
+  if (changed) save(paths, roster);
+}
+
 export function deleteAgent(paths: SintyPaths, id: string): void {
   const roster = loadRoster(paths);
   roster.agents = roster.agents.filter((a) => a.id !== id);

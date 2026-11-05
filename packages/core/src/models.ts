@@ -1,4 +1,4 @@
-import type { ChatMessage, CompleteResult, EmbedResult, ProviderEndpoint, ToolSchema } from "@sinty/sdk";
+import type { ChatMessage, CompleteResult, EmbedResult, ProviderEndpoint, ToolSchema, TranscribeResult } from "@sinty/sdk";
 import type { SintyConfig } from "./config.js";
 import type { PluginHost } from "./host/host.js";
 import type { AppendInput } from "./journal.js";
@@ -56,6 +56,18 @@ export interface EmbedCall {
   signal?: AbortSignal | undefined;
 }
 
+export interface TranscribeCall {
+  route?: string | undefined;
+  data: string;
+  mime: string;
+  filename: string;
+  language?: string | undefined;
+  prompt?: string | undefined;
+  signal?: AbortSignal | undefined;
+}
+
+const TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024;
+
 const DEFAULT_PLUGIN_TOKENS_PER_DAY = 2_000_000;
 
 /**
@@ -112,9 +124,38 @@ export class ModelGateway {
     return { vectors: r.vectors, provider: providerId, model, ...(r.usage ? { usage: r.usage } : {}) };
   }
 
+  async transcribe(call: TranscribeCall): Promise<TranscribeResult> {
+    const [route] = this.resolve(call.route ?? "stt");
+    if (!route) throw new ModelError("route_missing", `no model for route ${call.route ?? "stt"}`, "Set models.routes.stt in config.yaml, e.g. openai/whisper-1.");
+    const bytes = Buffer.from(call.data, "base64").byteLength;
+    if (bytes > TRANSCRIBE_MAX_BYTES) throw new ModelError("too_large", `audio is ${bytes} bytes (limit ${TRANSCRIBE_MAX_BYTES})`, "Shorten the clip or raise the file under 25 MB.");
+    const { providerId, model, protocol, endpoint } = this.endpoint(route);
+    const plugin = this.d.host.transcriberFor(protocol);
+    if (!plugin) throw new ModelError("stt_unsupported", `no plugin implements speech-to-text for protocol ${protocol}`, "Use an openai-compat route such as openai/whisper-1.");
+    const r = await plugin.transcribeProvider(protocol, {
+      endpoint,
+      model,
+      data: call.data,
+      mime: call.mime,
+      filename: call.filename,
+      ...(call.language ? { language: call.language } : {}),
+      ...(call.prompt ? { prompt: call.prompt } : {}),
+    }, call.signal);
+    const inputTokens = r.usage?.inputTokens ?? Math.max(1, Math.ceil(bytes / 1000));
+    const outputTokens = r.usage?.outputTokens ?? Math.ceil(r.text.length / 4);
+    return {
+      text: r.text,
+      provider: providerId,
+      model,
+      ...(r.language ? { language: r.language } : {}),
+      ...(r.durationSec !== undefined ? { durationSec: r.durationSec } : {}),
+      usage: { inputTokens, outputTokens },
+    };
+  }
+
   /** ctx.models from a plugin: permission check, budget, call, journal. */
-  async pluginCall(plugin: string, allowed: string[] | undefined, op: "complete" | "embed", req: Record<string, unknown>): Promise<CompleteResult | EmbedResult> {
-    const route = typeof req.route === "string" && req.route ? req.route : op === "embed" ? "embed" : "default";
+  async pluginCall(plugin: string, allowed: string[] | undefined, op: "complete" | "embed" | "transcribe", req: Record<string, unknown>): Promise<CompleteResult | EmbedResult | TranscribeResult> {
+    const route = typeof req.route === "string" && req.route ? req.route : op === "embed" ? "embed" : op === "transcribe" ? "stt" : "default";
     const grants = allowed ?? [];
     if (!grants.includes("*") && !grants.includes(route)) {
       throw new ModelError("models_denied", `plugin ${plugin} may not use model route ${route}`, `Add "${route}" to permissions.models in the plugin manifest.`);
@@ -126,7 +167,7 @@ export class ModelGateway {
     const sessionId = typeof req.sessionId === "string" ? req.sessionId : undefined;
     const t0 = Date.now();
     try {
-      let result: CompleteResult | EmbedResult;
+      let result: CompleteResult | EmbedResult | TranscribeResult;
       let inputTokens = 0;
       let outputTokens = 0;
       if (op === "complete") {
@@ -134,6 +175,16 @@ export class ModelGateway {
         const requested = typeof req.maxOutputTokens === "number" && req.maxOutputTokens > 0 ? Math.min(req.maxOutputTokens, this.d.config.models.maxOutputTokens) : undefined;
         const reasoning = req.reasoning === "off" || req.reasoning === "low" || req.reasoning === "medium" || req.reasoning === "high" ? req.reasoning : undefined;
         const r = await this.complete({ route, messages, ...(requested ? { maxOutputTokens: requested } : {}), ...(reasoning ? { reasoning } : {}) });
+        inputTokens = r.usage.inputTokens;
+        outputTokens = r.usage.outputTokens;
+        result = r;
+      } else if (op === "transcribe") {
+        const data = typeof req.data === "string" ? req.data : "";
+        const mime = typeof req.mime === "string" ? req.mime : "application/octet-stream";
+        const filename = typeof req.filename === "string" && req.filename ? req.filename : "audio";
+        const language = typeof req.language === "string" && req.language ? req.language : undefined;
+        const prompt = typeof req.prompt === "string" && req.prompt ? req.prompt : undefined;
+        const r = await this.transcribe({ route, data, mime, filename, ...(language ? { language } : {}), ...(prompt ? { prompt } : {}) });
         inputTokens = r.usage.inputTokens;
         outputTokens = r.usage.outputTokens;
         result = r;

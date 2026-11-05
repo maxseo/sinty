@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { ChatMessage, ContextSnapshot, SintyEvent } from "@sinty/sdk";
 import { createApp } from "../api/server.js";
-import { configSchema, type SintyConfig } from "../config.js";
+import { DEFAULT_ON_PLUGINS, configSchema, type SintyConfig } from "../config.js";
 import { compactCap, compactPoint, DEFAULT_COMPACT_CAP } from "../context-window.js";
 import type { Sinty } from "../sinty.js";
 import { boot, FIXTURES, tempHome } from "./helpers.js";
@@ -29,7 +29,7 @@ function recConfig(providers: Record<string, unknown>, extra: Partial<SintyConfi
   return {
     providers: providers as SintyConfig["providers"],
     models: { default: "rec/big", fallback: [], routes: {}, catalog: [], maxOutputTokens: 1000, contextWindows: { "rec/big": 1_000_000 } },
-    plugins: { enabled: ["recording-provider", "test-tools"], config: {}, searchPaths: [FIXTURES] },
+    plugins: { enabled: ["recording-provider", "test-tools"], disabled: [...DEFAULT_ON_PLUGINS], config: {}, searchPaths: [FIXTURES] },
     ...extra,
   };
 }

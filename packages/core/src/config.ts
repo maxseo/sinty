@@ -242,12 +242,12 @@ export const policySchema = z.object({
 export type SintyPolicy = z.infer<typeof policySchema>;
 
 /**
- * Bundled plugins that are enabled unless config.yaml lists them in `plugins.disabled`. tool-web carries web.search, tool-vision carries vision.look,
+ * Bundled plugins that are enabled unless config.yaml lists them in `plugins.disabled`. tool-web carries web.search, tool-vision carries vision.look, tool-stt carries stt.transcribe,
  * web.read, web.links, web.screenshot and web.interact; skills carries the skill.* tools and the skills catalog of
  * the prompt; mcp-catalog owns Settings → MCP. All of them were core before plan step 7: an existing config.yaml whose plugins.enabled predates the
  * move keeps them without being rewritten.
  */
-export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "tool-vision", "skills", "responsive-turn", "mcp-catalog"];
+export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "tool-vision", "tool-stt", "skills", "responsive-turn", "mcp-catalog", "runninghub"];
 
 /** Appends DEFAULT_ON_PLUGINS that are neither enabled nor disabled, in memory. Idempotent. */
 export function withDefaultPlugins<T extends { plugins: { enabled: string[]; disabled?: string[] | undefined } }>(config: T): T {
@@ -267,7 +267,8 @@ export function loadPolicy(paths: SintyPaths): SintyPolicy {
 }
 
 const PLUGIN_NAME = /^[a-z0-9][a-z0-9-]*$/;
-const MODEL_ROUTE = /^[a-z0-9][a-z0-9_-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+/** `provider/model-id`. The id may contain slashes (`runninghub/openai/gpt-6.1`); the provider is the first segment. */
+const MODEL_ROUTE = /^[a-z0-9][a-z0-9_-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)*$/;
 
 /** Writes model, fallback and enabled plugins into config.yaml, and the persona into AGENTS.md. Secrets stay untouched. */
 export const DEFAULT_COMPRESS_PROMPT = "Fold the transcript into one summary. Keep the user's goals, decisions, open promises, file paths and ids, and what is already done.";
@@ -342,13 +343,18 @@ export function saveModelCatalog(
       continue;
     }
     const protocol = row.protocol === "anthropic" || row.protocol === "openai-responses" ? row.protocol : "openai-compat";
-    if (!known[id] && row.baseUrl) {
-      doc.setIn(["providers", id], { protocol, baseUrl: row.baseUrl.trim() });
-    } else if (row.baseUrl) {
+    const apiKey = row.apiKey?.trim() ? `secret://${id}` : undefined;
+    // A brand-new provider is a plain object. A second setIn for apiKey then fails
+    // ("Expected YAML collection") and the whole save is thrown away.
+    if (!known[id]) {
+      doc.setIn(["providers", id], { protocol, ...(row.baseUrl ? { baseUrl: row.baseUrl.trim() } : {}), ...(apiKey ? { apiKey } : {}) });
+      continue;
+    }
+    if (row.baseUrl) {
       doc.setIn(["providers", id, "baseUrl"], row.baseUrl.trim());
       if (row.protocol) doc.setIn(["providers", id, "protocol"], protocol);
     }
-    if (row.apiKey?.trim()) doc.setIn(["providers", id, "apiKey"], `secret://${id}`);
+    if (apiKey) doc.setIn(["providers", id, "apiKey"], apiKey);
   }
   doc.setIn(["models", "catalog"], clean);
   writeFileSync(paths.config, String(doc));
@@ -356,7 +362,7 @@ export function saveModelCatalog(
 }
 
 /** Well-known named model routes shown in Settings → Models (docs: cheap/embed/vision/long). */
-export const NAMED_MODEL_ROUTES = ["cheap", "embed", "vision", "long"] as const;
+export const NAMED_MODEL_ROUTES = ["cheap", "embed", "vision", "stt", "long"] as const;
 
 /**
  * Deep-merge models.routes into config.yaml.
@@ -475,6 +481,9 @@ net:
     - api.openai.com
     - api.x.ai
     - api.deepseek.com
+    - llm.runninghub.ai
+    - www.runninghub.ai
+    - raw.githubusercontent.com
     - 127.0.0.1
     - localhost
 

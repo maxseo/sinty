@@ -100,6 +100,7 @@ export type ToChild =
   | { t: "agent.event"; id: number; event: LiveEvent }
   | { t: "agent.end"; id: number; error?: WireError }
   | { t: "provider.embed"; id: number; protocol: string; req: { endpoint: ProviderRequest["endpoint"]; model: string; input: string[] } }
+  | { t: "provider.transcribe"; id: number; protocol: string; req: { endpoint: ProviderRequest["endpoint"]; model: string; data: string; mime: string; filename: string; language?: string; prompt?: string } }
   | { t: "provider.list"; id: number; protocol: string; endpoint: ProviderRequest["endpoint"] }
   | { t: "models.result"; id: number; ok: true; value: unknown }
   | { t: "models.result"; id: number; ok: false; error: WireError }
@@ -121,6 +122,8 @@ export type FromChild =
       routes: RouteInfo[];
       /** Provider protocols that implement embed(). */
       embedders?: string[];
+      /** Provider protocols that implement transcribe(). */
+      transcribers?: string[];
       /** Provider protocols that implement listModels(). */
       listers?: string[];
       memory?: { providers: string[]; processors: { name: string; order: number; hooks: string[] }[] };
@@ -129,9 +132,11 @@ export type FromChild =
     }
   | { t: "provider.embedded"; id: number; ok: true; value: { vectors: number[][]; usage?: { inputTokens: number } } }
   | { t: "provider.embedded"; id: number; ok: false; error: WireError }
+  | { t: "provider.transcribed"; id: number; ok: true; value: { text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } } }
+  | { t: "provider.transcribed"; id: number; ok: false; error: WireError }
   | { t: "provider.listed"; id: number; ok: true; value: { id: string; contextWindow?: number; maxOutputTokens?: number }[] }
   | { t: "provider.listed"; id: number; ok: false; error: WireError }
-  | { t: "models.call"; id: number; op: "complete" | "embed"; req: Record<string, unknown> }
+  | { t: "models.call"; id: number; op: "complete" | "embed" | "transcribe"; req: Record<string, unknown> }
   | { t: "net.public"; id: number; op: "fetch"; url: string; init: NetPublicInit }
   | { t: "net.public"; id: number; op: "proxy" }
   | { t: "net.public"; id: number; op: "check"; url: string }
