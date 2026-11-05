@@ -19,6 +19,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Fixed
+- CI on the RunningHub tip: refresh golden prompts for default-on `runninghub`/`tool-stt`, keep the fallback-window test off DEFAULT_ON plugins, match the new `agent.task` background copy, and seed kanban cards with roster `assigneeId`/`reviewerId`.
 - The context-inspector session tab tests run again. `drawSteps` uses `querySelector(".step.on")`; the FakeEl harness now implements that call so a missing method no longer aborts `refresh` before the snapshot request.
 - Turning a plugin off hides its tabs and drops its tools from the agent immediately. Its settings and data stay until the plugin is deleted from the library. Enabled plugin cards are highlighted. A home plugin can be deleted after a confirmation; a bundled plugin cannot.
 - Saving a new provider together with its API key no longer aborts. The card stayed only in the browser and disappeared on refresh.
