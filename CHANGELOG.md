@@ -8,7 +8,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- `stt.transcribe` reads an audio or video file in the project and returns the spoken text. The route is Settings → STT, or `models.routes.stt` on an openai-compat speech model. Plugin `tool-stt` is on by default.
+- `stt.transcribe` returns timed phrases. Each phrase has start and end in seconds, word times when the speech model sends them, and a speaker label when the model tells voices apart. The same JSON is written to `_out/stt`. `whisper-1` fills the word times. A model whose id contains `diarize` fills the speaker.
+- `audio.listen` asks a chat model what is heard in an audio or video file. ffmpeg sends a short mono mp3. The model is Settings → Models → **listen — разбор звука** (`models.routes.listen`). Plugin `tool-listen` is on by default.
 - Agent replies in the chat are drawn as formatted Markdown: headings, lists, tables, links and code. A link that is not a web or mail address stays plain text.
 - The chat plays generated media. Audio is a card with a play button and an equalizer, video has play, a scrubber and fullscreen, and a picture opens to the full screen and closes with the cross. Files land in the project folder `_out/generation`.
 - Plugin `runninghub` opens the standard-model catalog (image, video, audio, 3D) in Settings. Text models stay on the Models card as provider `runninghub` (`https://llm.runninghub.ai/v1`). A model id may contain slashes after the provider name.
@@ -18,9 +19,15 @@ All notable changes to this project are documented here. The format follows
 - The agent can create a film, import assets, edit the cut and export it without the Видео pane open. A green dot blinks beside that project, and beside the film in the list, while the command runs.
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
+### Changed
+- The editor, transcription and listen skills say which tool to call on a film. `stt.transcribe` times become `sourceIn` and `sourceOut`. `audio.listen` times stay inside the asked window. One call per source file. The mixed export is for a question about the mix.
+- `diffusion.run` no longer has `generate`, `transcribe`, `listen`, `job`, `logs` or `window`. `diffusion.generate` is removed. Speech is `stt.transcribe`, a question about the sound is `audio.listen`, and a new picture or video is `runninghub`.
+
 ### Fixed
 - CI on the RunningHub tip: refresh golden prompts for default-on `runninghub`/`tool-stt`, keep the fallback-window test off DEFAULT_ON plugins, match the new `agent.task` background copy, and seed kanban cards with roster `assigneeId`/`reviewerId`.
 - The context-inspector session tab tests run again. `drawSteps` uses `querySelector(".step.on")`; the FakeEl harness now implements that call so a missing method no longer aborts `refresh` before the snapshot request.
+- A model id that contains `omni` receives local audio as a `data:;base64,` URI and `modalities: ["text"]`. `qwen3.8-omni-flash` rejected the raw base64 body with `The request parameters are not supported by this model`.
+- `audio.listen` no longer dies before the model with a filesystem permission error. The temporary mp3 is written in the plugin data folder and removed after the call.
 - Turning a plugin off hides its tabs and drops its tools from the agent immediately. Its settings and data stay until the plugin is deleted from the library. Enabled plugin cards are highlighted. A home plugin can be deleted after a confirmation; a bundled plugin cannot.
 - Saving a new provider together with its API key no longer aborts. The card stayed only in the browser and disappeared on refresh.
 - Settings → Models asks OpenRouter for speech models as well as the chat catalog, and lists them first. A search box on the provider card finds `openai/whisper-1` among the rest.

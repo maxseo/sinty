@@ -171,6 +171,8 @@ test("provider-openai-compat: transcribe() posts multipart audio to /audio/trans
     assert.match(seen[0]?.body ?? "", /name="model"[\s\S]*whisper-1/);
     assert.match(seen[0]?.body ?? "", /hello-audio/);
     assert.match(seen[0]?.body ?? "", /name="language"[\s\S]*ru/);
+    assert.match(seen[0]?.body ?? "", /verbose_json/);
+    assert.match(seen[0]?.body ?? "", /timestamp_granularities\[\]/);
   } finally {
     await sinty.stop();
     server.close();

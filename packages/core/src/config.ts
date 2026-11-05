@@ -242,12 +242,12 @@ export const policySchema = z.object({
 export type SintyPolicy = z.infer<typeof policySchema>;
 
 /**
- * Bundled plugins that are enabled unless config.yaml lists them in `plugins.disabled`. tool-web carries web.search, tool-vision carries vision.look, tool-stt carries stt.transcribe,
+ * Bundled plugins that are enabled unless config.yaml lists them in `plugins.disabled`. tool-web carries web.search, tool-vision carries vision.look, tool-stt carries stt.transcribe, tool-listen carries audio.listen,
  * web.read, web.links, web.screenshot and web.interact; skills carries the skill.* tools and the skills catalog of
  * the prompt; mcp-catalog owns Settings → MCP. All of them were core before plan step 7: an existing config.yaml whose plugins.enabled predates the
  * move keeps them without being rewritten.
  */
-export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "tool-vision", "tool-stt", "skills", "responsive-turn", "mcp-catalog", "runninghub"];
+export const DEFAULT_ON_PLUGINS: readonly string[] = ["tool-web", "tool-vision", "tool-stt", "tool-listen", "skills", "responsive-turn", "mcp-catalog", "runninghub"];
 
 /** Appends DEFAULT_ON_PLUGINS that are neither enabled nor disabled, in memory. Idempotent. */
 export function withDefaultPlugins<T extends { plugins: { enabled: string[]; disabled?: string[] | undefined } }>(config: T): T {
@@ -362,7 +362,7 @@ export function saveModelCatalog(
 }
 
 /** Well-known named model routes shown in Settings → Models (docs: cheap/embed/vision/long). */
-export const NAMED_MODEL_ROUTES = ["cheap", "embed", "vision", "stt", "long"] as const;
+export const NAMED_MODEL_ROUTES = ["cheap", "embed", "vision", "stt", "listen", "long"] as const;
 
 /**
  * Deep-merge models.routes into config.yaml.
@@ -466,7 +466,6 @@ tools:
   "site.*": allow
   "hyperframes.*": allow
   "runtimes.*": allow
-  "diffusion.generate": ask
   "diffusion.*": allow
   "memory.recall": allow
   "memory.write": allow

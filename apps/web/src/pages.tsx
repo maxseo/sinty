@@ -174,25 +174,26 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
   }>("/v1/models", []);
   const [models, setModels] = useState<{ route: string; enabled: boolean }[]>([]);
   const [providers, setProviders] = useState<{ id: string; protocol: string; baseUrl: string; apiKey: string; hasKey: boolean; remove?: boolean }[]>([]);
-  const [namedRoutes, setNamedRoutes] = useState<Record<string, string>>({ cheap: "", embed: "", vision: "", long: "" });
+  const [namedRoutes, setNamedRoutes] = useState<Record<string, string>>({ cheap: "", embed: "", vision: "", stt: "", listen: "", long: "" });
   const [serviceModel, setServiceModel] = useState("");
   const [custom, setCustom] = useState(false);
   const [draft, setDraft] = useState({ id: "", name: "", baseUrl: "https://", protocol: "openai-compat", apiKey: "", models: [{ id: "", title: "" }] });
   const [notice, setNotice] = useState("");
   const [saveError, setSaveError] = useState("");
-  const namedKeys = data?.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "long"];
+  const namedKeys = data?.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "listen", "long"];
   const namedLabels: Record<string, string> = {
     cheap: "cheap — дешёвые/служебные вызовы плагинов",
     embed: "embed — эмбеддинги для памяти",
     vision: "vision — описание картинок",
     stt: "stt — распознавание речи",
+    listen: "listen — разбор звука",
     long: "long — длинный контекст",
   };
   useEffect(() => {
     if (!data) return;
     setModels(data.models.filter((m) => m.enabled));
     setProviders(data.providers.map((p) => ({ id: p.id, protocol: p.protocol, baseUrl: p.baseUrl, apiKey: "", hasKey: p.hasKey })));
-    const keys = data.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "long"];
+    const keys = data.namedRouteKeys?.length ? data.namedRouteKeys : ["cheap", "embed", "vision", "stt", "listen", "long"];
     const next: Record<string, string> = {};
     for (const k of keys) next[k] = data.routes?.[k] ?? "";
     setNamedRoutes(next);

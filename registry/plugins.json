@@ -193,7 +193,15 @@
     {
       "name": "tool-stt",
       "version": "0.1.0",
-      "description": "Transcribe audio files in the workspace: stt.transcribe sends the clip to a speech model and returns text",
+      "description": "Transcribe audio files in the workspace: stt.transcribe returns the spoken text with word times and speaker labels when the model sends them",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
+      "name": "tool-listen",
+      "version": "0.1.0",
+      "description": "Ask a question about a sound file: audio.listen extracts the audio with ffmpeg and sends it to a model that accepts audio",
       "kinds": [
         "tool"
       ]

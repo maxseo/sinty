@@ -149,6 +149,7 @@ export class ModelGateway {
       model,
       ...(r.language ? { language: r.language } : {}),
       ...(r.durationSec !== undefined ? { durationSec: r.durationSec } : {}),
+      ...(r.segments?.length ? { segments: r.segments } : {}),
       usage: { inputTokens, outputTokens },
     };
   }

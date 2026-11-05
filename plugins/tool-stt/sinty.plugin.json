@@ -2,12 +2,12 @@
   "$schema": "../../schemas/plugin-manifest.schema.json",
   "name": "tool-stt",
   "version": "0.1.0",
-  "description": "Transcribe audio files in the workspace: stt.transcribe sends the clip to a speech model and returns text",
+  "description": "Transcribe audio files in the workspace: stt.transcribe returns the spoken text with word times and speaker labels when the model sends them",
   "kinds": ["tool"],
   "runtime": "node",
   "entry": "dist/index.js",
   "permissions": {
-    "fs": { "read": ["$WORKSPACE", "$SKILLS"] },
+    "fs": { "read": ["$WORKSPACE", "$SKILLS"], "write": ["$WORKSPACE"] },
     "models": ["stt", "*"]
   },
   "tools": [
@@ -26,7 +26,7 @@
   },
   "settings": {
     "title": "STT",
-    "description": "stt.transcribe reads an audio or video file in the project and returns the spoken text. The route is models.routes.stt on an openai-compat server that accepts POST /audio/transcriptions.",
+    "description": "stt.transcribe reads an audio or video file and returns timed phrases. Word times come from models that support them, such as whisper-1. Speaker labels come from a diarize model. The route is models.routes.stt.",
     "fields": [
       {
         "key": "modelRoute",

@@ -1,4 +1,4 @@
-import type { ChatMessage, ProviderEndpoint } from "./plugin.js";
+import type { ChatMessage, ProviderEndpoint, TranscriptSegment } from "./plugin.js";
 
 /**
  * The memory contract. See docs/spec/memory.md for the full semantics.
@@ -199,6 +199,8 @@ export interface TranscribeResult {
   model: string;
   language?: string;
   durationSec?: number;
+  /** Timed phrases. Absent when the server only returned plain text. */
+  segments?: TranscriptSegment[];
   usage: { inputTokens: number; outputTokens: number };
 }
 
