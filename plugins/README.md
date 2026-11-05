@@ -12,6 +12,7 @@ Each folder has a `sinty.plugin.json` ([schema](../schemas/plugin-manifest.schem
 | `tool-listen` | tool (`audio.listen`; on by default) | shipped |
 | `tool-web` | tool (web.search, web.read, web.links, web.screenshot, web.interact; on by default) | shipped (plan step 7) |
 | `mcp-catalog` | ui (Settings → MCP: list/add MCP plugins via POST /v1/plugins/mcp; on by default) | shipped (MCP phase 2) |
+| `usage` | ui (Settings → Расход: requests, tokens, charts; on by default) | shipped |
 | `skills` | tool, context (skills catalog in the prompt; skill.read, skill.files, skill.read_file, skill.write_file, skill.edit, skill.write; on by default) | shipped (plan step 7) |
 | `kanban` | tool, server, event | shipped (M3) |
 | `server-mcp` | server | shipped (M3); optional |

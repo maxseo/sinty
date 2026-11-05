@@ -192,9 +192,16 @@ function RunningHubSettings() {
   return <PluginTab tab={catalog} />;
 }
 
+function UsageSettings() {
+  const catalog = useSettingsCatalog("usage");
+  if (!catalog) return catalog === undefined ? null : <p class="error">Раздел «Расход» не запущен. Включите плагин usage и перезапустите sinty web.</p>;
+  return <PluginTab tab={catalog} />;
+}
+
 /** One section as a form; only changed fields are sent. */
 export function SectionPane({ id }: { id: string }) {
   if (id === "plugin.runninghub") return <RunningHubSettings />;
+  if (id === "plugin.usage") return <UsageSettings />;
   if (id === "plugin.mcp-catalog") return <McpPane />;
   if (id === "plugin.skills") return <SkillsPane />;
   const [section, setSection] = useState<SectionInfo>();

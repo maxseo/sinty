@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-05 | [Settings → Расход](2026-11-05-usage-dashboard.md) | (open) | Usage dashboard plugin: journal `usage.recorded`, no invented dollars. |
 | 2026-11-05 | [runninghub-ci](2026-11-05-runninghub-ci.md) | PR #85 CI: goldens for runninghub/stt, disable DEFAULT_ON in window-cap, kanban assigneeId, agent.task copy |
 | 2026-11-05 | [Context inspector querySelector](2026-11-05-context-inspector-queryselector.md) | #85 | FakeEl implements querySelector so session tab tests request snapshots again. |
 | 2026-11-04 | [Stop kills shell.run](2026-11-04-stop-shell.md) | (open) | Stop aborts shell.run via the turn signal; blob attach cap 8 GB. |

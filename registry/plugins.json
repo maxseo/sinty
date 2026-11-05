@@ -42,6 +42,15 @@
       ]
     },
     {
+      "name": "diffusion",
+      "version": "0.1.0",
+      "description": "A video editor inside each harness project. Films belong to that project. Agents cut, preview and export. Speech, sound questions and generated pictures live in other plugins.",
+      "kinds": [
+        "tool",
+        "ui"
+      ]
+    },
+    {
       "name": "fact-extractor",
       "version": "0.1.0",
       "description": "Memory processor: extracts durable facts after each turn with the cheap model route and filters memory writes",
@@ -58,9 +67,18 @@
       ]
     },
     {
+      "name": "hyperframes",
+      "version": "0.1.0",
+      "description": "Write a HyperFrames HTML composition and render it to MP4. The tab shows when heygen-com/hyperframes has a newer release.",
+      "kinds": [
+        "tool",
+        "ui"
+      ]
+    },
+    {
       "name": "kanban",
       "version": "0.1.0",
-      "description": "Kanban board: each card the human gives to the agent runs as its own session; the agent comments and moves cards",
+      "description": "Kanban board for a project: assignee, reviewer, dependencies, and notes in the team chat",
       "kinds": [
         "tool",
         "server",
@@ -124,6 +142,24 @@
       ]
     },
     {
+      "name": "runninghub",
+      "version": "0.1.0",
+      "description": "RunningHub standard models: search the public registry, then upload, submit and poll. Text models stay on the Models settings card.",
+      "kinds": [
+        "tool",
+        "ui"
+      ]
+    },
+    {
+      "name": "runtimes",
+      "version": "0.1.0",
+      "description": "Install FFmpeg, Python and ImageMagick for the agent, and point Chrome at the Chromium Playwright already downloaded.",
+      "kinds": [
+        "tool",
+        "ui"
+      ]
+    },
+    {
       "name": "scheduler",
       "version": "0.1.0",
       "description": "Durable cron and fire-at jobs that wake a session while Sinty is running",
@@ -166,6 +202,15 @@
       ]
     },
     {
+      "name": "site",
+      "version": "0.1.0",
+      "description": "The site: pages, posts, categories and templates in the harness. The public site reads published records from here.",
+      "kinds": [
+        "tool",
+        "ui"
+      ]
+    },
+    {
       "name": "skills",
       "version": "0.1.0",
       "description": "Skills: the skills catalog in the prompt and skill.read, skill.files, skill.read_file, skill.write_file, skill.edit, skill.write",
@@ -191,17 +236,17 @@
       ]
     },
     {
-      "name": "tool-stt",
+      "name": "tool-listen",
       "version": "0.1.0",
-      "description": "Transcribe audio files in the workspace: stt.transcribe returns the spoken text with word times and speaker labels when the model sends them",
+      "description": "Ask a question about a sound file: audio.listen extracts the audio with ffmpeg and sends it to a model that accepts audio",
       "kinds": [
         "tool"
       ]
     },
     {
-      "name": "tool-listen",
+      "name": "tool-stt",
       "version": "0.1.0",
-      "description": "Ask a question about a sound file: audio.listen extracts the audio with ffmpeg and sends it to a model that accepts audio",
+      "description": "Transcribe audio files in the workspace: stt.transcribe returns the spoken text with word times and speaker labels when the model sends them",
       "kinds": [
         "tool"
       ]
@@ -226,6 +271,14 @@
       "name": "ui-web",
       "version": "0.1.0",
       "description": "Web UI: chat, sessions, approvals, journal, supervisor and kanban. Built from apps/web",
+      "kinds": [
+        "ui"
+      ]
+    },
+    {
+      "name": "usage",
+      "version": "0.1.0",
+      "description": "Settings → Расход: requests, tokens and charts from the session journal (usage.recorded)",
       "kinds": [
         "ui"
       ]
