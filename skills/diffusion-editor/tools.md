@@ -1,6 +1,6 @@
 # Commands
 
-The Видео pane does not have to be open. Every command is `diffusion.run` except `diffusion.source`, `diffusion.film`, and `diffusion.generate`. Pass `film` (name or id) when the project has more than one film. After `diffusion.film`, that new film is the default.
+The Видео pane does not have to be open. Every command is `diffusion.run` except `diffusion.source` and `diffusion.film`. Pass `film` (name or id) when the project has more than one film. After `diffusion.film`, that new film is the default.
 
 `args` is a list of strings. The first value is the positional (a scene id or a library path). Flags are `--prompt` / `-p`, `--start` / `-s`, `--end` / `-e`. Times are seconds (`1.5`), frames (`45f`), or clock (`1:30`). Replies use seconds.
 
@@ -27,11 +27,7 @@ The Видео pane does not have to be open. Every command is `diffusion.run` e
 
 Look at a `file` with `vision.look`. The path is absolute and inside the chat project, so a relative `_out/diffusion/...` also works.
 
-`transcribe` and `listen` take a library path and a `--prompt` for listen. With no adapter address they return «не подключено».
-
-## Jobs
-
-`diffusion.generate` is a separate tool and asks the person first. Its `args` are the model fields the adapter expects. It returns a job id. `diffusion.run` `job` with that id polls it; `--cancel` stops it. No address means «не подключено». The local model `sam-2.1` segments and tracks inside the editor and does not need an address.
+Spoken words and cut points are `stt.transcribe`. File times become `sourceIn` and `sourceOut`. A question about the sound is `audio.listen`, and its times are not cut points. See **Sound on the cut** in SKILL.md. A generated picture or video is `runninghub`. Those are not commands of this editor.
 
 ## A new film
 

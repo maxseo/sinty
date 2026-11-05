@@ -3,9 +3,9 @@ import { basename, dirname, extname, isAbsolute, join, normalize, relative, reso
 import { definePlugin, ToolError, z } from "@sinty/sdk";
 import { acceptFromEditor, activity, assembleFilm, awaitEditor, callTool, cloudCall, createFilm, engage, findFilm, focusFilm, hold, listFilms, mirrorAssets, noteChange, projectOfWorkspace, readMedia, release, rememberProject, resolveFilm, safeSegment, takeInbox, writeMedia } from "./host.js";
 
-const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "logs", "screenshot", "window", "job", "generate"] as const;
-const LONG = new Set(["export", "transcribe", "listen", "grab", "generate"]);
-const RUNTIME = new Set(["context", "capture", "check", "export", "probe", "grab", "transcribe", "filmstrip", "waveform", "listen", "fonts", "screenshot", "job", "generate"]);
+const COMMANDS = ["open", "context", "capture", "check", "export", "probe", "grab", "filmstrip", "waveform", "fonts", "screenshot"] as const;
+const LONG = new Set(["export", "grab"]);
+const RUNTIME = new Set(["context", "capture", "check", "export", "probe", "grab", "filmstrip", "waveform", "fonts", "screenshot"]);
 
 function pickFilm(data: string, toolCtx: { workspace?: string; projectId?: string }, film?: string) {
   const project = projectOfWorkspace(data, toolCtx.workspace, toolCtx.projectId);
@@ -187,7 +187,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "diffusion.run",
-      description: "Run one command on a film in this chat's project. The Видео pane does not have to be open. Pass film (name or id) when the project has more than one; after diffusion.film the new film is the default. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip, waveform, transcribe and listen need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export draws every timeline layer, mixes the timeline audio, and ffmpeg writes _out/video/<film name>/film.mp4. open reports the film. window says the pane is visible. logs is empty here. generate and listen/transcribe need an adapter URL or they answer that nothing is connected. job needs the id generate returned. To change the cut, use diffusion.source, not this command.",
+      description: "Run one command on a film in this chat's project. The Видео pane does not have to be open. Pass film (name or id) when the project has more than one; after diffusion.film the new film is the default. context lists scenes (id like index.tsx:2) and assets (library path like clip.mov). check, capture and export use the open scene when id is omitted; capture times are seconds. probe, grab, filmstrip and waveform need an asset path from context. Pictures come back as files under the chat project _out/diffusion, never as raw bytes. export draws every timeline layer, mixes the timeline audio, and ffmpeg writes _out/video/<film name>/film.mp4. open reports the film. Speech is stt.transcribe. Questions about the sound are audio.listen. Pictures and video to generate are runninghub. To change the cut, use diffusion.source, not this command.",
       sideEffects: "external",
       timeoutMs: 600_000,
       input: z.object({
@@ -196,8 +196,6 @@ export default definePlugin({
         film: z.string().min(1).max(80).optional(),
       }),
       async run(input, toolCtx) {
-        if (input.command === "window") return { content: { visible: true } };
-        if (input.command === "logs") return { content: { entries: [] } };
         const args = argsOf(input.command, input.args);
         const ms = LONG.has(input.command) ? 600_000 : 180_000;
         const film = pickFilm(ctx.paths.data, toolCtx, input.film);
@@ -275,28 +273,6 @@ export default definePlugin({
         } catch (error) {
           if (error instanceof ToolError) throw error;
           throw new ToolError("diffusion_source", error instanceof Error ? error.message : "фильм не открыт");
-        } finally {
-          release(film.id);
-        }
-      },
-    });
-
-    ctx.tool({
-      name: "diffusion.generate",
-      description: "Generate media through the connected model adapter. Asks first. Without an address in adapters.json the call answers that nothing is connected.",
-      sideEffects: "external",
-      input: z.object({
-        args: z.array(z.string()).default([]),
-        film: z.string().min(1).max(80).optional(),
-      }),
-      async run(input, toolCtx) {
-        const film = pickFilm(ctx.paths.data, toolCtx, input.film);
-        hold(film.id, basename(dirname(film.dir)), film.displayName, 620_000);
-        try {
-          await awaitEditor(film.dir, 45_000);
-          return { content: await callTool("generate", argsOf("generate", input.args), 600_000) };
-        } catch (error) {
-          throw new ToolError("diffusion_generate", error instanceof Error ? error.message : "не подключено");
         } finally {
           release(film.id);
         }
@@ -455,7 +431,7 @@ parent.postMessage({ sinty: PROTO, op: "ready" }, "*");
   });
 }
 
-const MEDIA = new Set(["probe", "grab", "transcribe", "filmstrip", "waveform", "listen"]);
+const MEDIA = new Set(["probe", "grab", "filmstrip", "waveform"]);
 
 function positionals(args: string[]): { record: Record<string, unknown>; rest: string[] } {
   const record: Record<string, unknown> = {};
@@ -474,11 +450,6 @@ function argsOf(command: string, args: string[]): Record<string, unknown> {
   if (command === "open") {
     const dir = args.find((arg) => !arg.startsWith("-"));
     return dir ? { dir } : {};
-  }
-  if (command === "job") {
-    const id = args.find((arg) => !arg.startsWith("-") && arg !== "list");
-    if (!id) throw new ToolError("diffusion_arg", "нужен id задания, который вернул generate");
-    return { id, cancel: args.includes("--cancel") };
   }
   const { record, rest } = positionals(args);
   if (command === "check" || command === "capture") {

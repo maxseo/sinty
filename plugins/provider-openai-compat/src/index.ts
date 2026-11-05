@@ -1,4 +1,4 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderChunk, type ProviderRequest, openAIModelList } from "@sinty/sdk";
+import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderChunk, type ProviderRequest, type TranscriptSegment, type TranscriptWord, openAIModelList } from "@sinty/sdk";
 
 interface ToolCallAcc {
   id: string;
@@ -85,23 +85,36 @@ export default definePlugin({
       /** POST {baseUrl}/audio/transcriptions (OpenAI Whisper and compatible servers). */
       async transcribe(req) {
         const baseUrl = (req.endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
-        const form = new FormData();
-        form.append("file", new Blob([Buffer.from(req.data, "base64")], { type: req.mime }), req.filename);
-        form.append("model", req.model);
-        form.append("response_format", "json");
-        if (req.language) form.append("language", req.language);
-        if (req.prompt) form.append("prompt", req.prompt);
-        const res = await ctx.net.fetch(`${baseUrl}/audio/transcriptions`, {
-          method: "POST",
-          signal: req.signal,
-          headers: {
-            ...(req.endpoint.apiKey ? { authorization: `Bearer ${req.endpoint.apiKey}` } : {}),
-            ...req.endpoint.headers,
-          },
-          body: form,
-        });
+        const bytes = Buffer.from(req.data, "base64");
+        const timed = req.model.includes("diarize") ? "diarized_json" : "verbose_json";
+        const post = (format: string, granular: boolean) => {
+          const form = new FormData();
+          form.append("file", new Blob([bytes], { type: req.mime }), req.filename);
+          form.append("model", req.model);
+          form.append("response_format", format);
+          if (granular) {
+            form.append("timestamp_granularities[]", "segment");
+            form.append("timestamp_granularities[]", "word");
+          }
+          if (req.language) form.append("language", req.language);
+          if (req.prompt) form.append("prompt", req.prompt);
+          return ctx.net.fetch(`${baseUrl}/audio/transcriptions`, {
+            method: "POST",
+            signal: req.signal,
+            headers: {
+              ...(req.endpoint.apiKey ? { authorization: `Bearer ${req.endpoint.apiKey}` } : {}),
+              ...req.endpoint.headers,
+            },
+            body: form,
+          });
+        };
+        let res = await post(timed, timed === "verbose_json");
+        if (!res.ok && (res.status === 400 || res.status === 415 || res.status === 422)) {
+          await res.arrayBuffer().catch(() => undefined);
+          res = await post("json", false);
+        }
         if (!res.ok) throw await httpError(res);
-        return transcriptionOf(await res.json(), Buffer.from(req.data, "base64").byteLength);
+        return transcriptionOf(await res.json(), bytes.byteLength);
       },
     });
   },
@@ -113,27 +126,63 @@ export default definePlugin({
  * unknown fields. DeepSeek caches prefixes on its own and needs no key.
  */
 /** The JSON body of `POST /audio/transcriptions`. An empty `text` is silence, not a failure. */
-export function transcriptionOf(body: unknown, bytes: number): { text: string; language?: string; durationSec?: number; usage: { inputTokens: number; outputTokens: number } } {
+export function transcriptionOf(body: unknown, bytes: number): { text: string; segments?: TranscriptSegment[]; language?: string; durationSec?: number; usage: { inputTokens: number; outputTokens: number } } {
   const row = body && typeof body === "object" ? (body as { text?: unknown; language?: unknown; duration?: unknown; error?: { message?: unknown } }) : {};
   if (row.error && typeof row.error.message === "string") throw new ToolError("provider_error", row.error.message);
-  if (typeof row.text !== "string") throw new ToolError("provider_error", "transcription answer has no text");
-  const text = row.text.trim();
+  const segments = segmentsOf(row);
+  const text = typeof row.text === "string" ? row.text.trim() : segments?.map((s) => s.text).join(" ").trim();
+  if (typeof text !== "string") throw new ToolError("provider_error", "transcription answer has no text");
   const language = typeof row.language === "string" && row.language ? row.language : undefined;
   const durationSec = typeof row.duration === "number" && Number.isFinite(row.duration) ? row.duration : undefined;
   const usage = { inputTokens: Math.max(1, Math.ceil(bytes / 1000)), outputTokens: Math.ceil(text.length / 4) };
-  return { text, ...(language ? { language } : {}), ...(durationSec !== undefined ? { durationSec } : {}), usage };
+  return { text, ...(segments ? { segments } : {}), ...(language ? { language } : {}), ...(durationSec !== undefined ? { durationSec } : {}), usage };
+}
+
+function wordOf(raw: unknown): TranscriptWord | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as { word?: unknown; text?: unknown; start?: unknown; end?: unknown };
+  const text = (typeof row.word === "string" ? row.word : typeof row.text === "string" ? row.text : "").trim();
+  const start = typeof row.start === "number" && Number.isFinite(row.start) ? row.start : undefined;
+  const end = typeof row.end === "number" && Number.isFinite(row.end) ? row.end : undefined;
+  if (!text || start === undefined || end === undefined) return undefined;
+  return { text, start, end };
+}
+
+/** Timed phrases from verbose_json or diarized_json. Words at the top level are placed into the phrase that contains them. */
+export function segmentsOf(body: object): TranscriptSegment[] | undefined {
+  const row = body as { segments?: unknown; words?: unknown };
+  const loose = Array.isArray(row.words) ? row.words.map(wordOf).filter((w): w is TranscriptWord => Boolean(w)) : [];
+  if (!Array.isArray(row.segments)) {
+    if (!loose.length) return undefined;
+    return [{ text: loose.map((w) => w.text).join(" "), start: loose[0]!.start, end: loose[loose.length - 1]!.end, words: loose }];
+  }
+  const segments: TranscriptSegment[] = [];
+  for (const raw of row.segments) {
+    if (!raw || typeof raw !== "object") continue;
+    const seg = raw as { text?: unknown; start?: unknown; end?: unknown; speaker?: unknown; words?: unknown };
+    const start = typeof seg.start === "number" && Number.isFinite(seg.start) ? seg.start : 0;
+    const end = typeof seg.end === "number" && Number.isFinite(seg.end) ? seg.end : start;
+    const own = Array.isArray(seg.words) ? seg.words.map(wordOf).filter((w): w is TranscriptWord => Boolean(w)) : loose.filter((w) => w.start >= start - 0.02 && w.start < end + 0.02);
+    const text = (typeof seg.text === "string" ? seg.text : own.map((w) => w.text).join(" ")).trim();
+    const speaker = typeof seg.speaker === "string" && seg.speaker.trim() ? seg.speaker.trim() : undefined;
+    if (!text && !own.length) continue;
+    segments.push({ text, start, end, ...(speaker ? { speaker } : {}), words: own });
+  }
+  return segments.length ? segments : undefined;
 }
 
 export function buildBody(req: ProviderRequest): Record<string, unknown> {
   const { promptCacheKey, ...options } = req.endpoint.options ?? {};
   const baseUrl = req.endpoint.baseUrl ?? "https://api.openai.com/v1";
   const sendKey = promptCacheKey === true || (promptCacheKey === undefined && /^https:\/\/api\.openai\.com(\/|$)/.test(baseUrl));
+  const omni = /omni/i.test(req.model);
   const body: Record<string, unknown> = {
     model: req.model,
     stream: true,
     stream_options: { include_usage: true },
-    messages: req.messages.map(toWireMessage),
+    messages: req.messages.map((message) => toWireMessage(message, omni)),
     ...(sendKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
+    ...(omni && req.messages.some((message) => message.audio?.length) ? { modalities: ["text"] } : {}),
     ...options,
   };
   if (req.maxOutputTokens) body.max_tokens = req.maxOutputTokens;
@@ -150,7 +199,7 @@ export function buildBody(req: ProviderRequest): Record<string, unknown> {
   return body;
 }
 
-function toWireMessage(m: ChatMessage): Record<string, unknown> {
+function toWireMessage(m: ChatMessage, audioUri = false): Record<string, unknown> {
   if (m.role === "tool") return { role: "tool", tool_call_id: m.toolCallId, content: m.content };
   if (m.role === "assistant" && m.toolCalls?.length) {
     return {
@@ -159,10 +208,17 @@ function toWireMessage(m: ChatMessage): Record<string, unknown> {
       tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) } })),
     };
   }
-  if (m.images?.length) {
+  if (m.images?.length || m.audio?.length) {
     return {
       role: m.role,
-      content: [{ type: "text", text: m.content }, ...m.images.map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.data}` } }))],
+      content: [
+        { type: "text", text: m.content },
+        ...(m.images ?? []).map((img) => ({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.data}` } })),
+        ...(m.audio ?? []).map((clip) => ({
+          type: "input_audio",
+          input_audio: { data: audioUri ? `data:;base64,${clip.data}` : clip.data, format: clip.mime.includes("wav") ? "wav" : "mp3" },
+        })),
+      ],
     };
   }
   return { role: m.role, content: m.content };

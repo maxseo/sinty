@@ -1,6 +1,7 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { basename } from "node:path";
-import { definePlugin, ToolError, z, type PluginContext } from "@sinty/sdk";
+import { basename, join } from "node:path";
+import { definePlugin, ToolError, z, type PluginContext, type TranscriptSegment } from "@sinty/sdk";
 import { isAudioMime, resolveMime } from "./mime.ts";
 import { resolveAudioPath } from "./path.ts";
 import { readSettings, type SttSettings } from "./settings.ts";
@@ -16,7 +17,7 @@ async function transcribe(
   language: string,
   prompt: string | undefined,
   sessionId: string,
-): Promise<{ text: string; route: string; provider: string; model: string; language?: string; durationSec?: number }> {
+): Promise<{ text: string; route: string; provider: string; model: string; language?: string; durationSec?: number; segments?: TranscriptSegment[] }> {
   const route = s.modelRoute || "stt";
   const req = {
     route,
@@ -29,7 +30,7 @@ async function transcribe(
   };
   try {
     const r = await ctx.models.transcribe(req);
-    return { text: r.text, route, provider: r.provider, model: r.model, ...(r.language ? { language: r.language } : {}), ...(r.durationSec !== undefined ? { durationSec: r.durationSec } : {}) };
+    return { text: r.text, route, provider: r.provider, model: r.model, ...(r.language ? { language: r.language } : {}), ...(r.durationSec !== undefined ? { durationSec: r.durationSec } : {}), ...(r.segments?.length ? { segments: r.segments } : {}) };
   } catch (e) {
     if (e instanceof ToolError && isRouteMissing(e)) {
       throw new ToolError("route_missing", "no speech model is set", {
@@ -53,7 +54,7 @@ export default definePlugin({
     ctx.tool({
       name: "stt.transcribe",
       description:
-        "Transcribe one or more audio files under the workspace (or skills:…) with a speech-to-text model and return the spoken text. Accepts mp3, wav, m4a, flac, ogg, webm and mp4. Do not use fs.read on audio. Needs an openai-compat route models.routes.stt (or Settings → STT), for example openai/whisper-1.",
+        "Transcribe one or more audio files under the workspace (or skills:…) and return the spoken text with timed phrases. Each phrase has start and end in seconds, words when the model sends them, and a speaker label when the model tells voices apart. Writes the same JSON under the project _out/stt. Accepts mp3, wav, m4a, flac, ogg, webm and mp4. Do not use fs.read on audio. Needs models.routes.stt (or Settings → STT), for example openai/whisper-1. A diarize model fills speaker; whisper-1 fills word times.",
       input: z
         .object({
           path: z.string().min(1).optional().describe('One file, relative to the workspace, or "skills:<path>"'),
@@ -71,7 +72,7 @@ export default definePlugin({
           if (!wanted.includes(p)) wanted.push(p);
         }
         const lang = language ?? s.language;
-        const clips: { path: string; mime: string; bytes: number; text: string; language?: string; durationSec?: number }[] = [];
+        const clips: { path: string; mime: string; bytes: number; text: string; file?: string; words: number; speakers: string[]; segments: TranscriptSegment[]; language?: string; durationSec?: number }[] = [];
         let route = "";
         let provider = "";
         let model = "";
@@ -97,11 +98,25 @@ export default definePlugin({
           route = result.route;
           provider = result.provider;
           model = result.model;
+          const segments = result.segments ?? [];
+          const speakers = [...new Set(segments.map((seg) => seg.speaker).filter((name): name is string => Boolean(name)))];
+          const words = segments.reduce((n, seg) => n + seg.words.length, 0);
+          const file = writeTranscript(run.workspace ?? globalWorkspace, shown, {
+            path: shown,
+            text: result.text,
+            ...(result.language ? { language: result.language } : {}),
+            ...(result.durationSec !== undefined ? { durationSec: result.durationSec } : {}),
+            segments,
+          });
           clips.push({
             path: shown,
             mime,
             bytes: bytes.byteLength,
             text: result.text,
+            ...(file ? { file } : {}),
+            words,
+            speakers,
+            segments,
             ...(result.language ? { language: result.language } : {}),
             ...(result.durationSec !== undefined ? { durationSec: result.durationSec } : {}),
           });
@@ -124,3 +139,14 @@ export default definePlugin({
     });
   },
 });
+
+/** The same timed transcript as a file the agent can search. A skills: path is not written into the skills folder. */
+function writeTranscript(workspace: string, shown: string, body: unknown): string | undefined {
+  if (!workspace || shown.startsWith("skills:")) return undefined;
+  const stem = basename(shown).replace(/\.[^.]+$/, "").replace(/[^\w.-]+/gu, "_").slice(0, 80) || "clip";
+  const dir = join(workspace, "_out", "stt");
+  mkdirSync(dir, { recursive: true });
+  const name = `${stem}.json`;
+  writeFileSync(join(dir, name), `${JSON.stringify(body, null, 2)}\n`, "utf8");
+  return `_out/stt/${name}`;
+}

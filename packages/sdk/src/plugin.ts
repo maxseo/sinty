@@ -113,6 +113,8 @@ export interface ChatMessage {
   content: string;
   /** Inline images for providers that accept them. Text of other files stays in `content`. */
   images?: { mime: string; data: string }[];
+  /** Inline audio for providers that accept `input_audio`. The bytes are base64, without a data-URL prefix. */
+  audio?: { mime: string; data: string }[];
   toolCallId?: string;
   toolCalls?: { id: string; name: string; args: unknown }[];
   untrusted?: boolean;
@@ -185,7 +187,25 @@ export interface ProviderDefinition {
   /** Embeddings for `ctx.models.embed` and the builtin vector search. */
   embed?(req: EmbedProviderRequest): Promise<{ vectors: number[][]; usage?: { inputTokens: number } }>;
   /** Speech-to-text for `ctx.models.transcribe`. */
-  transcribe?(req: TranscribeProviderRequest): Promise<{ text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }>;
+  transcribe?(req: TranscribeProviderRequest): Promise<{ text: string; segments?: TranscriptSegment[]; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }>;
+}
+
+/** One timed word from a speech model. */
+export interface TranscriptWord {
+  text: string;
+  /** Seconds from the start of the file. */
+  start: number;
+  /** Seconds from the start of the file. */
+  end: number;
+}
+
+/** A stretch of speech. `speaker` is set when the model tells voices apart. `words` is empty when it only returns the phrase. */
+export interface TranscriptSegment {
+  text: string;
+  start: number;
+  end: number;
+  speaker?: string;
+  words: TranscriptWord[];
 }
 
 // ---- context ----

@@ -28,11 +28,23 @@ A new film is `diffusion.film` with a `name`. It shows up in the Видео list
 
 Anything in the film library is copied to `_inbox/assets/<film name>/` in the chat project. Read and copy those files. Do not read the film folder under the harness data directory.
 
+## Sound on the cut
+
+`stt.transcribe` and `audio.listen` both take a project file, including a video. They answer different questions. Call one of them, not both, for the same question.
+
+`stt.transcribe` is the transcript you cut and subtitle from. One call per source file (`_inbox/...` or `_inbox/assets/<film name>/...`). The reply and `_out/stt/<name>.json` give phrases with `start` and `end` in seconds of that file. `words` have their own times when the speech model sends them. `speaker` is set only when that model's id contains `diarize`. `whisper-1` leaves `speaker` empty. Those numbers are times inside the file. On a `<video>` or `<audio>` they become `sourceIn` and `sourceOut`. The tag's `start` is where that piece sits on the scene. Leave a short head and tail so a syllable is not clipped. The tool reads the whole file. It has no window.
+
+`audio.listen` answers what the sound is: which music, who is speaking, noise under the voice, the order of events. Pass `prompt`, and `start` and `end` when the file is long. Times in the answer count from the start of that window, not from the start of the file and not from the scene. Do not use them as `sourceIn` or as subtitle times.
+
+A video and a separate music or voice file are separate calls. `muted` on a `<video>` only silences the timeline. The speech is still in the file, so transcribe the file, then set `muted` or `volume` on the tag. `probe` says whether the file has an audio codec and how long it is. `waveform` is a picture of loud and quiet. `vision.look` that picture. It does not contain words.
+
+`export` mixes every timeline audio track into one mp4. Transcribe or listen to that export only when the question is about the mix.
+
 ## Do not
 
 - Do not `fs.list` or `fs.read` the film folder. It sits outside the chat project. `diffusion.source` is the door.
 - Do not patch this plugin when a command fails. Report the sentence the tool returned.
 - Do not call `filmstrip`, `waveform`, `grab`, or `capture` a second time if the reply already has a `file`. The bytes are not supposed to appear in the chat.
-- Do not use `window` or `logs` to debug a cut. The pane is the window. The log list is empty.
-- `generate`, `listen`, and `transcribe` answer «не подключено» until an address is set. Say so. Do not invent a model name except the local segmenter `sam-2.1`, which needs no address.
+- Speech in a file is `stt.transcribe`. A question about the sound is `audio.listen`. A new picture or video is `runninghub`.
+- `diffusion.run` has no `generate`, `transcribe`, `listen`, `job`, `logs`, or `window` command.
 - There is no `report` command and no download command.
