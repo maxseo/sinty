@@ -87,5 +87,5 @@ test("remember on approve grants trust and clears waiting asks", async () => {
 test("agent.task description documents background opt-in", () => {
   const t = CORE_TOOLS.find((x) => x.name === "agent.task");
   assert.ok(t);
-  assert.match(t!.description, /background: true only/i);
+  assert.match(t!.description, /Set background:\s*true yourself/i);
 });

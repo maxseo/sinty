@@ -9,6 +9,7 @@ import { createApp } from "../api/server.js";
 import { policySchema } from "../config.js";
 import { pluginDataDir, resolveFsGrants } from "../host/manifest.js";
 import { resolvePaths } from "../paths.js";
+import { saveAgent } from "../roster.js";
 import type { Sinty } from "../sinty.js";
 import { boot, tempHome, type ScriptStep } from "./helpers.js";
 
@@ -126,8 +127,10 @@ test("pending approvals and the supervisor panel are visible through the API", a
 
 test("kanban: a card for the agent runs in its own session and lands in review", async () => {
   await withApp([{ text: "card done" }], ["kanban"], async ({ sinty, app, auth }) => {
+    const worker = saveAgent(sinty.paths, { name: "Worker" });
+    const reviewer = saveAgent(sinty.paths, { name: "Reviewer" });
     const created = (await (
-      await app.request("/p/kanban/cards", { method: "POST", headers: auth, body: JSON.stringify({ title: "Write a haiku", column: "todo", assignee: "agent" }) })
+      await app.request("/p/kanban/cards", { method: "POST", headers: auth, body: JSON.stringify({ title: "Write a haiku", column: "todo", assigneeId: worker.id, reviewerId: reviewer.id }) })
     ).json()) as { id: string };
     const card = await until(async () => {
       const board = (await (await app.request("/p/kanban/board", { headers: auth })).json()) as { cards: { id: string; column: string; sessionId: string | null }[] };

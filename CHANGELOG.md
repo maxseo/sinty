@@ -24,6 +24,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.run` no longer has `generate`, `transcribe`, `listen`, `job`, `logs` or `window`. `diffusion.generate` is removed. Speech is `stt.transcribe`, a question about the sound is `audio.listen`, and a new picture or video is `runninghub`.
 
 ### Fixed
+- CI on the RunningHub tip: refresh golden prompts for default-on `runninghub`/`tool-stt`, keep the fallback-window test off DEFAULT_ON plugins, match the new `agent.task` background copy, and seed kanban cards with roster `assigneeId`/`reviewerId`.
 - The context-inspector session tab tests run again. `drawSteps` uses `querySelector(".step.on")`; the FakeEl harness now implements that call so a missing method no longer aborts `refresh` before the snapshot request.
 - A model id that contains `omni` receives local audio as a `data:;base64,` URI and `modalities: ["text"]`. `qwen3.8-omni-flash` rejected the raw base64 body with `The request parameters are not supported by this model`.
 - `audio.listen` no longer dies before the model with a filesystem permission error. The temporary mp3 is written in the plugin data folder and removed after the call.

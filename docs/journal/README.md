@@ -48,6 +48,7 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-05 | [runninghub-ci](2026-11-05-runninghub-ci.md) | PR #85 CI: goldens for runninghub/stt, disable DEFAULT_ON in window-cap, kanban assigneeId, agent.task copy |
 | 2026-11-05 | [Context inspector querySelector](2026-11-05-context-inspector-queryselector.md) | #85 | FakeEl implements querySelector so session tab tests request snapshots again. |
 | 2026-11-04 | [Qwen Omni audio body](2026-11-04-omni-audio-body.md) | #86 | Omni audio is a data URI and the reply modality is text. |
 | 2026-11-04 | [Audio and editor commands](2026-11-04-audio-and-editor-commands.md) | #86 | Transcripts carry word times. `audio.listen` asks about a recording. The editor drops the unused commands. |
