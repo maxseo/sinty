@@ -20,10 +20,12 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Changed
+- Chat attach / blob stream cap is 8 GB (was 512 MB). The model prompt still only inlines the first 8 MB. The composer tracks in-flight uploads and keeps Send off until they finish.
 - The editor, transcription and listen skills say which tool to call on a film. `stt.transcribe` times become `sourceIn` and `sourceOut`. `audio.listen` times stay inside the asked window. One call per source file. The mixed export is for a question about the mix.
 - `diffusion.run` no longer has `generate`, `transcribe`, `listen`, `job`, `logs` or `window`. `diffusion.generate` is removed. Speech is `stt.transcribe`, a question about the sound is `audio.listen`, and a new picture or video is `runninghub`.
 
 ### Fixed
+- **Стоп всё** ends an in-flight `shell.run`. The turn abort reaches the cage process; on Windows the button no longer waits for `taskkill` / the command timeout. The label shows **Останавливаю…** while stop runs.
 - CI on the RunningHub tip: refresh golden prompts for default-on `runninghub`/`tool-stt`, keep the fallback-window test off DEFAULT_ON plugins, match the new `agent.task` background copy, and seed kanban cards with roster `assigneeId`/`reviewerId`.
 - The context-inspector session tab tests run again. `drawSteps` uses `querySelector(".step.on")`; the FakeEl harness now implements that call so a missing method no longer aborts `refresh` before the snapshot request.
 - A model id that contains `omni` receives local audio as a `data:;base64,` URI and `modalities: ["text"]`. `qwen3.8-omni-flash` rejected the raw base64 body with `The request parameters are not supported by this model`.
@@ -32,7 +34,7 @@ All notable changes to this project are documented here. The format follows
 - Saving a new provider together with its API key no longer aborts. The card stayed only in the browser and disappeared on refresh.
 - Settings → Models asks OpenRouter for speech models as well as the chat catalog, and lists them first. A search box on the provider card finds `openai/whisper-1` among the rest.
 - The Видео film list opens when a newer library file cannot replace its inbox copy. Windows reported that copy as completed successfully, and the list stayed empty.
-- Attaching a large file to the chat no longer loads it into the tab as base64. The file is streamed to disk, up to 512 MB, and a copy lands in the project `_inbox`.
+- Attaching a large file to the chat no longer loads it into the tab as base64. The file is streamed to disk, up to 8 GB, and a copy lands in the project `_inbox`.
 - The chat no longer adds a line when a message is sent during a running turn. The message stays in the transcript and waits for the current command.
 - Supervisor remarks stay on the Supervisor tab. While a chat is waiting, the transcript says what the user has to do: answer the question, approve a tool, or send a message to continue.
 - A picture in the chat keeps its own proportions and sits flush with its rounded frame.
