@@ -78,6 +78,8 @@ models:
 
 `secret://` values live in the encrypted secret store (`sinty secret set xai`) and never enter the model context.
 
+**Settings → Расход** (plugin `usage`, on by default) charts tokens and requests from the session journal. A dollar total is shown only when a provider reported one.
+
 ## How it works
 
 ```

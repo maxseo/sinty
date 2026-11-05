@@ -1,0 +1,38 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "usage",
+  "version": "0.1.0",
+  "description": "Settings → Расход: requests, tokens and charts from the session journal (usage.recorded)",
+  "kinds": ["ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$DATA"], "write": ["$DATA"] },
+    "agent": ["sessions.read"]
+  },
+  "config": {
+    "retainDays": 0
+  },
+  "settings": {
+    "title": "Расход",
+    "description": "Дашборд вызовов моделей: запросы, токены, графики по времени и таблица. Данные из журнала сессий (usage.recorded). Доллары показываются только если провайдер прислал costUsd.",
+    "fields": [
+      {
+        "key": "retainDays",
+        "label": "Хранить индекс",
+        "type": "number",
+        "min": 0,
+        "max": 3650,
+        "integer": true,
+        "unit": "дней",
+        "help": "0 — не удалять локальный индекс плагина. Журнал сессий не трогается. Поле в config.yaml: plugins.config.usage.retainDays. Экран рисует дашборд, а не эту форму."
+      }
+    ]
+  },
+  "ui": {
+    "tabs": [
+      { "id": "spend", "title": "Расход", "path": "/tab", "placement": "settings" }
+    ]
+  },
+  "editable": true
+}

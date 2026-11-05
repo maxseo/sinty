@@ -108,6 +108,17 @@ export function PluginTab({ tab, sessionId, projectId }: { tab: PluginTabInfo; s
     return () => removeEventListener("message", onMessage);
   }, [tab.plugin, tab.id]);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    const push = (): void => {
+      const theme = root.dataset.theme === "dark" ? "dark" : "light";
+      frame.current?.contentWindow?.postMessage({ sinty: PROTO, op: "theme", theme }, "*");
+    };
+    const obs = new MutationObserver(push);
+    obs.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => obs.disconnect();
+  }, [tab.src]);
+
   // The chat switched: tell the page instead of reloading it.
   useEffect(() => {
     if (session.current === sessionId) return;

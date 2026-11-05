@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Settings → **Расход** (`usage`, on by default) shows requests, tokens, and charts for model calls. Switch by time, task, or call. A dollar figure appears only when the provider stored `costUsd`.
 - `stt.transcribe` returns timed phrases. Each phrase has start and end in seconds, word times when the speech model sends them, and a speaker label when the model tells voices apart. The same JSON is written to `_out/stt`. `whisper-1` fills the word times. A model whose id contains `diarize` fills the speaker.
 - `audio.listen` asks a chat model what is heard in an audio or video file. ffmpeg sends a short mono mp3. The model is Settings → Models → **listen — разбор звука** (`models.routes.listen`). Plugin `tool-listen` is on by default.
 - Agent replies in the chat are drawn as formatted Markdown: headings, lists, tables, links and code. A link that is not a web or mail address stays plain text.
