@@ -38,6 +38,11 @@ class FakeEl {
     for (const c of this.children) if (c instanceof FakeEl) out.push(...(pred(c) ? [c] : []), ...c.find(pred));
     return out;
   }
+  querySelector(sel: string): FakeEl | null {
+    const classes = sel.trim().split('.').filter(Boolean);
+    if (!classes.length) return null;
+    return this.find((e) => classes.every((c) => (' ' + e.className + ' ').includes(' ' + c + ' ')))[0] ?? null;
+  }
 }
 
 interface Get {
