@@ -28,6 +28,8 @@ export interface ShellOptions extends ShellSandboxConfig {
    * Anything else outside the workspace is still refused.
    */
   grants?: string[];
+  /** Stop all: kill the command when the turn is aborted. */
+  signal?: AbortSignal;
 }
 
 /** One warning per process when Linux commands run without the sandbox. */
@@ -72,6 +74,23 @@ export function runShell(workspace: string, command: string, cwd = ".", timeoutM
     let stderr = "";
     let truncated = false;
     let timedOut = false;
+    let settled = false;
+    let abortTimer: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: ShellResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(abortTimer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      done(result);
+    };
+    const onAbort = (): void => {
+      killTree(child);
+      abortTimer = setTimeout(() => finish({ cwd: dir, exitCode: null, stdout: stdout.trimEnd(), stderr: stderr.trimEnd(), truncated, timedOut }), 2_000);
+    };
+    if (opts.signal?.aborted) onAbort();
+    else opts.signal?.addEventListener("abort", onAbort, { once: true });
     const take = (chunk: Buffer, which: "out" | "err"): void => {
       if (which === "out") stdout += chunk.toString("utf8");
       else stderr += chunk.toString("utf8");
@@ -84,18 +103,12 @@ export function runShell(workspace: string, command: string, cwd = ".", timeoutM
     };
     child.stdout?.on("data", (chunk: Buffer) => take(chunk, "out"));
     child.stderr?.on("data", (chunk: Buffer) => take(chunk, "err"));
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       killTree(child);
     }, ms);
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      done({ cwd: dir, exitCode: 1, stdout, stderr: e.message, truncated, timedOut });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      done({ cwd: dir, exitCode: code, stdout: stdout.trimEnd(), stderr: stderr.trimEnd(), truncated, timedOut });
-    });
+    child.on("error", (e) => finish({ cwd: dir, exitCode: 1, stdout, stderr: e.message, truncated, timedOut }));
+    child.on("close", (code) => finish({ cwd: dir, exitCode: code, stdout: stdout.trimEnd(), stderr: stderr.trimEnd(), truncated, timedOut }));
   });
 }
 
@@ -198,10 +211,11 @@ function samePath(a: string, b: string): boolean {
 }
 
 function killTree(child: ChildProcess): void {
-  if (process.platform === "win32" && child.pid) {
-    const exe = join(process.env.SYSTEMROOT ?? "C:\\Windows", "System32", "taskkill.exe");
-    spawn(exe, ["/T", "/F", "/PID", String(child.pid)], { windowsHide: true, stdio: "ignore" });
-    return;
+  // taskkill /T hangs on the Windows cage: ShellBox waits inside a job, and taskkill waits with it.
+  // Killing ShellBox closes that job, and the job is marked to kill every child with it.
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // The process already exited.
   }
-  child.kill("SIGKILL");
 }

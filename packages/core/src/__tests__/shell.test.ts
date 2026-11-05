@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -37,4 +37,21 @@ test("an approved folder can be read and the timeout kills the command", async (
   assert.match(opened.stdout, /GRANT-MARKER/);
   const hung = await runShell(ws, `node -e "setTimeout(()=>{}, 60000)"`, ".", 1_500);
   assert.equal(hung.timedOut, true);
+});
+
+test("abort stops a running command", async () => {
+  const root = mkdtempSync(join(tmpdir(), "sinty-sh-abort-"));
+  const marker = join(root, "alive.txt");
+  const ac = new AbortController();
+  const pending = runShell(root, `node -e "setInterval(()=>require('fs').appendFileSync('alive.txt','x'),400)"`, ".", 60_000, { signal: ac.signal });
+  setTimeout(() => ac.abort(), 500);
+  const started = Date.now();
+  await pending;
+  assert.ok(Date.now() - started < 5_000);
+  await new Promise((r) => setTimeout(r, 700));
+  const before = existsSync(marker) ? statSync(marker).size : 0;
+  await new Promise((r) => setTimeout(r, 1000));
+  const after = existsSync(marker) ? statSync(marker).size : 0;
+  assert.equal(after, before);
+  assert.ok(before > 0);
 });

@@ -430,16 +430,22 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
 
   const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number }[]>([]);
   const [uploading, setUploading] = useState("");
+  const [uploadsLeft, setUploadsLeft] = useState(0);
+  const uploadsRef = useRef(0);
 
   const addFiles = async (list: FileList | null): Promise<void> => {
     if (!list?.length) return;
     setError("");
-    const room = 8 - files.length;
-    for (const file of [...list].slice(0, room)) {
-      if (file.size > 512 * 1024 * 1024) {
-        setError(`${file.name}: файл больше 512 МБ`);
-        continue;
-      }
+    const room = 8 - files.length - uploadsRef.current;
+    const queued = [...list].slice(0, Math.max(0, room)).filter((file) => {
+      if (file.size <= 8 * 1024 * 1024 * 1024) return true;
+      setError(`${file.name}: файл больше 8 ГБ`);
+      return false;
+    });
+    if (!queued.length) return;
+    uploadsRef.current += queued.length;
+    setUploadsLeft(uploadsRef.current);
+    for (const file of queued) {
       setUploading(file.name);
       try {
         const res = await fetch(`/v1/blobs?name=${encodeURIComponent(file.name)}`, {
@@ -453,7 +459,9 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setUploading("");
+        uploadsRef.current = Math.max(0, uploadsRef.current - 1);
+        setUploadsLeft(uploadsRef.current);
+        if (uploadsRef.current === 0) setUploading("");
       }
     }
   };
@@ -461,7 +469,7 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
   const send = async (e?: Event): Promise<void> => {
     e?.preventDefault();
     const text = draft.trim();
-    if ((!text && files.length === 0) || sendGuard.current) return;
+    if (uploadsRef.current > 0 || (!text && files.length === 0) || sendGuard.current) return;
     sendGuard.current = true;
     setSending(true);
     setError("");
@@ -517,9 +525,19 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
     }
   };
 
+  const [stopping, setStopping] = useState(false);
   const interrupt = async (): Promise<void> => {
-    await api(`/v1/sessions/${encodeURIComponent(sessionId)}/stop-all`, { method: "POST" });
-    await loadInfo();
+    if (stopping) return;
+    setStopping(true);
+    setError("");
+    try {
+      await api(`/v1/sessions/${encodeURIComponent(sessionId)}/stop-all`, { method: "POST" });
+      await loadInfo();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStopping(false);
+    }
   };
 
   const waitWord = (reason: string): string => reason === "approval" ? "одобрение" : reason === "ask_human" ? "вопрос" : reason === "budget" ? "бюджет" : "супервизор";
@@ -573,8 +591,8 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
           ))}
         </div>
         {canStop && (
-          <button class="danger" title="Прервать этот ход и все дочерние agent.task, в том числе уже остановленные супервизором" onClick={() => void interrupt()}>
-            Стоп всё
+          <button class="danger" title="Прервать этот ход и все дочерние agent.task, в том числе уже остановленные супервизором" disabled={stopping} onClick={() => void interrupt()}>
+            {stopping ? "Останавливаю…" : "Стоп всё"}
           </button>
         )}
       </header>
@@ -739,8 +757,14 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
               <span class="composer-model"><IconBrain /> {members.find((m) => m.id === replyAgent)?.name}</span>
             )}
             <span class="grow" />
-            <button class="composer-send" type="submit" aria-label="Отправить" disabled={(!draft.trim() && files.length === 0) || sending}>
-              {draft.trim() || files.length ? (
+            <button
+              class="composer-send"
+              type="submit"
+              aria-label="Отправить"
+              title={uploadsLeft > 0 ? "Дождитесь загрузки файлов" : "Отправить"}
+              disabled={uploadsLeft > 0 || sending || (!draft.trim() && files.length === 0)}
+            >
+              {draft.trim() || files.length || uploadsLeft > 0 ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5M6 11l6-6 6 6" /></svg>
               ) : <IconMic />}
             </button>

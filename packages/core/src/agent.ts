@@ -1262,6 +1262,7 @@ export class Agent {
           home: this.d.paths.home,
           ...(grants.length ? { grants } : {}),
           ...(this.d.log ? { log: this.d.log } : {}),
+          ...(signal ? { signal } : {}),
         });
       } catch (e) {
         if (e instanceof ShellSandboxError) throw new CoreToolError("sandbox_unavailable", e.message, "Do not retry: a human has to install bubblewrap or change shell.sandbox in config.yaml.");

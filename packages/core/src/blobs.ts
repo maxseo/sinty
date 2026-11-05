@@ -5,13 +5,17 @@ import { createWriteStream } from "node:fs";
 import { join } from "node:path";
 import type { BlobRef } from "@sinty/sdk";
 
-/** A chat file may be a video. The prompt still only inlines the first 8 MB. */
-export const BLOB_MAX_BYTES = 512 * 1024 * 1024;
+/** A chat file may be a long video. The prompt still only inlines the first 8 MB. */
+export const BLOB_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+
+export function blobTooBigMessage(): string {
+  return `файл больше ${BLOB_MAX_BYTES / (1024 * 1024 * 1024)} ГБ`;
+}
 const INLINE_MAX = 8_000_000;
 const TEXT_CAP = 16_000;
 
 export function saveBlob(dataDir: string, input: { bytes: Buffer; mime: string; name?: string }): BlobRef {
-  if (input.bytes.length > BLOB_MAX_BYTES) throw new Error(`файл больше ${BLOB_MAX_BYTES} байт`);
+  if (input.bytes.length > BLOB_MAX_BYTES) throw new Error(blobTooBigMessage());
   const hex = createHash("sha256").update(input.bytes).digest("hex");
   return storeHashed(dataDir, hex, input.bytes.length, input.mime, input.name, () => {
     const file = join(dataDir, "blobs", hex);
@@ -33,7 +37,7 @@ export async function saveBlobStream(dataDir: string, input: { body: ReadableStr
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > BLOB_MAX_BYTES) throw new Error(`файл больше ${BLOB_MAX_BYTES} байт`);
+      if (size > BLOB_MAX_BYTES) throw new Error(blobTooBigMessage());
       hash.update(value);
       await writeChunk(out, value);
     }

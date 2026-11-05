@@ -9,7 +9,7 @@ import { streamSSE } from "hono/streaming";
 import { scrubText } from "@sinty/supervisor";
 import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
-import { BLOB_MAX_BYTES, saveBlob, saveBlobStream } from "../blobs.js";
+import { BLOB_MAX_BYTES, blobTooBigMessage, saveBlob, saveBlobStream } from "../blobs.js";
 import { AccountError, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
 import { accessRegistry, registryIds, routeRight, sectionResource, tabResource, type AccessGroup, type RegistryPlugin } from "../access-registry.js";
 import { rotateApiToken, TokenRotationError } from "../api-token.js";
@@ -782,7 +782,7 @@ export function createApp(sinty: Sinty): Hono {
         return c.json(saveBlob(sinty.paths.data, { bytes, mime: body.mime || "application/octet-stream", ...(body.name ? { name: body.name } : {}) }), 201);
       }
       const announced = Number(c.req.header("content-length") ?? "");
-      if (Number.isFinite(announced) && announced > BLOB_MAX_BYTES) throw new AgentError("bad_request", `файл больше ${BLOB_MAX_BYTES} байт`);
+      if (Number.isFinite(announced) && announced > BLOB_MAX_BYTES) throw new AgentError("bad_request", blobTooBigMessage());
       const rawName = c.req.query("name") ?? "";
       let name = rawName;
       try { name = decodeURIComponent(rawName); } catch { /* keep the raw query */ }
