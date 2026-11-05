@@ -93,6 +93,7 @@
       "agent__task",
       "agent__task_steer",
       "ask_human",
+      "audio__listen",
       "context__recall",
       "mcp__install",
       "memory__forget",
