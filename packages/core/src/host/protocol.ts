@@ -1,4 +1,4 @@
-import type { ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, SystemSectionInput, ToolSideEffects } from "@sinty/sdk";
+import type { ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, ProviderRequest, SintyEvent, SystemSectionInput, ToolSideEffects, TranscriptSegment } from "@sinty/sdk";
 
 export interface RouteInfo {
   method: string;
@@ -132,7 +132,7 @@ export type FromChild =
     }
   | { t: "provider.embedded"; id: number; ok: true; value: { vectors: number[][]; usage?: { inputTokens: number } } }
   | { t: "provider.embedded"; id: number; ok: false; error: WireError }
-  | { t: "provider.transcribed"; id: number; ok: true; value: { text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } } }
+  | { t: "provider.transcribed"; id: number; ok: true; value: { text: string; segments?: TranscriptSegment[]; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } } }
   | { t: "provider.transcribed"; id: number; ok: false; error: WireError }
   | { t: "provider.listed"; id: number; ok: true; value: { id: string; contextWindow?: number; maxOutputTokens?: number }[] }
   | { t: "provider.listed"; id: number; ok: false; error: WireError }

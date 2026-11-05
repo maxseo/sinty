@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent, SystemSectionInput } from "@sinty/sdk";
+import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent, SystemSectionInput, TranscriptSegment } from "@sinty/sdk";
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
@@ -460,8 +460,8 @@ export class PluginProcess {
     }
   }
 
-  async transcribeProvider(protocol: string, req: { endpoint: ProviderWireRequest["endpoint"]; model: string; data: string; mime: string; filename: string; language?: string; prompt?: string }, signal?: AbortSignal, timeoutMs = 300_000): Promise<{ text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }> {
-    const value = await this.request<{ text: string; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }>(
+  async transcribeProvider(protocol: string, req: { endpoint: ProviderWireRequest["endpoint"]; model: string; data: string; mime: string; filename: string; language?: string; prompt?: string }, signal?: AbortSignal, timeoutMs = 300_000): Promise<{ text: string; segments?: TranscriptSegment[]; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }> {
+    const value = await this.request<{ text: string; segments?: TranscriptSegment[]; language?: string; durationSec?: number; usage?: { inputTokens: number; outputTokens: number } }>(
       (id) => ({ t: "provider.transcribe", id, protocol, req }),
       (msg) => (msg.t === "provider.transcribed" ? msg : undefined),
       timeoutMs,
