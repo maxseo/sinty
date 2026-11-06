@@ -63,3 +63,7 @@ No config or API changes. `sinty.openProjects` is still written when a project i
 - Composer starts as one compact row. Type until the line hits the right-hand buttons: the form grows up. After six lines a thin scrollbar appears. Attach files: previews above the text, buttons stay at the bottom, 6px inset from the pill edge.
 - Empty composer shows the wave control; any text or attachment turns it into send (arrow up). Hold the mic: recording state; release inserts speech text when the browser supports it.
 - Toggle Settings → Основные appearance: sidebar and composer follow light and dark.
+
+## Follow-up polish (circles / bar / footer)
+- AgentsList now uses side-av + side-meta like ChatRow (36px, title, specialization as side-sub).
+- .side-foot horizontal padding 16px; .brand/.bar min-height 60px so chat header lines up with left brand strip.

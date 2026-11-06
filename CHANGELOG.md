@@ -1,3 +1,7 @@
+## Unreleased
+
+- UX: agent list avatars match chat rows (36px circle + title/sub); footer inset 16px; chat bar height 60px aligned with brand.
+
 # Changelog
 
 All notable changes to this project are documented here. The format follows

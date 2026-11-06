@@ -535,14 +535,19 @@ function AgentNav({ current }: { current?: string }) {
   return (
     <nav>
       {rows.map((a) => (
-        <div key={a.id} class="agent-row">
+        <div key={a.id} class="agent-row chat-row">
           <a class={current === a.id ? "on" : ""} href={href({ page: "agents", agentId: a.id })}>
-            <span class="agent-ava" onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ id: a.id, x: r.right, y: r.bottom }); }} onMouseLeave={() => setTip(null)}>
-              {a.avatar ? <img src={a.avatar} alt="" /> : (a.name.slice(0, 1) || "?")}
+            <span
+              class="side-av"
+              style={a.avatar ? undefined : { background: hueColor(a.name || a.id) }}
+              onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ id: a.id, x: r.right, y: r.bottom }); }}
+              onMouseLeave={() => setTip(null)}
+            >
+              {a.avatar ? <img src={a.avatar} alt="" /> : letterOf(a.name || a.id)}
             </span>
-            <span class="agent-name">
-              <span class="title">{a.name}</span>
-              {a.specialization && <span class="agent-spec">{a.specialization}</span>}
+            <span class="side-meta">
+              <span class="side-title">{a.name}</span>
+              {a.specialization && <span class="side-sub">{a.specialization}</span>}
             </span>
           </a>
           <button type="button" class="icon" title="Удалить" onClick={() => void api(`/v1/roster/agents/${a.id}`, { method: "DELETE" }).then(() => { dispatchEvent(new Event("sinty-agents")); if (current === a.id) go({ page: "agents" }); })}><IconTrash /></button>
