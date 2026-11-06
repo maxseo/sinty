@@ -9,7 +9,7 @@ import { CalendarPage } from "./calendar.js";
 import { PluginTab, tabRight, type PluginTabInfo } from "./plugin-tab.js";
 import { go, href, useRoute, type Route } from "./route.js";
 import { AccessContext, firstSection, type AccessAction, type Me } from "./access.js";
-import { IconBack, IconChevron, IconDots, IconFolder, IconGear, IconMoon, IconPanelLeft, IconPin, IconPlus, IconSun, IconTrash } from "./icons.js";
+import { IconBack, IconDots, IconPanelLeft, IconPin, IconPlus, IconTrash, IconUpload } from "./icons.js";
 
 interface AgentInfo {
   name: string;
@@ -195,6 +195,9 @@ function Shell() {
   const [agentChoices, setAgentChoices] = useState<{ id: string; name: string }[]>([]);
   const [pickedAgents, setPickedAgents] = useState<string[]>([]);
   const [projectId, setProjectId] = useState(localStorage.getItem("sinty.project") ?? "");
+  const [focusedProject, setFocusedProject] = useState<string | null>(null);
+  const [acctOpen, setAcctOpen] = useState(false);
+  const [updateNote, setUpdateNote] = useState("");
   const [tabs, setTabs] = useState<PluginTabInfo[]>([]);
   useEffect(() => {
     void api<{ plugins: { name: string; tabs?: Omit<PluginTabInfo, "plugin">[] }[] }>("/v1/plugins")
@@ -227,6 +230,8 @@ function Shell() {
     setProjectDraft(null);
     const created = await api<{ id: string }>("/v1/roster/projects", { body: { name } });
     await loadProjects();
+    setFocusedProject(created.id);
+    chooseProject(created.id);
     setOpenProjects((cur) => {
       const next = cur.includes("__all") ? cur : [...cur, "__all"];
       const withProject = next.includes(created.id) ? next : [...next, created.id];
@@ -246,14 +251,6 @@ function Shell() {
     await refresh();
     go({ page: "chat", sessionId: s.id });
   };
-  const [theme, setTheme] = useState(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
-  const toggleTheme = (): void => {
-    const next = theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem("sinty.theme", next);
-    setTheme(next);
-  };
-
   const toggleStudio = (open: boolean): void => {
     setStudio(open);
     if (open && leftOpen) {
@@ -281,11 +278,34 @@ function Shell() {
     await refresh();
   };
   const settingsOn = route.page === "settings";
+  useEffect(() => {
+    if (!acctOpen) return;
+    const close = (): void => setAcctOpen(false);
+    addEventListener("click", close);
+    return () => removeEventListener("click", close);
+  }, [acctOpen]);
   const sections = useSections([agent]);
   const agentsOn = route.page === "agents";
   const chats = sessions.filter((s) => !isChildSession(s));
   const pinned = pins.map((id) => chats.find((s) => s.id === id)).filter((s): s is SessionInfo => Boolean(s));
   const loose = chats.filter((s) => !s.projectId);
+  const focused = focusedProject ? projects.find((p) => p.id === focusedProject) : undefined;
+  const nothingYet = projects.length === 0 && loose.length === 0;
+  const toolItems = (() => {
+    const seen = new Set<string>();
+    const out: PluginTabInfo[] = [];
+    for (const t of [...sideTabs, ...projectTabs, ...(studioTab ? [studioTab] : [])]) {
+      const key = `${t.plugin}/${t.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(t);
+    }
+    return out;
+  })();
+  const usageSection = sections.find((s) => /usage|расход/i.test(s.id) || /usage|расход/i.test(s.title))?.id ?? "plugin.usage";
+  const mcpSection = sections.find((s) => /mcp/i.test(s.id) || /mcp/i.test(s.title))?.id ?? "plugins";
+  const meLabel = me?.user ? [me.user.firstName, me.user.lastName].filter(Boolean).join(" ") || me.user.email : "";
+  const meLetter = letterOf(meLabel || "S");
 
   return (
     <AccessContext.Provider value={me}>
@@ -299,103 +319,127 @@ function Shell() {
               <button class="icon" title="Скрыть левую панель" onClick={toggleLeft}><IconPanelLeft /></button>
             </div>
             <div class="side-stage">
-              <div class={`side-track ${settingsOn || agentsOn ? "settings" : ""}`}>
+              <div class={`side-track ${settingsOn || agentsOn || focused ? "settings" : ""}`}>
                 <div class="side-pane">
-                  <nav>
-                    {can("nav:agents") && <a class={route.page === "agents" ? "on" : ""} href={href({ page: "agents" })}>Агенты</a>}
-                    {sideTabs.map((t) => {
-                      const target: Route = t.builtin === "board" ? { page: "board" } : t.builtin === "calendar" ? { page: "calendar" } : { page: "tab", plugin: t.plugin, tab: t.id };
-                      const on = target.page === "tab" ? route.page === "tab" && route.plugin === t.plugin && route.tab === t.id : route.page === target.page;
-                      return <a key={`${t.plugin}/${t.id}`} class={on ? "on" : ""} href={href(target)} title={`Вкладка плагина ${t.plugin}`}>{t.title}</a>;
-                    })}
-                  </nav>
-                  {pending.length > 0 && (
-                    <div class="side-pending">
-                      <div class="menu-label">Ждут ответа <span class="badge">{pending.length}</span></div>
-                      {pending.map((p) => {
-                        const s = sessions.find((x) => x.id === p.sessionId);
-                        const parentId =
-                          p.parentSessionId ||
-                          (typeof s?.metadata?.parentSessionId === "string" ? s.metadata.parentSessionId : undefined);
-                        const openId = parentId || p.sessionId;
-                        const parent = parentId ? sessions.find((x) => x.id === parentId) : undefined;
-                        const label = parent?.title || s?.title || p.title || p.sessionId;
-                        const why = p.reason === "approval" ? "одобрение" : p.reason === "ask_human" ? "вопрос" : p.reason === "budget" ? "бюджет" : "супервизор";
-                        const childNote = parentId ? `фон · ${why}` : why;
-                        return (
-                          <div key={p.turnId} class="pending-row">
-                            <a
-                              class={route.page === "chat" && route.sessionId === openId ? "on" : ""}
-                              href={href({ page: "chat", sessionId: openId })}
-                              title={p.detail ?? why}
-                            >
-                              {label} <span class="small muted">· {childNote}</span>
-                            </a>
-                            <button
-                              type="button"
-                              class="icon"
-                              title="Снять с ожидания. Этот ход прервётся, новый ответ модели не запустится."
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void api(`/v1/sessions/${encodeURIComponent(p.sessionId)}/interrupt`, { method: "POST" }).then(() => refresh());
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
+                  {nothingYet ? (
+                    <div class="side-empty">
+                      <p>Пока ничего нет.<br />Создай проект или чат.</p>
+                      <div class="side-empty-btns">
+                        {can("nav:projects", "add") && <button type="button" class="side-btn primary" onClick={() => setProjectDraft("")}>＋ Новый проект</button>}
+                        {can("nav:chats") && <button type="button" class="side-btn" onClick={() => void newChat()}>＋ Новый чат</button>}
+                      </div>
                     </div>
-                  )}
-                  {(can("nav:projects") || can("nav:chats")) && <div class="proj-head">
-                    <button class="nav-item" onClick={() => toggleProjectOpen("__all")}><IconChevron /> {can("nav:projects") ? "Проекты" : "Чаты"}</button>
-                    {can("nav:projects", "add") && <button class="icon" title="Новый проект" onClick={() => setProjectDraft("")}><IconPlus /></button>}
-                  </div>}
-                  {openProjects.includes("__all") && (
-                    <div class="projects">
-                      {can("nav:projects") && projects.map((p) => (
-                        <div key={p.id}>
-                          <div class="proj-line">
-                            <button class="nav-item" onClick={() => { toggleProjectOpen(p.id); chooseProject(p.id); }}><IconFolder /> <span class="title">{p.name}</span>{montage.has(p.id) && <span class="dot running" title="Идёт монтаж" />}</button>
-                            <button class="icon" title="Новый чат в проекте" onClick={() => openProjectChat(p.id)}><IconPlus /></button>
-                          </div>
-                          {openProjects.includes(p.id) && projectTabs.map((t) => (
-                            <a key={`${t.plugin}/${t.id}`} class={`nav-item proj-tab ${route.page === "tab" && route.plugin === t.plugin && route.tab === t.id && route.projectId === p.id ? "on" : ""}`} href={href({ page: "tab", plugin: t.plugin, tab: t.id, projectId: p.id })} title={`Вкладка плагина ${t.plugin}`}>{t.title}{t.plugin === "diffusion" && montage.has(p.id) && <span class="dot running" title="Идёт монтаж" />}</a>
-                          ))}
-                          {openProjects.includes(p.id) && chats.filter((s) => s.projectId === p.id).map((s) => (
-                            <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
-                          ))}
-                        </div>
-                      ))}
-                      {can("nav:chats") && <button class="nav-item" onClick={() => toggleProjectOpen("__loose")}><IconFolder /> Вне проекта</button>}
-                      {can("nav:chats") && openProjects.includes("__loose") && loose.map((s) => (
-                        <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
-                      ))}
-                    </div>
+                  ) : (
+                    <>
+                      <div class="side-top">
+                        {can("nav:projects", "add") && <button type="button" class="side-btn primary" onClick={() => setProjectDraft("")}>＋ Проект</button>}
+                        {can("nav:chats") && <button type="button" class="side-btn" onClick={() => void newChat()}>＋ Чат</button>}
+                      </div>
+                      <div class="side-scroll">
+                        <PendingList pending={pending} sessions={sessions} route={route} onRefresh={refresh} />
+                        {can("nav:projects") && projects.length > 0 && <div class="side-sec">Проекты</div>}
+                        {can("nav:projects") && projects.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            class="side-row"
+                            onClick={() => { setFocusedProject(p.id); chooseProject(p.id); }}
+                          >
+                            <span class="side-av" style={{ background: hueColor(p.name) }}>{letterOf(p.name)}</span>
+                            <span class="side-meta">
+                              <span class="side-title">{p.name}</span>
+                              <span class="side-sub">{chats.filter((s) => s.projectId === p.id).length} чат. {montage.has(p.id) ? "идёт монтаж" : ""}</span>
+                            </span>
+                          </button>
+                        ))}
+                        {can("nav:chats") && loose.length > 0 && <div class="side-sec">Чаты вне проекта</div>}
+                        {can("nav:chats") && loose.map((s) => (
+                          <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
                 <div class="side-pane">
-                  <button class="nav-item" onClick={() => go({ page: "chat" })}><IconBack /> Назад</button>
-                  {agentsOn ? <AgentNav current={route.page === "agents" ? route.agentId : undefined} /> : (
-                    <nav>
-                      {can("settings:general") && <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>}
-                      {can("settings:models") && <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>}
-                      {can("nav:plugins") && <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>}
-                      {can("settings:uikit") && <a class={settingsOn && route.section === "uikit" ? "on" : ""} href={href({ page: "settings", section: "uikit" })}>UI Kit</a>}
-                      {can("nav:staff") && <a class={settingsOn && route.section === "staff" ? "on" : ""} href={href({ page: "settings", section: "staff" })}>Сотрудники</a>}
-                      {sections.map((x) => (
-                        <a key={x.id} class={settingsOn && route.section === x.id ? "on" : ""} href={href({ page: "settings", section: x.id })} title={x.owner === "plugin" ? `Настройки плагина ${x.plugin}` : undefined}>{x.title}</a>
-                      ))}
-                    </nav>
-                  )}
+                  {settingsOn || agentsOn ? (
+                    <>
+                      <button class="nav-item" onClick={() => go({ page: "chat" })}><IconBack /> Назад</button>
+                      <div class="side-scroll">
+                      {agentsOn ? <AgentNav current={route.page === "agents" ? route.agentId : undefined} /> : (
+                        <nav>
+                          {can("settings:general") && <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>}
+                          {can("settings:models") && <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>}
+                          {can("nav:plugins") && <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>}
+                          {can("settings:uikit") && <a class={settingsOn && route.section === "uikit" ? "on" : ""} href={href({ page: "settings", section: "uikit" })}>UI Kit</a>}
+                          {can("nav:staff") && <a class={settingsOn && route.section === "staff" ? "on" : ""} href={href({ page: "settings", section: "staff" })}>Сотрудники</a>}
+                          {sections.map((x) => (
+                            <a key={x.id} class={settingsOn && route.section === x.id ? "on" : ""} href={href({ page: "settings", section: x.id })} title={x.owner === "plugin" ? `Настройки плагина ${x.plugin}` : undefined}>{x.title}</a>
+                          ))}
+                        </nav>
+                      )}
+                      </div>
+                    </>
+                  ) : focused ? (
+                    <>
+                      <div class="side-proj">
+                        <button type="button" class="icon" title="К списку" onClick={() => setFocusedProject(null)}><IconBack /></button>
+                        <span class="side-av sm" style={{ background: hueColor(focused.name) }}>{letterOf(focused.name)}</span>
+                        <span class="side-proj-name">{focused.name}</span>
+                        <button type="button" class="icon" title="Новый чат в проекте" onClick={() => openProjectChat(focused.id)}><IconPlus /></button>
+                      </div>
+                      <div class="side-scroll">
+                        <PendingList pending={pending.filter((p) => {
+                          const s = sessions.find((x) => x.id === p.sessionId);
+                          const parentId = p.parentSessionId || (typeof s?.metadata?.parentSessionId === "string" ? s.metadata.parentSessionId : undefined);
+                          const openId = parentId || p.sessionId;
+                          const open = sessions.find((x) => x.id === openId);
+                          return (open ?? s)?.projectId === focused.id;
+                        })} sessions={sessions} route={route} onRefresh={refresh} />
+                        <div class="side-sec">Чаты проекта</div>
+                        {chats.filter((s) => s.projectId === focused.id).map((s) => (
+                          <ChatRow key={s.id} s={s} on={route.page === "chat" && route.sessionId === s.id} pinned={pins.includes(s.id)} menu={menu === s.id} projects={projects} onPin={() => togglePin(s.id)} onMenu={() => setMenu(menu === s.id ? null : s.id)} onPatch={(body) => void patchChat(s.id, body)} onRename={() => { setRename({ id: s.id, title: s.title ?? "" }); setMenu(null); }} onDelete={() => void api(`/v1/sessions/${s.id}`, { method: "DELETE" }).then(() => { if (route.page === "chat" && route.sessionId === s.id) go({ page: "chat" }); return refresh(); })} onCloseMenu={() => setMenu(null)} />
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               </div>
             </div>
+            {!settingsOn && !agentsOn && (
+              <SideTools items={toolItems} route={route} projectId={focused?.id} projectSlug={focused?.slug} montage={montage} showAgents={can("nav:agents")} />
+            )}
             <footer class="side-foot">
-              <button class="icon" title="Тема" onClick={toggleTheme}>{theme === "dark" ? <IconSun /> : <IconMoon />}</button>
-              <button onClick={() => { if (userSession.get()) userSession.clear(); else token.clear(); location.reload(); }}>Выйти</button>
-              <button class="icon" title="Настройки" onClick={() => go({ page: "settings", section: firstSection(can) })}><IconGear /></button>
+              <button
+                type="button"
+                class="side-me"
+                title="Аккаунт"
+                onClick={(e) => { e.stopPropagation(); setAcctOpen((v) => !v); }}
+              >{meLetter}</button>
+              <button
+                type="button"
+                class="side-connect"
+                title="Подключить приложения"
+                onClick={() => go({ page: "settings", section: mcpSection })}
+              >Подключить прил…</button>
+              <button
+                type="button"
+                class="side-update"
+                title="Обновить клиент"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setUpdateNote("Обновление клиентского харнеса появится позже — пока нечего устанавливать.");
+                  setAcctOpen(true);
+                }}
+              ><IconUpload /></button>
+              {acctOpen && (
+                <div class="acct-menu" onClick={(e) => e.stopPropagation()}>
+                  {updateNote && <div class="acct-upd">{updateNote}</div>}
+                  <button type="button" class="acct-item" onClick={() => { setAcctOpen(false); go({ page: "settings", section: usageSection }); }}>Использование</button>
+                  <button type="button" class="acct-item" onClick={() => { setAcctOpen(false); go({ page: "settings", section: firstSection(can) }); }}>Параметры <span class="muted">тема здесь</span></button>
+                  <div class="acct-sep" />
+                  <button type="button" class="acct-item" onClick={() => { if (userSession.get()) userSession.clear(); else token.clear(); location.reload(); }}>Выйти</button>
+                </div>
+              )}
             </footer>
           </>
         ) : (
@@ -412,7 +456,7 @@ function Shell() {
         )}
       </aside>
       <main class={`main${studio && route.page === "chat" ? " studio" : ""}`}>
-        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} title={sessions.find((s) => s.id === route.sessionId)?.title ?? ""} onChange={refresh} tabs={sessionTabs} studio={studio} studioTab={studioTab} onStudio={toggleStudio} /> : <Empty onNew={newChat} />)}
+        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} title={sessions.find((s) => s.id === route.sessionId)?.title ?? ""} projectName={projects.find((p) => p.id === sessions.find((s) => s.id === route.sessionId)?.projectId)?.name} onChange={refresh} tabs={sessionTabs} studio={studio} studioTab={studioTab} onStudio={toggleStudio} /> : <Empty onNew={newChat} />)}
         {me && route.page === "board" && (builtinOn("board") ? <Board /> : <Denied />)}
         {me && route.page === "agents" && (can("nav:agents") ? <AgentsPage agentId={route.agentId} /> : <Denied />)}
         {me && route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
@@ -491,14 +535,19 @@ function AgentNav({ current }: { current?: string }) {
   return (
     <nav>
       {rows.map((a) => (
-        <div key={a.id} class="agent-row">
+        <div key={a.id} class="agent-row chat-row">
           <a class={current === a.id ? "on" : ""} href={href({ page: "agents", agentId: a.id })}>
-            <span class="agent-ava" onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ id: a.id, x: r.right, y: r.bottom }); }} onMouseLeave={() => setTip(null)}>
-              {a.avatar ? <img src={a.avatar} alt="" /> : (a.name.slice(0, 1) || "?")}
+            <span
+              class="side-av"
+              style={a.avatar ? undefined : { background: hueColor(a.name || a.id) }}
+              onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTip({ id: a.id, x: r.right, y: r.bottom }); }}
+              onMouseLeave={() => setTip(null)}
+            >
+              {a.avatar ? <img src={a.avatar} alt="" /> : letterOf(a.name || a.id)}
             </span>
-            <span class="agent-name">
-              <span class="title">{a.name}</span>
-              {a.specialization && <span class="agent-spec">{a.specialization}</span>}
+            <span class="side-meta">
+              <span class="side-title">{a.name}</span>
+              {a.specialization && <span class="side-sub">{a.specialization}</span>}
             </span>
           </a>
           <button type="button" class="icon" title="Удалить" onClick={() => void api(`/v1/roster/agents/${a.id}`, { method: "DELETE" }).then(() => { dispatchEvent(new Event("sinty-agents")); if (current === a.id) go({ page: "agents" }); })}><IconTrash /></button>
@@ -510,6 +559,107 @@ function AgentNav({ current }: { current?: string }) {
       )}
       <button class="nav-item" onClick={() => go({ page: "agents", agentId: "new" })}><IconPlus /> Новый агент</button>
     </nav>
+  );
+}
+
+const AVATAR_COLORS = ["#6366f1", "#0ea5e9", "#f97316", "#22c55e", "#eab308", "#ef4444", "#7c3aed", "#ec4899", "#06b6d4", "#8b5cf6"];
+
+function letterOf(name: string): string {
+  const trimmed = name.trim();
+  return trimmed ? trimmed[0]!.toUpperCase() : "?";
+}
+
+function hueColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = Math.imul(31, h) + name.charCodeAt(i) | 0;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]!;
+}
+
+function sessionSub(s: SessionInfo): string {
+  if (s.activeTurn?.status === "running") return "работает";
+  if (s.activeTurn?.status === "blocked") return "ждёт";
+  return shortTime(s.updatedAt);
+}
+
+function PendingList({ pending, sessions, route, onRefresh }: { pending: Pending[]; sessions: SessionInfo[]; route: Route; onRefresh: () => Promise<void> }) {
+  if (pending.length === 0) return null;
+  return (
+    <div class="side-pending">
+      <div class="menu-label">Ждут ответа <span class="badge">{pending.length}</span></div>
+      {pending.map((p) => {
+        const s = sessions.find((x) => x.id === p.sessionId);
+        const parentId =
+          p.parentSessionId ||
+          (typeof s?.metadata?.parentSessionId === "string" ? s.metadata.parentSessionId : undefined);
+        const openId = parentId || p.sessionId;
+        const parent = parentId ? sessions.find((x) => x.id === parentId) : undefined;
+        const label = parent?.title || s?.title || p.title || p.sessionId;
+        const why = p.reason === "approval" ? "одобрение" : p.reason === "ask_human" ? "вопрос" : p.reason === "budget" ? "бюджет" : "супервизор";
+        const childNote = parentId ? `фон · ${why}` : why;
+        return (
+          <div key={p.turnId} class="pending-row">
+            <a
+              class={route.page === "chat" && route.sessionId === openId ? "on" : ""}
+              href={href({ page: "chat", sessionId: openId })}
+              title={p.detail ?? why}
+            >
+              {label} <span class="small muted">· {childNote}</span>
+            </a>
+            <button
+              type="button"
+              class="icon"
+              title="Снять с ожидания. Этот ход прервётся, новый ответ модели не запустится."
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void api(`/v1/sessions/${encodeURIComponent(p.sessionId)}/interrupt`, { method: "POST" }).then(() => onRefresh());
+              }}
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SideTools({ items, route, projectId, projectSlug, montage, showAgents }: {
+  items: PluginTabInfo[];
+  route: Route;
+  projectId?: string;
+  projectSlug?: string;
+  montage: Set<string>;
+  showAgents: boolean;
+}) {
+  return (
+    <div class="side-tools">
+      <div class="side-sec">{projectId ? `В проекте · projects/${projectSlug ?? projectId}` : "Общее · workspace"}</div>
+      {items.map((t) => {
+        const target: Route = t.builtin === "board"
+          ? { page: "board" }
+          : t.builtin === "calendar"
+            ? { page: "calendar" }
+            : { page: "tab", plugin: t.plugin, tab: t.id, ...(projectId ? { projectId } : {}) };
+        const on = target.page === "tab"
+          ? route.page === "tab" && route.plugin === t.plugin && route.tab === t.id && (route.projectId ?? "") === (projectId ?? "")
+          : route.page === target.page;
+        return (
+          <a
+            key={`${t.plugin}/${t.id}`}
+            class={`side-tab${on ? " on" : ""}`}
+            href={href(target)}
+            title={`Вкладка плагина ${t.plugin}`}
+          >
+            {t.title}
+            {t.plugin === "diffusion" && projectId && montage.has(projectId) && <span class="dot running" title="Идёт монтаж" />}
+          </a>
+        );
+      })}
+      {showAgents && (
+        <a class={`side-tab${route.page === "agents" ? " on" : ""}`} href={href({ page: "agents" })}>Агенты</a>
+      )}
+    </div>
   );
 }
 
@@ -531,8 +681,11 @@ function ChatRow({ s, on, pinned, menu, projects, onPin, onMenu, onPatch, onRena
   return (
     <div class="chat-row">
       <a class={on ? "on" : ""} href={href({ page: "chat", sessionId: s.id })}>
-        <span class={`dot ${s.activeTurn?.status ?? "idle"}`} />
-        <span class="title">{s.title || s.id}</span>
+        <span class="side-av" style={{ background: hueColor(s.title || s.id) }}>{letterOf(s.title || s.id)}</span>
+        <span class="side-meta">
+          <span class="side-title">{s.title || s.id}</span>
+          <span class="side-sub">{sessionSub(s)}</span>
+        </span>
       </a>
       <button class={`icon ${pinned ? "on" : ""}`} title="Закрепить" onClick={onPin}><IconPin /></button>
       <button class="icon" title="Ещё" onClick={onMenu}><IconDots /></button>

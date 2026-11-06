@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api } from "./api.js";
 import { useAccess } from "./access.js";
+import { CSelect, Tog } from "./cselect.js";
 
 interface UserRow {
   id: string;
@@ -59,21 +60,23 @@ export function StaffPage() {
     setTab(next);
   };
   return (
-    <div class="settings-sheet staff">
-      <h3>Сотрудники</h3>
-      {needed ? <Setup onDone={() => setNeeded(false)} /> : (
-        <>
-          <div class="seg-tabs" role="tablist">
-            {TABS.map((t) => (
-              <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} class={tab === t.id ? "on" : ""} onClick={() => pick(t.id)}>{t.title}</button>
-            ))}
-          </div>
-          {error && <p class="error">{error}</p>}
-          {tab === "people" && <People onError={setError} />}
-          {tab === "roles" && <Roles onError={setError} />}
-          {tab === "rights" && <Rights onError={setError} />}
-        </>
-      )}
+    <div class="settings-sheet settings-ux staff">
+      <div class="card">
+        <div class="section-h"><h3>Сотрудники</h3></div>
+        {needed ? <Setup onDone={() => setNeeded(false)} /> : (
+          <>
+            <div class="seg pills" role="tablist">
+              {TABS.map((t) => (
+                <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} class={tab === t.id ? "on" : ""} onClick={() => pick(t.id)}>{t.title}</button>
+              ))}
+            </div>
+            {error && <p class="error">{error}</p>}
+            {tab === "people" && <People onError={setError} />}
+            {tab === "roles" && <Roles onError={setError} />}
+            {tab === "rights" && <Rights onError={setError} />}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -147,7 +150,7 @@ function People({ onError }: { onError: (s: string) => void }) {
     <div>
       <div class="staff-toolbar">
         <span class="muted small">{users.length} чел.</span>
-        {can("nav:staff", "add") && <button type="button" onClick={() => setAdding(true)}>Добавить сотрудника</button>}
+        {can("nav:staff", "add") && <button type="button" class="btn primary" onClick={() => setAdding(true)}>Добавить сотрудника</button>}
       </div>
       <table class="staff-table">
         <thead>
@@ -170,13 +173,11 @@ function People({ onError }: { onError: (s: string) => void }) {
                 </td>
                 <td>
                   {editable && !locked ? (
-                    <select value={u.roleId} onChange={(e) => patch(u.id, { roleId: e.currentTarget.value })}>
-                      {assignable.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                    </select>
+                    <CSelect value={u.roleId} onChange={(roleId) => patch(u.id, { roleId })} options={assignable.map((r) => ({ value: r.id, label: r.name }))} />
                   ) : <span class="staff-role">{u.roleName}</span>}
                 </td>
                 <td class="center">
-                  <input type="checkbox" checked={u.enabled} disabled={!editable || locked} onChange={(e) => patch(u.id, { enabled: e.currentTarget.checked })} />
+                  <Tog on={u.enabled} disabled={!editable || locked} onClick={() => patch(u.id, { enabled: !u.enabled })} label="переключить" />
                 </td>
                 <td class="staff-actions">
                   {editable && <button type="button" class="secondary sm" onClick={() => resetLink(u.id)}>Ссылка на пароль</button>}
@@ -242,7 +243,7 @@ function AddPerson({ roles, onClose, onSaved }: { roles: RoleRow[]; onClose: () 
           <label class="field">Почта<input type="email" value={email} onInput={(e) => setEmail(e.currentTarget.value)} /></label>
           <label class="field">Пароль<input type="password" placeholder="не короче 8 символов" value={password} onInput={(e) => setPassword(e.currentTarget.value)} /></label>
         </div>
-        <label class="field">Роль<select value={roleId} onChange={(e) => setRoleId(e.currentTarget.value)}>{roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
+        <label class="field">Роль<CSelect value={roleId} onChange={setRoleId} options={roles.map((r) => ({ value: r.id, label: r.name }))} /></label>
         {error && <p class="error">{error}</p>}
         <footer class="dialog-actions">
           <button type="button" class="secondary" onClick={onClose}>Отмена</button>

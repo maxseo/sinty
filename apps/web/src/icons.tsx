@@ -104,6 +104,12 @@ export const IconSun = () => (
 export const IconMoon = () => (
   <svg {...stroke}><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg>
 );
+export const IconWave = () => (
+  <svg {...stroke}><path d="M2 10v4M6 7v10M10 4v16M14 7v10M18 5v14M22 10v4" /></svg>
+);
+export const IconArrowUp = () => (
+  <svg {...stroke}><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+);
 export const IconDoor = () => (
   <svg {...stroke}><path d="M13 4h3a2 2 0 0 1 2 2v14" /><path d="M2 20h3M13 20h9" /><path d="M10 12v.01" /><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561z" /></svg>
 );
@@ -141,4 +147,6 @@ export const kitIcons: { name: string; label: string; Icon: () => any }[] = [
   { name: "sun", label: "Солнце", Icon: IconSun },
   { name: "moon", label: "Луна", Icon: IconMoon },
   { name: "door", label: "Открытая дверь", Icon: IconDoor },
+  { name: "wave", label: "Звуковая волна", Icon: IconWave },
+  { name: "arrow-up", label: "Стрелка вверх", Icon: IconArrowUp },
 ];

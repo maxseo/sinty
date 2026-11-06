@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api } from "./api";
 import { CURATED_MCP, type CuratedMcp } from "./mcp-curated";
+import { CSelect, Tog } from "./cselect.js";
 
 interface PluginRow {
   name: string;
@@ -112,28 +113,23 @@ export function McpPane() {
   };
 
   return (
-    <div class="settings-sheet">
-      <h3>MCP</h3>
-      <p class="small muted">
+    <div class="settings-sheet settings-ux">
+      <div class="card">
+      <div class="section-h"><h3>MCP</h3></div>
+      <p class="note">
         Внешние MCP как плагины Sinty (mcp-stdio / http). Каталог — готовые карточки; «Добавить» — произвольный MCP.
         Установка через POST /v1/plugins/mcp (как mcp.install). Секреты только secret://…. Видимость у агента — вкладка MCP в карточке агента.
       </p>
-      <div class="tabs">
-        <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>
-          Установленные
-        </button>
-        <button type="button" class={tab === "catalog" ? "on" : ""} onClick={() => setTab("catalog")}>
-          Каталог
-        </button>
-        <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>
-          Добавить
-        </button>
+      <div class="seg pills">
+        <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Установленные</button>
+        <button type="button" class={tab === "catalog" ? "on" : ""} onClick={() => setTab("catalog")}>Каталог</button>
+        <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>Добавить</button>
       </div>
       {error && <p class="error">{error}</p>}
-      {notice && <p class="small">{notice}</p>}
+      {notice && <p class="note">{notice}</p>}
       {tab === "list" ? (
         <>
-          <label class="field row">
+          <label class="check" style={{ marginBottom: 12 }}>
             <input
               type="checkbox"
               checked={showDisabled}
@@ -158,31 +154,13 @@ export function McpPane() {
                   ? `запущен · ${p.tools.length} тул.`
                   : "включён · нет тулов / ошибка старта";
               return (
-                <div key={p.name} class="plugin-tile">
-                  <div>
+                <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
+                  <div class="plugin-av">{p.name.slice(0, 1)}</div>
+                  <div class="plugin-txt">
                     <b>{p.name}</b>
-                    <div class="small muted">
-                      {p.runtime} · {p.location} · {p.version}
-                    </div>
-                    <div class="small">{p.description || "без описания"}</div>
-                    <div class="small muted">{status}</div>
-                    {p.tools.length > 0 && (
-                      <div class="small muted">
-                        {p.tools.slice(0, 8).join(", ")}
-                        {p.tools.length > 8 ? "…" : ""}
-                      </div>
-                    )}
+                    <span>{p.runtime} · {p.location} · {status}{p.description ? ` · ${p.description}` : ""}</span>
                   </div>
-                  <span class="tile-actions">
-                    <button
-                      type="button"
-                      class={on ? "secondary sm" : "ghost sm"}
-                      disabled={busy || p.defaultOn}
-                      onClick={() => void setOn(p.name, !on)}
-                    >
-                      {on ? "включён" : "выключен"}
-                    </button>
-                  </span>
+                  <Tog on={on} disabled={busy || p.defaultOn} onClick={() => void setOn(p.name, !on)} label={on ? "выключить" : "включить"} />
                 </div>
               );
             })}
@@ -209,6 +187,7 @@ export function McpPane() {
           }}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -232,45 +211,12 @@ function CatalogTab({
           const have = installed.has(c.id);
           return (
             <div key={c.id} class="plugin-tile">
-              <div>
+              <div class="plugin-av">{c.title.slice(0, 1)}</div>
+              <div class="plugin-txt">
                 <b>{c.title}</b>
-                <div class="small muted">
-                  {c.id} · {c.runtime}
-                  {have ? " · уже в списке" : ""}
-                </div>
-                <div class="small">{c.summary}</div>
-                {c.command && (
-                  <div class="small muted">
-                    <code>{c.command.join(" ")}</code>
-                  </div>
-                )}
-                {c.url && (
-                  <div class="small muted">
-                    <code>{c.url}</code>
-                  </div>
-                )}
-                {c.envHints && (
-                  <div class="small muted">
-                    env:{" "}
-                    {Object.entries(c.envHints)
-                      .map(([k, v]) => `${k}=${v}`)
-                      .join(", ")}
-                  </div>
-                )}
-                {c.note && <div class="small muted">{c.note}</div>}
-                {c.docsUrl && (
-                  <div class="small">
-                    <a href={c.docsUrl} target="_blank" rel="noreferrer">
-                      docs
-                    </a>
-                  </div>
-                )}
+                <span>{c.summary}{have ? " · уже в списке" : ""}</span>
               </div>
-              <span class="tile-actions">
-                <button type="button" class="secondary sm" disabled={busy} onClick={() => onUse(c)}>
-                  Использовать
-                </button>
-              </span>
+              <button type="button" class="btn sm" disabled={busy} onClick={() => onUse(c)}>Использовать</button>
             </div>
           );
         })}
@@ -386,9 +332,10 @@ function AddMcp({
   };
 
   return (
-    <section class="panel">
+    <section>
+      <div class="grid-2">
       <label class="field">
-        Имя (id плагина)
+        Имя
         <input value={name} placeholder="github" disabled={busy} onInput={(e) => setName(e.currentTarget.value)} />
       </label>
       <label class="field">
@@ -402,14 +349,15 @@ function AddMcp({
       </label>
       <label class="field">
         Runtime
-        <select
+        <CSelect
           value={runtime}
           disabled={busy}
-          onChange={(e) => setRuntime(e.currentTarget.value === "http" ? "http" : "mcp-stdio")}
-        >
-          <option value="mcp-stdio">mcp-stdio (локальная команда)</option>
-          <option value="http">http (удалённый MCP)</option>
-        </select>
+          onChange={(v) => setRuntime(v === "http" ? "http" : "mcp-stdio")}
+          options={[
+            { value: "mcp-stdio", label: "mcp-stdio", sub: "локальная команда" },
+            { value: "http", label: "http", sub: "удалённый MCP" },
+          ]}
+        />
       </label>
       {runtime === "mcp-stdio" ? (
         <label class="field">
@@ -437,13 +385,14 @@ function AddMcp({
           onInput={(e) => setEnvText(e.currentTarget.value)}
         />
       </label>
-      <label class="field row">
+      </div>
+      <label class="check">
         <input type="checkbox" checked={replace} disabled={busy} onChange={(e) => setReplace(e.currentTarget.checked)} />
         <span>Заменить, если папка уже есть (replace)</span>
       </label>
-      <button type="button" disabled={busy || !name.trim()} onClick={() => void submit()}>
-        Установить
-      </button>
+      <div class="actions" style={{ marginTop: 12 }}>
+        <button type="button" class="btn primary" disabled={busy || !name.trim()} onClick={() => void submit()}>Установить</button>
+      </div>
     </section>
   );
 }

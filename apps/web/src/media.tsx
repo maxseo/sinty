@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+﻿import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { token } from "./api.js";
 import type { MediaRef } from "./media-ref.js";
 
@@ -66,6 +66,8 @@ function PlayIcon({ pause }: { pause?: boolean }) {
   );
 }
 
+type SizeCb = (path: string, w: number, h: number) => void;
+
 function AudioCard({ sessionId, path }: { sessionId: string; path: string }) {
   const { url, failed } = useObjectUrl(sessionId, path);
   const audio = useRef<HTMLAudioElement>(null);
@@ -98,7 +100,7 @@ function AudioCard({ sessionId, path }: { sessionId: string; path: string }) {
   );
 }
 
-function VideoCard({ sessionId, path }: { sessionId: string; path: string }) {
+function VideoCard({ sessionId, path, onSize, fill }: { sessionId: string; path: string; onSize?: SizeCb; fill?: boolean }) {
   const { url, failed } = useObjectUrl(sessionId, path);
   const box = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -131,7 +133,7 @@ function VideoCard({ sessionId, path }: { sessionId: string; path: string }) {
   }, []);
   if (failed) return <p class="media-miss">{fileName(path)}</p>;
   return (
-    <div class={`media-stage${full ? " full" : ""}`} ref={box}>
+    <div class={`media-stage${full ? " full" : ""}${fill ? " fill" : ""}`} ref={box}>
       <video
         ref={video}
         src={url || undefined}
@@ -141,7 +143,11 @@ function VideoCard({ sessionId, path }: { sessionId: string; path: string }) {
         onPause={() => setOn(false)}
         onEnded={() => setOn(false)}
         onTimeUpdate={(e) => setAt(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+        onLoadedMetadata={(e) => {
+          const el = e.currentTarget;
+          setDur(el.duration);
+          if (el.videoWidth > 0 && el.videoHeight > 0) onSize?.(path, el.videoWidth, el.videoHeight);
+        }}
         onClick={toggle}
       />
       <div class="media-bar">
@@ -160,7 +166,7 @@ function VideoCard({ sessionId, path }: { sessionId: string; path: string }) {
   );
 }
 
-function ImageCard({ sessionId, path }: { sessionId: string; path: string }) {
+function ImageCard({ sessionId, path, onSize, fill }: { sessionId: string; path: string; onSize?: SizeCb; fill?: boolean }) {
   const { url, failed } = useObjectUrl(sessionId, path);
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -174,12 +180,21 @@ function ImageCard({ sessionId, path }: { sessionId: string; path: string }) {
   if (failed) return <p class="media-miss">{fileName(path)}</p>;
   return (
     <>
-      <button type="button" class="media-shot" aria-label="Открыть картинку" disabled={!url} onClick={() => setOpen(true)}>
-        {url && <img src={url} alt={fileName(path)} />}
+      <button type="button" class={`media-shot${fill ? " fill" : ""}`} aria-label="Открыть картинку" disabled={!url} onClick={() => setOpen(true)}>
+        {url && (
+          <img
+            src={url}
+            alt={fileName(path)}
+            onLoad={(e) => {
+              const el = e.currentTarget;
+              if (el.naturalWidth > 0 && el.naturalHeight > 0) onSize?.(path, el.naturalWidth, el.naturalHeight);
+            }}
+          />
+        )}
       </button>
       {open && url && (
         <div class="media-lightbox" role="dialog" aria-label="Картинка">
-          <button type="button" class="media-close" aria-label="Свернуть" onClick={() => setOpen(false)}>×</button>
+          <button type="button" class="media-close" aria-label="Закрыть" onClick={() => setOpen(false)}>×</button>
           <img src={url} alt={fileName(path)} />
         </div>
       )}
@@ -187,8 +202,122 @@ function ImageCard({ sessionId, path }: { sessionId: string; path: string }) {
   );
 }
 
-export function MediaView({ sessionId, file }: { sessionId: string; file: MediaRef }) {
+export function MediaView({
+  sessionId,
+  file,
+  onSize,
+  fill,
+}: {
+  sessionId: string;
+  file: MediaRef;
+  onSize?: SizeCb;
+  fill?: boolean;
+}) {
   if (file.kind === "audio") return <AudioCard sessionId={sessionId} path={file.path} />;
-  if (file.kind === "video") return <VideoCard sessionId={sessionId} path={file.path} />;
-  return <ImageCard sessionId={sessionId} path={file.path} />;
+  if (file.kind === "video") return <VideoCard sessionId={sessionId} path={file.path} onSize={onSize} fill={fill} />;
+  return <ImageCard sessionId={sessionId} path={file.path} onSize={onSize} fill={fill} />;
+}
+
+type Dim = { w: number; h: number };
+type RowItem = { file: MediaRef; width: number };
+type Row = { height: number; items: RowItem[] };
+
+const GAP = 8;
+const IDEAL_H = 240;
+const MAX_H = 360;
+const MIN_H = 120;
+const FALLBACK_AR = 16 / 9;
+
+function aspectOf(dims: Record<string, Dim>, path: string): number {
+  const d = dims[path];
+  if (!d || d.h <= 0 || d.w <= 0) return FALLBACK_AR;
+  return d.w / d.h;
+}
+
+function packRows(files: MediaRef[], dims: Record<string, Dim>, containerW: number): Row[] {
+  if (!files.length) return [];
+  if (containerW <= 0) {
+    return [{ height: IDEAL_H, items: files.map((file) => ({ file, width: IDEAL_H * FALLBACK_AR })) }];
+  }
+
+  const rows: Row[] = [];
+  let buf: MediaRef[] = [];
+  let arSum = 0;
+
+  const flush = (justify: boolean): void => {
+    if (!buf.length) return;
+    const gaps = GAP * Math.max(0, buf.length - 1);
+    const avail = Math.max(40, containerW - gaps);
+    let height = justify && buf.length > 0 ? avail / arSum : Math.min(IDEAL_H, avail / arSum);
+    height = Math.min(MAX_H, Math.max(MIN_H, height));
+    // Single oversized item: shrink to fit width
+    if (buf.length === 1) {
+      const ar = aspectOf(dims, buf[0]!.path);
+      height = Math.min(height, avail / ar, MAX_H);
+      height = Math.max(MIN_H, height);
+    }
+    rows.push({
+      height,
+      items: buf.map((file) => ({ file, width: aspectOf(dims, file.path) * height })),
+    });
+    buf = [];
+    arSum = 0;
+  };
+
+  for (const file of files) {
+    const ar = aspectOf(dims, file.path);
+    const nextAr = arSum + ar;
+    const nextW = nextAr * IDEAL_H + GAP * buf.length;
+    if (buf.length > 0 && nextW > containerW) flush(true);
+    buf.push(file);
+    arSum += ar;
+  }
+  flush(false);
+  return rows;
+}
+
+/** Image/video gallery: natural aspect, shared row height, fills width when several fit. */
+export function MediaStrip({ sessionId, files }: { sessionId: string; files: MediaRef[] }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const [dims, setDims] = useState<Record<string, Dim>>({});
+
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const sync = (): void => setWidth(el.clientWidth);
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const onSize: SizeCb = (path, w, h) => {
+    setDims((prev) => {
+      const cur = prev[path];
+      if (cur && cur.w === w && cur.h === h) return prev;
+      return { ...prev, [path]: { w, h } };
+    });
+  };
+
+  const visual = files.filter((f) => f.kind === "image" || f.kind === "video");
+  const audio = files.filter((f) => f.kind === "audio");
+  const rows = packRows(visual, dims, width);
+
+  return (
+    <div class="media-strip" ref={box}>
+      {rows.map((row, i) => (
+        <div class="media-row" key={i} style={{ height: `${row.height}px` }}>
+          {row.items.map(({ file, width: cellW }) => (
+            <div class="media-cell" key={file.path} style={{ width: `${cellW}px`, height: `${row.height}px` }}>
+              <MediaView sessionId={sessionId} file={file} onSize={onSize} fill />
+            </div>
+          ))}
+        </div>
+      ))}
+      {audio.map((file) => (
+        <MediaView key={file.path} sessionId={sessionId} file={file} />
+      ))}
+    </div>
+  );
 }

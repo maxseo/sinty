@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribe, token, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
-import { IconBrain, IconMic, IconPlus } from "./icons.js";
+import { IconArrowUp, IconMic, IconPlus, IconWave } from "./icons.js";
 import { Markdown } from "./markdown.js";
-import { MediaView } from "./media.js";
+import { MediaStrip } from "./media.js";
 import { mergeMedia, splitMedia, type MediaRef } from "./media-ref.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
 import { waitNote } from "./wait-note.js";
@@ -10,6 +10,28 @@ import { SupervisorView } from "./supervisor-ui.js";
 
 const VIEW_KEY = "sinty.chatView";
 const NO_TABS: PluginTabInfo[] = [];
+
+type SpeechRec = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((ev: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: ((ev: { error?: string }) => void) | null;
+};
+
+function speechSupported(): boolean {
+  const w = window as typeof window & { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+  return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition);
+}
+
+function makeSpeechRec(): SpeechRec | null {
+  const w = window as typeof window & { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+  const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
+  return Ctor ? new Ctor() : null;
+}
+
 
 /** What the chat pane draws. Tool results stay in the journal file; one film chat holds about 150 MB of them. */
 const CHAT_TYPES = [
@@ -183,7 +205,7 @@ function AgentBody({ text, media, sessionId }: { text: string; media: MediaRef[]
   return (
     <>
       {parsed.text && <Markdown text={parsed.text} />}
-      {files.map((file) => <MediaView key={file.path} sessionId={sessionId} file={file} />)}
+      {files.length > 0 && <MediaStrip sessionId={sessionId} files={files} />}
     </>
   );
 }
@@ -255,7 +277,7 @@ function show(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
-export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio = false, studioTab = null, onStudio }: { sessionId: string; title?: string; onChange: () => void; tabs?: PluginTabInfo[]; studio?: boolean; studioTab?: PluginTabInfo | null; onStudio?: (open: boolean) => void }) {
+export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_TABS, studio = false, studioTab = null, onStudio }: { sessionId: string; title?: string; projectName?: string; onChange: () => void; tabs?: PluginTabInfo[]; studio?: boolean; studioTab?: PluginTabInfo | null; onStudio?: (open: boolean) => void }) {
   const [events, setEvents] = useState<SintyEvent[]>(() => transcriptCache.get(sessionId) ?? []);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
@@ -432,6 +454,15 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
   const [uploading, setUploading] = useState("");
   const [uploadsLeft, setUploadsLeft] = useState(0);
   const uploadsRef = useRef(0);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [composerTall, setComposerTall] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [liveMode, setLiveMode] = useState(false);
+  const [voiceHint, setVoiceHint] = useState("");
+  const recogRef = useRef<SpeechRec | null>(null);
+  const spokenRef = useRef("");
+  const holdingRef = useRef(false);
 
   const addFiles = async (list: FileList | null): Promise<void> => {
     if (!list?.length) return;
@@ -540,6 +571,97 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
     }
   };
 
+  useLayoutEffect(() => {
+    const el = taRef.current;
+    const card = cardRef.current;
+    if (!el || !card) return;
+    const LINE = 20;
+    const MAX = LINE * 6;
+    const hasAtts = files.length > 0 || uploadsLeft > 0;
+    const apply = (isTall: boolean, h: number): void => {
+      card.classList.toggle("tall", isTall);
+      if (isTall) {
+        el.style.maxHeight = `${MAX}px`;
+        el.style.height = `${Math.min(MAX, Math.max(LINE, h))}px`;
+        el.classList.toggle("scrollable", h > MAX);
+      } else {
+        el.style.height = `${LINE}px`;
+        el.style.maxHeight = `${LINE}px`;
+        el.classList.remove("scrollable");
+      }
+    };
+    if (hasAtts || /\n/.test(draft)) {
+      card.classList.add("tall");
+      el.style.maxHeight = `${MAX}px`;
+      el.style.height = "auto";
+      apply(true, el.scrollHeight);
+      if (!composerTall) setComposerTall(true);
+      return;
+    }
+    card.classList.remove("tall");
+    el.style.maxHeight = "none";
+    el.style.height = "auto";
+    const h = el.scrollHeight;
+    if (h > LINE + 1) {
+      card.classList.add("tall");
+      el.style.maxHeight = `${MAX}px`;
+      el.style.height = "auto";
+      apply(true, el.scrollHeight);
+      if (!composerTall) setComposerTall(true);
+    } else {
+      apply(false, h);
+      if (composerTall) setComposerTall(false);
+    }
+  }, [draft, files.length, uploadsLeft, composerTall]);
+
+  const startVoice = (e: PointerEvent): void => {
+    e.preventDefault();
+    (e.currentTarget as HTMLButtonElement).setPointerCapture?.(e.pointerId);
+    holdingRef.current = true;
+    setVoiceHint("");
+    spokenRef.current = "";
+    const rec = makeSpeechRec();
+    if (!rec) {
+      setRecording(true);
+      recogRef.current = null;
+      return;
+    }
+    rec.lang = "ru-RU";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onresult = (ev) => {
+      let text = "";
+      for (let i = 0; i < ev.results.length; i++) {
+        const row = ev.results[i];
+        if (row && row[0]) text += row[0].transcript;
+      }
+      spokenRef.current = text;
+    };
+    rec.onerror = () => undefined;
+    try {
+      rec.start();
+      recogRef.current = rec;
+      setRecording(true);
+    } catch {
+      setRecording(true);
+    }
+  };
+  const endVoice = (e: PointerEvent): void => {
+    if (!holdingRef.current && !recogRef.current) return;
+    holdingRef.current = false;
+    e.preventDefault();
+    try { recogRef.current?.stop(); } catch { /* already stopped */ }
+    recogRef.current = null;
+    setRecording(false);
+    const spoken = spokenRef.current.trim();
+    spokenRef.current = "";
+    if (spoken) {
+      setDraft((cur) => (cur ? `${cur.replace(/\s*$/, " ")}${spoken}` : spoken));
+      return;
+    }
+    if (!speechSupported()) setVoiceHint("Голосовой ввод недоступен в этом браузере");
+  };
+
   const waitWord = (reason: string): string => reason === "approval" ? "одобрение" : reason === "ask_human" ? "вопрос" : reason === "budget" ? "бюджет" : "супервизор";
   const childWait = childPending.find((p) => p.reason !== "approval");
   const queued = running && items.at(-1)?.kind === "user";
@@ -560,20 +682,27 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
     <>
     <section class="chat">
       <header class="bar">
-        <h2>{info?.title || title || "Чат"}</h2>
+        <div class="bar-crumb">
+          {projectName && <span class="bar-proj">{projectName}</span>}
+          {projectName && <span class="bar-sep">/</span>}
+          <h2>{info?.title || title || "Чат"}</h2>
+          {members.length > 0 && (
+            <label class="agent-pill">
+              <span class="agent-pill-av">{(members.find((m) => m.id === replyAgent)?.name ?? members[0]?.name ?? "?").slice(0, 1)}</span>
+              <select value={replyAgent} onChange={(e) => setReplyAgent(e.currentTarget.value)}>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <span class={`status ${info?.activeTurn?.status ?? "idle"}`}>{running ? "работает" : info?.activeTurn?.status === "blocked" ? "ждёт" : "свободен"}</span>
+        </div>
         {studioTab && info?.projectId && (
           <button type="button" class={`studio-toggle${studio ? " on" : ""}`} title="Редактор рядом с чатом" onClick={() => onStudio?.(!studio)}>
             Видео
           </button>
         )}
-        {members.length > 0 && (
-          <select value={replyAgent} onChange={(e) => setReplyAgent(e.currentTarget.value)}>
-            {members.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-        )}
-        <span class={`status ${info?.activeTurn?.status ?? "idle"}`}>{running ? "работает" : info?.activeTurn?.status === "blocked" ? "ждёт" : "свободен"}</span>
         <div class="tabs">
           <button class={tab === "chat" ? "on" : ""} onClick={() => setTab("chat")}>
             Чат
@@ -723,53 +852,79 @@ export function Chat({ sessionId, title = "", onChange, tabs = NO_TABS, studio =
         </div>
       )}
 
-      <form class="composer" onSubmit={send}>
-        <div class="composer-card">
+      <form class="composer" onSubmit={(e) => { void send(e); }}>
+        <div class={`composer-card${composerTall ? " tall" : ""}`} ref={cardRef}>
           {(files.length > 0 || uploading) && (
-            <div class="files">
+            <div class="composer-atts">
               {files.map((f) => (
-                <span>
+                <span class="composer-att" title={f.name}>
                   {f.name}
                   <button type="button" onClick={() => setFiles(files.filter((x) => x !== f))}>×</button>
                 </span>
               ))}
-              {uploading && <span>Загрузка {uploading}…</span>}
+              {uploading && <span class="composer-att">Загрузка {uploading}…</span>}
             </div>
           )}
-          <textarea
-            value={draft}
-            placeholder={placeholder}
-            rows={Math.min(8, Math.max(2, draft.split("\n").length))}
-            onInput={(e) => setDraft(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <div class="composer-bar">
-            <label class="icon composer-plus" title="Файл">
+          <div class="composer-text">
+            <textarea
+              ref={taRef}
+              value={draft}
+              placeholder={placeholder}
+              rows={1}
+              onInput={(e) => setDraft(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+            />
+          </div>
+          <div class="composer-actions">
+            <label class="composer-plus" title="Файл">
               <IconPlus />
               <input type="file" multiple onChange={(e) => { const input = e.currentTarget; void addFiles(input.files).finally(() => { input.value = ""; }); }} />
             </label>
-            {members.length > 0 && (
-              <span class="composer-model"><IconBrain /> {members.find((m) => m.id === replyAgent)?.name}</span>
-            )}
-            <span class="grow" />
+            <span class="composer-spacer" />
             <button
-              class="composer-send"
-              type="submit"
-              aria-label="Отправить"
-              title={uploadsLeft > 0 ? "Дождитесь загрузки файлов" : "Отправить"}
-              disabled={uploadsLeft > 0 || sending || (!draft.trim() && files.length === 0)}
+              type="button"
+              class={`composer-mic${recording ? " recording" : ""}`}
+              title="Удерживай для голосового ввода"
+              onPointerDown={startVoice}
+              onPointerUp={endVoice}
+              onPointerCancel={endVoice}
             >
-              {draft.trim() || files.length || uploadsLeft > 0 ? (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5M6 11l6-6 6 6" /></svg>
-              ) : <IconMic />}
+              <IconMic />
             </button>
+            {draft.trim() || files.length ? (
+              <button
+                class="composer-send ready"
+                type="submit"
+                aria-label="Отправить"
+                title={uploadsLeft > 0 ? "Дождитесь загрузки файлов" : "Отправить"}
+                disabled={uploadsLeft > 0 || sending}
+              >
+                <IconArrowUp />
+              </button>
+            ) : (
+              <button
+                class={`composer-send live${liveMode ? " on" : ""}`}
+                type="button"
+                aria-label="Live-разговор с агентом"
+                title="Live-разговор с агентом"
+                disabled={uploadsLeft > 0 || sending}
+                onClick={() => { setLiveMode((v) => !v); setVoiceHint((cur) => liveMode ? "" : "Live-разговор с агентом появится позже"); }}
+              >
+                <IconWave />
+              </button>
+            )}
           </div>
         </div>
+        {(recording || voiceHint || liveMode) && (
+          <div class={`composer-hint${recording ? " rec" : ""}`}>
+            {recording ? "● Запись… отпусти, чтобы вставить текст" : voiceHint || (liveMode ? "Live-режим: заглушка, разговор ещё не подключён" : "")}
+          </div>
+        )}
       </form>
       {error && <p class="error">{error}</p>}
     </section>

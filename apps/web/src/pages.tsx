@@ -1,10 +1,11 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
 import { go, href } from "./route.js";
 import { KitPage } from "./kit.js";
 import { StaffPage } from "./staff.js";
 import { SectionPane } from "./supervisor-ui.js";
 import { useAccess } from "./access.js";
+import { CSelect, Tog } from "./cselect.js";
 
 export function Denied() {
   return <div class="empty"><p>Этот раздел закрыт для вашей роли.</p></div>;
@@ -74,13 +75,22 @@ function useEnabledModels(): string[] {
   return (data?.models ?? []).filter((m) => m.enabled).map((m) => m.route);
 }
 
-function ModelSelect({ label, value, onChange, allowEmpty }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean }) {
+function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean; variant?: "native" | "cselect" }) {
   const routes = useEnabledModels();
   const shown = value.includes("/") ? value : "";
+  const selected = routes.includes(shown) ? shown : "";
+  if (variant === "cselect") {
+    return (
+      <label class="field">
+        {label}
+        <CSelect value={selected} onChange={onChange} options={routes.map((r) => ({ value: r, label: r }))} emptyLabel={allowEmpty ? "модель установки" : undefined} />
+      </label>
+    );
+  }
   return (
     <label class="field">
       {label}
-      <select value={routes.includes(shown) ? shown : ""} onChange={(e) => onChange(e.currentTarget.value)}>
+      <select value={selected} onChange={(e) => onChange(e.currentTarget.value)}>
         {allowEmpty && <option value="">модель установки</option>}
         {routes.map((r) => <option key={r} value={r}>{r}</option>)}
       </select>
@@ -88,18 +98,28 @@ function ModelSelect({ label, value, onChange, allowEmpty }: { label: string; va
   );
 }
 
+function modelShort(route: string): string {
+  const i = route.lastIndexOf("/");
+  return i >= 0 ? route.slice(i + 1) : route;
+}
+
 function FallbackPick({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const routes = useEnabledModels();
   const picked = value.split(/\s+/).filter(Boolean);
   return (
     <div class="field">
-      Запасные модели
-      {routes.map((r) => (
-        <label key={r} class="check">
-          <input type="checkbox" checked={picked.includes(r)} onChange={() => onChange((picked.includes(r) ? picked.filter((x) => x !== r) : [...picked, r]).join(" "))} />
-          {r}
-        </label>
-      ))}
+      Запасные
+      <div class="chips">
+        {routes.map((r) => {
+          const on = picked.includes(r);
+          return (
+            <button key={r} type="button" class={on ? "chip on" : "chip"} onClick={() => onChange((on ? picked.filter((x) => x !== r) : [...picked, r]).join(" "))}>
+              <i />
+              {modelShort(r)}
+            </button>
+          );
+        })}
+      </div>
       {routes.length === 0 && <p class="small muted">Сначала включи модели в настройках.</p>}
     </div>
   );
@@ -137,29 +157,38 @@ function ProviderCard({ p, models, setProviders, setModels }: {
     setPicked([]);
   };
   return (
-    <div class="panel provider-card">
-      <div class="row"><b>{p.id}</b><span class="grow" /><button type="button" class="secondary sm" onClick={() => setProviders((cur) => cur.map((x) => (x.id === p.id ? { ...x, remove: true } : x)))}>Удалить</button></div>
-      <label class="field">Адрес сервера<input value={p.baseUrl} onInput={(e) => setProviders((cur) => cur.map((x) => (x.id === p.id ? { ...x, baseUrl: e.currentTarget.value } : x)))} /></label>
-      <label class="field">Ключ API<input type="password" value={p.apiKey || (p.hasKey ? "••••••••••••••••" : "")} placeholder="вставить ключ" onInput={(e) => { const raw = p.apiKey ? e.currentTarget.value : e.currentTarget.value.replace(/•/g, ""); setProviders((cur) => cur.map((x) => (x.id === p.id ? { ...x, apiKey: raw } : x))); }} onBlur={() => { if (p.apiKey.trim()) load(p.apiKey.trim()); }} /></label>
-      {busy && <p class="small muted">Загрузка моделей…</p>}
+    <div class="card provider">
+      <div class="provider-head">
+        <div class="plugin-av">{p.id.slice(0, 1).toUpperCase()}</div>
+        <b>{p.id}</b>
+        <span class="badge">{p.hasKey || p.apiKey ? "ключ задан" : "нет ключа"}</span>
+        <button type="button" class="ghost sm" onClick={() => setProviders((cur) => cur.map((x) => (x.id === p.id ? { ...x, remove: true } : x)))}>Удалить</button>
+      </div>
+      <div class="grid-2">
+        <label class="field">Адрес сервера<input value={p.baseUrl} onInput={(e) => setProviders((cur) => cur.map((x) => (x.id === p.id ? { ...x, baseUrl: e.currentTarget.value } : x)))} /></label>
+        <label class="field">Ключ API<input type="password" value={p.apiKey || (p.hasKey ? "••••••••••••••••" : "")} placeholder="вставить ключ" onInput={(e) => { const raw = p.apiKey ? e.currentTarget.value : e.currentTarget.value.replace(/•/g, ""); setProviders((cur) => cur.map((x) => (x.id === p.id ? { ...x, apiKey: raw } : x))); }} onBlur={() => { if (p.apiKey.trim()) load(p.apiKey.trim()); }} /></label>
+      </div>
+      <p class="note">Протокол: {p.protocol}. Пустой ключ не затирает уже записанный.</p>
+      {busy && <p class="note">Загрузка моделей…</p>}
       {err && <p class="error">{err}</p>}
       {remote.length > 0 && (
         <div>
           <label class="field">Найти модель<input value={query} placeholder="whisper" onInput={(e) => setQuery(e.currentTarget.value)} /></label>
-          <div class="provider-models">
+          <div class="chips" style={{ marginTop: 8 }}>
             {remote.filter((m) => m.id.toLowerCase().includes(query.trim().toLowerCase())).map((m) => {
               const have = models.some((row) => row.route === `${p.id}/${m.id}`);
+              const on = have || picked.includes(m.id);
               return (
-                <label key={m.id} class="check">
-                  <input type="checkbox" checked={have || picked.includes(m.id)} disabled={have} onChange={() => setPicked(picked.includes(m.id) ? picked.filter((x) => x !== m.id) : [...picked, m.id])} />
-                  <span>{m.id}{m.speech && <span class="small muted"> распознавание</span>}{have && <span class="small muted"> уже в списке</span>}</span>
-                </label>
+                <button key={m.id} type="button" class={on ? "chip on" : "chip"} disabled={have} onClick={() => setPicked(picked.includes(m.id) ? picked.filter((x) => x !== m.id) : [...picked, m.id])}>
+                  <i />
+                  {m.id}{m.speech ? " · распознавание" : ""}{have ? " · уже в списке" : ""}
+                </button>
               );
             })}
           </div>
         </div>
       )}
-      <div class="provider-foot"><button type="button" disabled={picked.length === 0} onClick={add}>Добавить</button></div>
+      <div class="actions" style={{ marginTop: 10 }}><button type="button" class="btn sm" disabled={picked.length === 0} onClick={add}>Добавить выбранные</button></div>
     </div>
   );
 }
@@ -230,70 +259,99 @@ function ModelsPane({ model, setModel, saveInstall }: { model: string; setModel:
     setDraft({ id: "", name: "", baseUrl: "https://", protocol: "openai-compat", apiKey: "", models: [{ id: "", title: "" }] });
   };
   return (
-    <div class="settings-sheet">
+    <div class="settings-sheet settings-ux">
       {error && <p class="error">{error}</p>}
-      <h3>Модели</h3>
-      <p class="small muted">Сверху модель установки. Ниже провайдеры и их ключи. Пустой ключ не затирает уже записанный.</p>
-      <label class="field">Модель по умолчанию<input value={model} onInput={(e) => setModel(e.currentTarget.value)} placeholder="deepseek/deepseek-v4-pro" /></label>
-      <h3>Именованные маршруты</h3>
-      <p class="small muted">Ключи models.routes в config.yaml. Пустое значение снимает маршрут (плагин падает на default/service). Поля, которых нет в форме, при сохранении не затираются.</p>
-      {namedKeys.map((key) => (
-        <ModelSelect
-          key={key}
-          label={namedLabels[key] ?? key}
-          value={namedRoutes[key] ?? ""}
-          onChange={(v) => setNamedRoutes({ ...namedRoutes, [key]: v })}
-          allowEmpty
-        />
-      ))}
-      <ModelSelect label="Служебная (service.model) — сжатие/факты" value={serviceModel} onChange={setServiceModel} allowEmpty />
-      <h3>Включённые модели</h3>
-      <p class="small muted">Снятие галочки убирает модель из этого списка. В карточке провайдера её снова можно выбрать.</p>
-      {models.filter((m) => providers.some((p) => !p.remove && m.route.startsWith(`${p.id}/`))).map((m) => (
-        <label key={m.route} class="check">
-          <input type="checkbox" checked onChange={() => setModels(models.filter((x) => x.route !== m.route))} />
-          <span><b>{m.route}</b></span>
+      <div class="card">
+        <div class="section-h"><h3>Модель установки</h3></div>
+        <p class="note">Сверху модель установки. Ниже провайдеры и их ключи. Пустой ключ не затирает уже записанный.</p>
+        <label class="field">Модель по умолчанию
+          <CSelect
+            value={model}
+            onChange={setModel}
+            options={Array.from(new Set([model, ...models.map((m) => m.route)])).filter(Boolean).map((r) => ({ value: r, label: r }))}
+          />
         </label>
-      ))}
-      <h3>Провайдеры</h3>
+      </div>
+      <div class="card">
+        <div class="section-h"><h3>Именованные маршруты</h3></div>
+        <p class="note">Ключи models.routes в config.yaml. Пустое значение снимает маршрут (плагин падает на default/service). Поля, которых нет в форме, при сохранении не затираются.</p>
+        <div class="grid-2">
+          {namedKeys.map((key) => (
+            <ModelSelect
+              key={key}
+              variant="cselect"
+              label={namedLabels[key] ?? key}
+              value={namedRoutes[key] ?? ""}
+              onChange={(v) => setNamedRoutes({ ...namedRoutes, [key]: v })}
+              allowEmpty
+            />
+          ))}
+          <ModelSelect variant="cselect" label="Служебная (service.model) — сжатие/факты" value={serviceModel} onChange={setServiceModel} allowEmpty />
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-h"><h3>Включённые модели</h3></div>
+        <p class="note">Снятие галочки убирает модель из этого списка. В карточке провайдера её снова можно выбрать.</p>
+        <div class="chips">
+          {models.filter((m) => providers.some((p) => !p.remove && m.route.startsWith(`${p.id}/`))).map((m) => (
+            <button key={m.route} type="button" class="chip on" onClick={() => setModels(models.filter((x) => x.route !== m.route))}>
+              <i />
+              {m.route}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div class="section-h"><h3>Провайдеры</h3></div>
       {providers.filter((p) => !p.remove).map((p) => (
         <ProviderCard key={p.id} p={p} models={models} setProviders={setProviders} setModels={setModels} />
       ))}
       {custom ? (
-        <div class="panel">
-          <h3>Свой провайдер</h3>
-          <label class="field">Идентификатор<input value={draft.id} placeholder="bai" onInput={(e) => setDraft({ ...draft, id: e.currentTarget.value })} /></label>
-          <p class="small muted">Латиница с маленькой буквы. Так провайдер зовётся в маршруте и в секретнице.</p>
-          <label class="field">Имя на экране<input value={draft.name} placeholder="bAI" onInput={(e) => setDraft({ ...draft, name: e.currentTarget.value })} /></label>
-          <label class="field">Адрес сервера<input value={draft.baseUrl} onInput={(e) => setDraft({ ...draft, baseUrl: e.currentTarget.value })} /></label>
-          <label class="field">Протокол
-            <select value={draft.protocol} onChange={(e) => setDraft({ ...draft, protocol: e.currentTarget.value })}>
-              <option value="openai-compat">openai-completions</option>
-              <option value="openai-responses">openai-responses</option>
-              <option value="anthropic">anthropic</option>
-            </select>
-          </label>
-          <label class="field">Ключ API<input type="password" value={draft.apiKey} onInput={(e) => setDraft({ ...draft, apiKey: e.currentTarget.value })} /></label>
-          <p class="small muted">Модели</p>
-          {draft.models.map((m, i) => (
-            <div class="row" key={i}>
-              <input value={m.id} placeholder="id модели" onInput={(e) => setDraft({ ...draft, models: draft.models.map((x, n) => (n === i ? { ...x, id: e.currentTarget.value } : x)) })} />
-              <input value={m.title} placeholder="имя на экране" onInput={(e) => setDraft({ ...draft, models: draft.models.map((x, n) => (n === i ? { ...x, title: e.currentTarget.value } : x)) })} />
+        <div class="card">
+          <details class="acc" open>
+            <summary>Свой провайдер</summary>
+            <div class="body">
+              <div class="grid-2">
+                <label class="field">Идентификатор<input value={draft.id} placeholder="bai" onInput={(e) => setDraft({ ...draft, id: e.currentTarget.value })} /></label>
+                <label class="field">Имя на экране<input value={draft.name} placeholder="bAI" onInput={(e) => setDraft({ ...draft, name: e.currentTarget.value })} /></label>
+                <label class="field">Адрес сервера<input value={draft.baseUrl} onInput={(e) => setDraft({ ...draft, baseUrl: e.currentTarget.value })} /></label>
+                <label class="field">Протокол
+                  <CSelect
+                    value={draft.protocol}
+                    onChange={(protocol) => setDraft({ ...draft, protocol })}
+                    options={[
+                      { value: "openai-compat", label: "openai-completions" },
+                      { value: "openai-responses", label: "openai-responses" },
+                      { value: "anthropic", label: "anthropic" },
+                    ]}
+                  />
+                </label>
+                <label class="field">Ключ API<input type="password" value={draft.apiKey} onInput={(e) => setDraft({ ...draft, apiKey: e.currentTarget.value })} /></label>
+              </div>
+              <p class="note">Латиница с маленькой буквы. Так провайдер зовётся в маршруте и в секретнице.</p>
+              {draft.models.map((m, i) => (
+                <div class="grid-2" key={i}>
+                  <label class="field">id модели<input value={m.id} placeholder="id модели" onInput={(e) => setDraft({ ...draft, models: draft.models.map((x, n) => (n === i ? { ...x, id: e.currentTarget.value } : x)) })} /></label>
+                  <label class="field">имя на экране<input value={m.title} placeholder="имя на экране" onInput={(e) => setDraft({ ...draft, models: draft.models.map((x, n) => (n === i ? { ...x, title: e.currentTarget.value } : x)) })} /></label>
+                </div>
+              ))}
+              <div class="actions">
+                <button type="button" class="btn" onClick={() => setDraft({ ...draft, models: [...draft.models, { id: "", title: "" }] })}>Добавить модель</button>
+                <button type="button" class="btn" onClick={() => setCustom(false)}>Отмена</button>
+                <button type="button" class="btn primary" onClick={createProvider}>Создать провайдера</button>
+              </div>
             </div>
-          ))}
-          <button type="button" class="secondary" onClick={() => setDraft({ ...draft, models: [...draft.models, { id: "", title: "" }] })}>Добавить модель</button>
-          <div class="row"><button type="button" class="secondary" onClick={() => setCustom(false)}>Отмена</button><button type="button" onClick={createProvider}>Создать провайдера</button></div>
+          </details>
         </div>
       ) : (
-        <div class="row">
-          <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "llama")) setProviders([...providers, { id: "llama", protocol: "openai-compat", baseUrl: "http://127.0.0.1:8080/v1", apiKey: "", hasKey: false }]); }}>Добавить llama.cpp</button>
-          <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "runninghub" && !p.remove)) setProviders([...providers, { id: "runninghub", protocol: "openai-compat", baseUrl: "https://llm.runninghub.ai/v1", apiKey: "", hasKey: false }]); }}>Добавить RunningHub</button>
-          <button type="button" class="secondary" onClick={() => { if (!providers.some((p) => p.id === "openrouter" && !p.remove)) setProviders([...providers, { id: "openrouter", protocol: "openai-compat", baseUrl: "https://openrouter.ai/api/v1", apiKey: "", hasKey: false }]); }}>Добавить OpenRouter</button>
-          <button type="button" class="secondary" onClick={() => setCustom(true)}>Добавить своего провайдера</button>
+        <div class="actions" style={{ margin: "8px 0 14px" }}>
+          <button type="button" class="btn" onClick={() => { if (!providers.some((p) => p.id === "llama")) setProviders([...providers, { id: "llama", protocol: "openai-compat", baseUrl: "http://127.0.0.1:8080/v1", apiKey: "", hasKey: false }]); }}>Добавить llama.cpp</button>
+          <button type="button" class="btn" onClick={() => { if (!providers.some((p) => p.id === "runninghub" && !p.remove)) setProviders([...providers, { id: "runninghub", protocol: "openai-compat", baseUrl: "https://llm.runninghub.ai/v1", apiKey: "", hasKey: false }]); }}>Добавить RunningHub</button>
+          <button type="button" class="btn" onClick={() => { if (!providers.some((p) => p.id === "openrouter" && !p.remove)) setProviders([...providers, { id: "openrouter", protocol: "openai-compat", baseUrl: "https://openrouter.ai/api/v1", apiKey: "", hasKey: false }]); }}>Добавить OpenRouter</button>
+          <button type="button" class="btn" onClick={() => setCustom(true)}>Добавить своего провайдера</button>
         </div>
       )}
-      <div class="tool-actions"><button onClick={() => void save()}>Сохранить</button></div>
-      {notice && <p class="small">{notice}</p>}
+      <div class="actions"><button class="agent-save" type="button" onClick={() => void save()}>Сохранить</button></div>
+      {notice && <p class="note">{notice}</p>}
       {saveError && <p class="error">{saveError}</p>}
     </div>
   );
@@ -315,34 +373,72 @@ function GeneralPane() {
     }
   };
   return (
-    <div class="settings-sheet">
-      <h3>Основные</h3>
-      <label class="set-row">Пресет агента<span class="small muted">Для новых сессий</span>
-        <select value={prefs.preset} onChange={(e) => set({ preset: e.currentTarget.value })}><option value="standard">Обычный</option><option value="careful">Осторожный</option></select>
-      </label>
-      <p class="set-row small muted">Разрешения по умолчанию (allow / ask / deny) — в разделе <a href={href({ page: "settings", section: "policy" })}>Политика</a>. «Не спрашивай» в чате действует только на эту сессию и не отменяет deny.</p>
-      <label class="set-row">Язык
-        <select value={prefs.language} onChange={(e) => set({ language: e.currentTarget.value })}><option value="ru">Русский</option><option value="en">English</option></select>
-      </label>
-      <div class="set-row">Оформление
-        <div class="appear">
-          {(["light", "dark", "system"] as const).map((id) => (
-            <button type="button" key={id} class={prefs.appearance === id ? "secondary on" : "secondary"} onClick={() => set({ appearance: id })}>{id === "light" ? "Светлая" : id === "dark" ? "Тёмная" : "Как в системе"}</button>
-          ))}
+    <div class="settings-sheet settings-ux">
+      <div class="card">
+        <div class="section-h"><h3>Пресет</h3></div>
+        <div class="set-row">
+          <div class="left"><b>Пресет агента</b><span class="hint">Для новых сессий</span></div>
+          <div class="ctl">
+            <CSelect
+              value={prefs.preset}
+              onChange={(preset) => set({ preset })}
+              options={[
+                { value: "standard", label: "Обычный", sub: "стандартный пресет для новых сессий" },
+                { value: "careful", label: "Осторожный", sub: "больше уточнений перед действиями" },
+              ]}
+            />
+          </div>
+        </div>
+        <p class="note">Разрешения по умолчанию (allow / ask / deny) — в разделе <a href={href({ page: "settings", section: "policy" })}>Политика</a>. «Не спрашивай» в чате действует только на эту сессию и не отменяет deny.</p>
+      </div>
+      <div class="card">
+        <div class="section-h"><h3>Интерфейс</h3></div>
+        <div class="set-row">
+          <div class="left"><b>Язык</b></div>
+          <div class="ctl">
+            <CSelect
+              value={prefs.language}
+              onChange={(language) => set({ language })}
+              options={[{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]}
+            />
+          </div>
+        </div>
+        <div class="set-row">
+          <div class="left"><b>Оформление</b></div>
+          <div class="ctl">
+            <div class="seg">
+              {(["light", "dark", "system"] as const).map((id) => (
+                <button type="button" key={id} class={prefs.appearance === id ? "on" : ""} onClick={() => set({ appearance: id })}>{id === "light" ? "Светлая" : id === "dark" ? "Тёмная" : "Как в системе"}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div class="set-row">
+          <div class="left"><b>Enter, пока агент занят</b></div>
+          <div class="ctl">
+            <CSelect
+              value={prefs.enter}
+              onChange={(enter) => set({ enter })}
+              options={[
+                { value: "queue", label: "В очередь", sub: "сообщение дождётся конца хода" },
+                { value: "interrupt", label: "Прервать", sub: "остановить текущий ход и взять новое" },
+              ]}
+            />
+          </div>
+        </div>
+        <div class="set-row">
+          <div class="left"><b>Стриминг ответа</b><span class="hint">Показывать текст по мере генерации</span></div>
+          <div class="ctl"><Tog on={prefs.streaming !== false} onClick={() => set({ streaming: prefs.streaming === false })} label="стриминг" /></div>
         </div>
       </div>
-      <label class="set-row">Enter, пока агент занят
-        <select value={prefs.enter} onChange={(e) => set({ enter: e.currentTarget.value })}><option value="queue">В очередь</option><option value="interrupt">Прервать</option></select>
-      </label>
-      <label class="set-row">Стриминг ответа<span class="small muted">Показывать текст по мере генерации</span>
-        <input type="checkbox" checked={prefs.streaming !== false} onChange={(e) => set({ streaming: e.currentTarget.checked })} />
-      </label>
-      <TokenRow />
+      <div class="card">
+        <div class="section-h"><h3>Доступ</h3></div>
+        <TokenRow />
+      </div>
     </div>
   );
 }
 
-/** Login token rotation. The token itself is never shown: this tab keeps the new one, the link can be copied. */
 function TokenRow() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -372,14 +468,17 @@ function TokenRow() {
     }
   };
   return (
-    <div class="set-row">Токен входа<span class="small muted">Если ссылка или токен могли попасть к посторонним</span>
-      <div class="row">
-        <button type="button" class="secondary" disabled={busy} onClick={() => void rotate()}>{busy ? "Меняю…" : "Сменить токен входа"}</button>
-        {rotated && <button type="button" class="ghost" onClick={() => void copyLink()}>Скопировать ссылку входа</button>}
+    <>
+      <div class="set-row">
+        <div class="left"><b>Токен входа</b><span class="hint">Если ссылка или токен могли попасть к посторонним</span></div>
+        <div class="ctl">
+          <button type="button" class="btn" disabled={busy} onClick={() => void rotate()}>{busy ? "Меняю…" : "Сменить токен входа"}</button>
+          {rotated && <button type="button" class="btn ghost" onClick={() => void copyLink()}>Скопировать ссылку входа</button>}
+        </div>
       </div>
-      {notice && <p class="small">{notice}</p>}
+      {notice && <p class="note">{notice}</p>}
       {error && <p class="error">{error}</p>}
-    </div>
+    </>
   );
 }
 
@@ -510,74 +609,74 @@ function PluginsSettings({
   };
 
   return (
-    <div class="settings-sheet">
-      <h3>Плагины</h3>
-      <p class="small muted">
-        Список — все плагины харнеса (реестр установки и `$SINTY_HOME/plugins`), каждый можно включить или выключить.
-        «Добавить» копирует локальную папку или npm-пакет с `sinty.plugin.json` в home-плагины. MCP — в разделе MCP.
-      </p>
-      <div class="tabs">
-        <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Установленные</button>
-        <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>Добавить</button>
-      </div>
-      {(error || localError) && <p class="error">{error || localError}</p>}
-      {notice && <p class="small">{notice}</p>}
-      {drop && (
-        <div class="overlay" onClick={() => { if (!busy) setDrop(null); }}>
-          <div class="dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>Удалить {drop}?</h3>
-            <p>Плагин будет стёрт из библиотеки. Его настройки и данные удалятся безвозвратно. Выключение этого не делает: при выключении всё сохраняется.</p>
-            <footer class="dialog-actions">
-              <button type="button" class="secondary" disabled={busy} onClick={() => setDrop(null)}>Отмена</button>
-              <button type="button" class="danger" disabled={busy} onClick={() => void remove(drop)}>Удалить</button>
-            </footer>
-          </div>
+    <div class="settings-sheet settings-ux">
+      <div class="card">
+        <div class="section-h"><h3>Плагины</h3></div>
+        <p class="note">
+          Список — все плагины харнеса (реестр установки и `$SINTY_HOME/plugins`), каждый можно включить или выключить.
+          «Добавить» копирует локальную папку или npm-пакет с `sinty.plugin.json` в home-плагины. MCP — в разделе MCP.
+        </p>
+        <div class="seg pills">
+          <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Установленные</button>
+          <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>Добавить</button>
         </div>
-      )}
-      {tab === "list" ? (
-        <>
-          <label class="search"><input placeholder="Поиск плагинов" value={q} onInput={(e) => setQ(e.currentTarget.value)} /></label>
-          <div class="plugin-grid">
-            {rows.map((p) => {
-              const on = enabled.includes(p.name) || p.name === "ui-web";
-              const everyone = p.forAll !== false;
-              return (
-                <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
-                  <div>
-                    <b>{p.name}</b>
-                    <div class="small muted">{p.version} · {p.location} · {(p.kinds ?? []).join(", ") || "—"}</div>
-                    <div class="small">{p.description || "без описания"}</div>
-                  </div>
-                  <span class="tile-actions">
-                    <button type="button" class={everyone ? "secondary sm" : "ghost sm"} disabled={busy || p.defaultOn} title={p.defaultOn ? "Встроенный плагин: есть у всех агентов, убрать можно в карточке агента" : undefined} onClick={() => void setShared(p.name, !everyone)}>{everyone ? "у всех" : "не у всех"}</button>
-                    <button type="button" class={on ? "secondary sm" : "ghost sm"} disabled={busy || p.name === "ui-web"} onClick={() => void setOn(p.name, !on)}>{on ? "включён" : "выключен"}</button>
-                    {p.removable && <button type="button" class="danger sm" disabled={busy} onClick={() => setDrop(p.name)}>Удалить</button>}
-                  </span>
-                </div>
-              );
-            })}
+        {(error || localError) && <p class="error">{error || localError}</p>}
+        {notice && <p class="note">{notice}</p>}
+        {drop && (
+          <div class="overlay" onClick={() => { if (!busy) setDrop(null); }}>
+            <div class="dialog" onClick={(e) => e.stopPropagation()}>
+              <h3>Удалить {drop}?</h3>
+              <p>Плагин будет стёрт из библиотеки. Его настройки и данные удалятся безвозвратно. Выключение этого не делает: при выключении всё сохраняется.</p>
+              <footer class="dialog-actions">
+                <button type="button" class="secondary" disabled={busy} onClick={() => setDrop(null)}>Отмена</button>
+                <button type="button" class="danger" disabled={busy} onClick={() => void remove(drop)}>Удалить</button>
+              </footer>
+            </div>
           </div>
-          {rows.length === 0 && <p class="muted">Каталог пуст. Добавьте плагин вкладкой «Добавить».</p>}
-        </>
-      ) : (
-        <section class="panel">
-          <p class="small muted">
-            Папка должна содержать sinty.plugin.json (и entry для runtime node). Копируется в каталог $SINTY_HOME/plugins, включается и hot-start через POST /v1/plugins/install.
-            Для внешних MCP используйте Settings → MCP.
-          </p>
-          <label class="field">Путь к папке плагина
-            <input value={path} placeholder="E:\plugins\my-tool" disabled={busy || Boolean(npm.trim())} onInput={(e) => setPath(e.currentTarget.value)} />
-          </label>
-          <label class="field">Или npm-пакет
-            <input value={npm} placeholder="@scope/sinty-plugin-x" disabled={busy || Boolean(path.trim())} onInput={(e) => setNpm(e.currentTarget.value)} />
-          </label>
-          <label class="field row">
-            <input type="checkbox" checked={replace} disabled={busy} onChange={(e) => setReplace(e.currentTarget.checked)} />
-            <span>Заменить, если уже есть в home</span>
-          </label>
-          <button type="button" disabled={busy || (!path.trim() && !npm.trim())} onClick={() => void install()}>Установить</button>
-        </section>
-      )}
+        )}
+        {tab === "list" ? (
+          <>
+            <input class="search" placeholder="Поиск плагинов" value={q} onInput={(e) => setQ(e.currentTarget.value)} />
+            <div class="plugin-grid">
+              {rows.map((p) => {
+                const on = enabled.includes(p.name) || p.name === "ui-web";
+                const everyone = p.forAll !== false;
+                return (
+                  <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
+                    <div class="plugin-av">{p.name.slice(0, 1)}</div>
+                    <div class="plugin-txt">
+                      <b>{p.name}</b>
+                      <span>{p.version} · {p.location} · {(p.kinds ?? []).join(", ") || "—"}{p.description ? ` · ${p.description}` : ""}</span>
+                    </div>
+                    <button type="button" class={everyone ? "mini on" : "mini"} disabled={busy || p.defaultOn} title={p.defaultOn ? "Встроенный плагин: есть у всех агентов, убрать можно в карточке агента" : undefined} onClick={() => void setShared(p.name, !everyone)}>{everyone ? "у всех" : "не у всех"}</button>
+                    <Tog on={on} disabled={busy || p.name === "ui-web"} onClick={() => void setOn(p.name, !on)} label={on ? "выключить" : "включить"} />
+                    {p.removable && <button type="button" class="btn sm danger" disabled={busy} onClick={() => setDrop(p.name)}>Удалить</button>}
+                  </div>
+                );
+              })}
+            </div>
+            {rows.length === 0 && <p class="note">Каталог пуст. Добавьте плагин вкладкой «Добавить».</p>}
+          </>
+        ) : (
+          <div>
+            <p class="note">
+              Папка должна содержать sinty.plugin.json (и entry для runtime node). Копируется в каталог $SINTY_HOME/plugins, включается и hot-start через POST /v1/plugins/install.
+              Для внешних MCP используйте Settings → MCP.
+            </p>
+            <label class="field">Путь к папке плагина
+              <input value={path} placeholder="E:\plugins\my-tool" disabled={busy || Boolean(npm.trim())} onInput={(e) => setPath(e.currentTarget.value)} />
+            </label>
+            <label class="field">Или npm-пакет
+              <input value={npm} placeholder="@scope/sinty-plugin-x" disabled={busy || Boolean(path.trim())} onInput={(e) => setNpm(e.currentTarget.value)} />
+            </label>
+            <label class="check">
+              <input type="checkbox" checked={replace} disabled={busy} onChange={(e) => setReplace(e.currentTarget.checked)} />
+              <span>Заменить, если уже есть в home</span>
+            </label>
+            <div class="actions"><button type="button" class="btn primary" disabled={busy || (!path.trim() && !npm.trim())} onClick={() => void install()}>Установить</button></div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -610,10 +709,35 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       setSaveError(e instanceof Error ? e.message : String(e));
     }
   };
+  const titles: Record<string, string> = {
+    general: "Основные",
+    models: "Модели",
+    plugins: "Плагины",
+    staff: "Сотрудники",
+    uikit: "UI Kit",
+    supervisor: "Супервизор",
+    policy: "Политика",
+    limits: "Лимиты",
+    memory: "Память и контекст",
+    "plugin.context-inspector": "Контекст",
+    "plugin.mcp-catalog": "MCP",
+    "plugin.skills": "Навыки",
+    "plugin.tool-listen": "Аудио",
+    "plugin.tool-stt": "STT",
+    "plugin.tool-vision": "Vision",
+    "plugin.tool-web": "Веб",
+    "plugin.usage": "Расход",
+    "plugin.runninghub": "RunningHub",
+  };
   return (
     <section class="page settings-page">
-      <h2>Настройки</h2>
-      {error && <p class="error">{error}</p>}
+      <header class="bar settings-bar">
+        <div class="bar-meta">
+          <b>Настройки</b>
+          <span>{titles[section] ?? section}</span>
+        </div>
+      </header>
+      {error && <p class="error agent-page-error">{error}</p>}
       {!can(settingsResource(section)) ? <Denied /> : null}
       {section === "general" && can("settings:general") && <GeneralPane />}
       {section === "staff" && can("nav:staff") && <StaffPage />}
@@ -688,25 +812,28 @@ const blankAgent = (): AgentRecord => ({
   excludedPlugins: [],
 });
 
-interface ProjectRecord {
-  id: string;
-  name: string;
-  leadId: string;
-  agentIds: string[];
+const AGENT_AVATAR_COLORS = ["#6366f1", "#0ea5e9", "#f97316", "#22c55e", "#eab308", "#ef4444", "#7c3aed", "#ec4899", "#06b6d4", "#8b5cf6"];
+
+function agentLetter(name: string): string {
+  const trimmed = name.trim();
+  return trimmed ? trimmed[0]!.toUpperCase() : "?";
+}
+
+function agentHue(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = Math.imul(31, h) + name.charCodeAt(i) | 0;
+  return AGENT_AVATAR_COLORS[Math.abs(h) % AGENT_AVATAR_COLORS.length]!;
 }
 
 export function AgentsPage({ agentId }: { agentId?: string }) {
   const agents = useLoad<{ agents: AgentRecord[] }>("/v1/roster/agents", []);
-  const projects = useLoad<{ projects: ProjectRecord[] }>("/v1/roster/projects", []);
   const plugins = useLoad<{ plugins: PluginRow[] }>("/v1/plugins", []);
   const skills = useLoad<{ skills: { name: string; description: string }[]; disabled?: boolean }>("/v1/roster/skills", []);
   const installModel = useInstallModel();
   const [draft, setDraft] = useState<AgentRecord | undefined>();
   const [tab, setTab] = useState<"general" | "plugins" | "skills" | "mcp">("general");
-  const [projectName, setProjectName] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
-  const [lead, setLead] = useState("");
   const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const saveAgentForm = async (): Promise<void> => {
     if (!draft?.name.trim()) return;
@@ -724,19 +851,6 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
       dispatchEvent(new Event("sinty-agents"));
       if (!draft.id) go({ page: "agents", agentId: saved.id });
       agents.reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const saveProject = async (): Promise<void> => {
-    setError("");
-    try {
-      await api("/v1/roster/projects", { body: { name: projectName, agentIds: picked, leadId: lead || picked[0] } });
-      setProjectName("");
-      setPicked([]);
-      setLead("");
-      projects.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -785,89 +899,130 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
     reader.readAsDataURL(file);
   };
 
-  return (
-    <section class="page">
-      <h2>Агенты</h2>
-      <p class="muted small">Карточка — это запись агента. Своего чата у неё нет, пока агента не добавили в проект.</p>
-      {error && <p class="error">{error}</p>}
-      {!agentId && <p class="muted small">Выберите агента слева или создайте нового.</p>}
-      {draft && (
-        <div class="settings-sheet">
-            <div class="tabs">
-              {(["general", "plugins", "skills", "mcp"] as const).map((id) => (
-                <button key={id} class={tab === id ? "on" : ""} onClick={() => setTab(id)}>
-                  {id === "general" ? "Общее" : id === "plugins" ? "Плагины" : id === "skills" ? "Навыки" : "MCP"}
-                </button>
-              ))}
-            </div>
-            {tab === "general" && (
-              <div class="fields">
-                <label>Аватар<input type="file" accept="image/*" onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onAvatar(f); }} /></label>
-                <label>Имя<input value={draft.name} onInput={(e) => patch({ name: e.currentTarget.value })} /></label>
-                <label>Специализация<input value={draft.specialization} onInput={(e) => patch({ specialization: e.currentTarget.value })} /></label>
-                <label>Краткое описание<textarea rows={2} value={draft.summary} onInput={(e) => patch({ summary: e.currentTarget.value })} /></label>
-                <label>AGENTS.md<textarea rows={8} value={draft.persona} onInput={(e) => patch({ persona: e.currentTarget.value })} /></label>
-                <ModelSelect label="Модель по умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
-                <FallbackPick value={draft.fallback || draft.model || installModel} onChange={(fallback) => patch({ fallback })} />
-                <h3>Служебные вызовы</h3>
-                <ModelSelect label="Модель служебных вызовов" value={draft.serviceModel || draft.model || installModel} onChange={(serviceModel) => patch({ serviceModel })} />
-                <label>Сжатие переписки<textarea rows={4} value={draft.compress} onInput={(e) => patch({ compress: e.currentTarget.value })} /></label>
-                <label>Факты<textarea rows={4} value={draft.facts} onInput={(e) => patch({ facts: e.currentTarget.value })} /></label>
-                <h3>Зависший ход</h3>
-                <label>Секунд тишины. Пусто — порог установки. 0 — не следить.<input value={draft.stallSeconds ?? ""} onInput={(e) => { const v = e.currentTarget.value.trim(); patch({ stallSeconds: v === "" ? null : Number(v) }); }} /></label>
-              </div>
-            )}
-            {tab === "plugins" && <AgentPluginTiles rows={tools} chosen={chosen} onToggle={togglePlugin} />}
-            {tab === "mcp" && <AgentPluginTiles rows={mcp} chosen={chosen} onToggle={togglePlugin} empty="Подключённых MCP нет." />}
-            {tab === "skills" && (
-              <div class="checks">
-                {(skills.data?.skills ?? []).map((s) => (
-                  <label key={s.name} class="check">
-                    <input type="checkbox" checked={draft.skills.includes(s.name)} onChange={() => patch({ skills: draft.skills.includes(s.name) ? draft.skills.filter((n) => n !== s.name) : [...draft.skills, s.name] })} />
-                    <span><b>{s.name}</b><div class="small muted">{s.description}</div></span>
-                  </label>
-                ))}
-                {skills.data?.disabled ? (
-                  <p class="muted small">Плагин skills выключен в настройках: каталога навыков и инструментов skill.* нет ни у одного агента.</p>
-                ) : (
-                  <>
-                    {(draft.excludedPlugins ?? []).includes("skills") && <p class="muted small">Плагин skills убран у этого агента на вкладке «Плагины»: отмеченные навыки он не увидит.</p>}
-                    {(skills.data?.skills.length ?? 0) === 0 && <p class="muted small">В папке skills пока нет навыков.</p>}
-                  </>
-                )}
-              </div>
-            )}
-            <div class="tool-actions">
-              <button disabled={!draft.name.trim()} onClick={() => void saveAgentForm()}>Сохранить</button>
-            </div>
+  if (!draft) {
+    return (
+      <section class="page agent-page">
+        <div class="agent-empty">
+          <div class="agent-empty-av">?</div>
+          <p>Выберите агента слева</p>
+          <button type="button" onClick={() => go({ page: "agents", agentId: "new" })}>+ Новый агент</button>
+          {error && <p class="error">{error}</p>}
         </div>
-      )}
-      <h2>Проекты</h2>
-      <ul>
-        {projects.data?.projects.map((p) => (
-          <li key={p.id}>
-            <b>{p.name}</b> <span class="muted small">агентов: {p.agentIds.length}</span>
-            <button class="link small" onClick={() => void api(`/v1/roster/projects/${p.id}`, { method: "DELETE" }).then(() => projects.reload())}>удалить</button>
-          </li>
-        ))}
-      </ul>
-      <div class="fields">
-        <label>Название<input value={projectName} onInput={(e) => setProjectName(e.currentTarget.value)} /></label>
-        {(agents.data?.agents ?? []).map((a) => (
-          <label key={a.id} class="check">
-            <input type="checkbox" checked={picked.includes(a.id)} onChange={() => { const next = picked.includes(a.id) ? picked.filter((id) => id !== a.id) : [...picked, a.id]; setPicked(next); if (!next.includes(lead)) setLead(next[0] ?? ""); }} />
-            {a.name}{" "}
-            {picked.includes(a.id) && <button type="button" class="link small" onClick={() => setLead(a.id)}>{lead === a.id ? "ведущий" : "сделать ведущим"}</button>}
-          </label>
-        ))}
-        <button disabled={!projectName.trim()} onClick={() => void saveProject()}>Создать проект</button>
-        <p class="muted small">Папки: workspace/projects/имя/_inbox, _out, _work.</p>
+      </section>
+    );
+  }
+
+  const letter = agentLetter(draft.name || draft.id || "?");
+  const hue = agentHue(draft.name || draft.id || "?");
+  const subtitle = [draft.specialization.trim(), draft.id ? "карточка агента" : "новый агент"].filter(Boolean).join(" · ");
+
+  return (
+    <section class="page agent-page">
+      <header class="bar agent-bar">
+        <span class="bar-av" style={draft.avatar ? undefined : { background: hue }}>
+          {draft.avatar ? <img src={draft.avatar} alt="" /> : letter}
+        </span>
+        <div class="bar-meta">
+          <b>{draft.name.trim() || "Новый агент"}</b>
+          <span>{subtitle}</span>
+        </div>
+        <div class="tabs">
+          {(["general", "plugins", "skills", "mcp"] as const).map((id) => (
+            <button key={id} type="button" class={tab === id ? "on" : ""} onClick={() => setTab(id)}>
+              {id === "general" ? "Общее" : id === "plugins" ? "Плагины" : id === "skills" ? "Навыки" : "MCP"}
+            </button>
+          ))}
+        </div>
+        <button type="button" class="agent-save" disabled={!draft.name.trim()} onClick={() => void saveAgentForm()}>Сохранить</button>
+      </header>
+      {error && <p class="error agent-page-error">{error}</p>}
+      <div class="agent-sheet">
+        {tab === "general" && (
+          <div class="card">
+            <div class="agent-section">
+              <div class="section-h"><h3>Личность</h3></div>
+              <div class="persona">
+                <button type="button" class="ava-edit" style={draft.avatar ? undefined : { background: hue }} onClick={() => fileRef.current?.click()}>
+                  {draft.avatar ? <img src={draft.avatar} alt="" /> : letter}
+                  <span>сменить</span>
+                </button>
+                <input ref={fileRef} class="file-hidden" type="file" accept="image/*" onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onAvatar(f); e.currentTarget.value = ""; }} />
+                <div class="persona-fields">
+                  <div class="grid-2">
+                    <label class="field">Имя<input value={draft.name} onInput={(e) => patch({ name: e.currentTarget.value })} /></label>
+                    <label class="field">Специализация<input value={draft.specialization} onInput={(e) => patch({ specialization: e.currentTarget.value })} /></label>
+                  </div>
+                  <label class="field">Краткое описание<textarea rows={2} value={draft.summary} onInput={(e) => patch({ summary: e.currentTarget.value })} /></label>
+                </div>
+              </div>
+            </div>
+            <div class="agent-section">
+              <div class="section-h"><h3>Инструкция</h3></div>
+              <div class="code-card">
+                <div class="cap"><span>AGENTS.md</span><span>markdown</span></div>
+                <textarea rows={8} value={draft.persona} onInput={(e) => patch({ persona: e.currentTarget.value })} />
+              </div>
+            </div>
+            <div class="agent-section">
+              <details class="acc" open>
+                <summary>Модели</summary>
+                <div class="body">
+                  <ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                  <FallbackPick value={draft.fallback || draft.model || installModel} onChange={(fallback) => patch({ fallback })} />
+                </div>
+              </details>
+            </div>
+            <div class="agent-section">
+              <details class="acc">
+                <summary>Служебные вызовы</summary>
+                <div class="body">
+                  <ModelSelect variant="cselect" label="Модель для служебных вызовов" value={draft.serviceModel || draft.model || installModel} onChange={(serviceModel) => patch({ serviceModel })} />
+                  <label class="field">Сжатие переписки<textarea rows={3} value={draft.compress} onInput={(e) => patch({ compress: e.currentTarget.value })} /></label>
+                  <label class="field">Факты<textarea rows={3} value={draft.facts} onInput={(e) => patch({ facts: e.currentTarget.value })} /></label>
+                  <label class="field">Таймаут хода, сек<input value={draft.stallSeconds ?? ""} placeholder="пусто — порог установки, 0 — не следить" onInput={(e) => { const v = e.currentTarget.value.trim(); patch({ stallSeconds: v === "" ? null : Number(v) }); }} /></label>
+                </div>
+              </details>
+            </div>
+            <p class="note">Проекты здесь не редактируются — состав агентов правится из карточки проекта в левой панели.</p>
+          </div>
+        )}
+        {tab === "plugins" && (
+          <div class="card">
+            <div class="section-h"><h3>Плагины агента</h3></div>
+            <AgentPluginTiles rows={tools} chosen={chosen} onToggle={togglePlugin} />
+          </div>
+        )}
+        {tab === "mcp" && (
+          <div class="card">
+            <div class="section-h"><h3>MCP</h3></div>
+            <AgentPluginTiles rows={mcp} chosen={chosen} onToggle={togglePlugin} empty="Подключённых MCP нет." />
+            <p class="note">Пусто? Подключи MCP в Параметры, затем включи здесь тумблером.</p>
+          </div>
+        )}
+        {tab === "skills" && (
+          <div class="card">
+            <div class="section-h"><h3>Навыки</h3></div>
+            {skills.data?.disabled ? (
+              <p class="muted small">Плагин skills выключен в настройках: каталога навыков и инструментов skill.* нет ни у одного агента.</p>
+            ) : (
+              <>
+                <AgentPluginTiles
+                  rows={skills.data?.skills ?? []}
+                  chosen={draft.skills}
+                  onToggle={(name) => patch({ skills: draft.skills.includes(name) ? draft.skills.filter((n) => n !== name) : [...draft.skills, name] })}
+                  empty="В папке skills пока нет навыков."
+                />
+                {(draft.excludedPlugins ?? []).includes("skills") && <p class="note">Плагин skills убран у этого агента на вкладке «Плагины»: отмеченные навыки он не увидит.</p>}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: PluginRow[]; chosen: string[]; onToggle: (name: string) => void; empty?: string }) {
+function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: { name: string; description: string; defaultOn?: boolean }[]; chosen: string[]; onToggle: (name: string) => void; empty?: string }) {
   if (!rows.length) return <p class="muted small">{empty || "Запущенных плагинов нет."}</p>;
   return (
     <div class="plugin-grid">
@@ -875,8 +1030,12 @@ function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: PluginRow[]
         const on = chosen.includes(p.name);
         return (
           <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
-            <div><b>{p.name}</b>{p.defaultOn && <span class="small muted"> встроенный, у всех агентов</span>}<div class="small muted">{p.description}</div></div>
-            <button type="button" class={on ? "secondary sm" : "ghost sm"} onClick={() => onToggle(p.name)}>{on ? "включён" : "выключен"}</button>
+            <div class="plugin-av">{agentLetter(p.name)}</div>
+            <div class="plugin-txt">
+              <b>{p.name}</b>
+              <span>{p.description}{p.defaultOn ? " · встроенный, у всех агентов" : ""}</span>
+            </div>
+            <button type="button" class={on ? "tog on" : "tog"} aria-label={on ? "включён" : "выключен"} onClick={() => onToggle(p.name)}></button>
           </div>
         );
       })}
