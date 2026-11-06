@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -324,7 +324,7 @@ function readable(file: string): boolean {
 }
 
 /** A compiler package is usable only when its own esbuild can be loaded. A forked plugin folder can contain package.json without node_modules. */
-function usableCompiler(pkg: string): string | null {
+export function usableCompiler(pkg: string): string | null {
   if (!readable(pkg)) return null;
   try {
     createRequire(pkg).resolve("esbuild");
@@ -334,28 +334,76 @@ function usableCompiler(pkg: string): string | null {
   }
 }
 
+let compilerRepairTried = false;
+
+/** Rebuild compiler/node_modules from the lockfile in an unconfined child. The plugin process itself cannot write there. A dangling junction to an old app folder is removed first. */
+function repairCompiler(dir: string): void {
+  const script = `
+    const { rmSync } = require("node:fs");
+    const { join } = require("node:path");
+    const { spawnSync } = require("node:child_process");
+    const dir = process.env.COMPILER_DIR;
+    rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const r = spawnSync(npm, ["ci", "--omit=dev", "--no-audit", "--no-fund"], {
+      cwd: dir, encoding: "utf8", windowsHide: true, shell: process.platform === "win32",
+    });
+    if (r.status) {
+      process.stderr.write(r.stderr || r.stdout || "npm ci failed");
+      process.exit(r.status ?? 1);
+    }
+  `;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    windowsHide: true,
+    env: { ...process.env, COMPILER_DIR: dir },
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+  if (result.status) {
+    throw new Error((result.stderr || result.stdout || "npm ci failed").trim() || "npm ci failed");
+  }
+}
+
 /** The compiler packages live next to the plugin. A path outside the grant is not readable, so it is skipped. */
-function compilerPackage(): string | null {
-  const here = dirname(fileURLToPath(import.meta.url));
+export function compilerPackage(opts?: { cwd?: string; here?: string; repair?: boolean }): string | null {
+  const cwd = opts?.cwd ?? process.cwd();
+  const here = opts?.here ?? dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    join(process.cwd(), "compiler", "package.json"),
+    join(cwd, "compiler", "package.json"),
     join(here, "compiler", "package.json"),
     join(here, "..", "compiler", "package.json"),
   ];
-  const noted = join(process.cwd(), "compiler.json");
+  const install = process.env.SINTY_INSTALL_ROOT;
+  if (install) candidates.push(join(install, "plugins", "diffusion", "compiler", "package.json"));
+  const noted = join(cwd, "compiler.json");
   if (readable(noted)) {
     try {
       const raw = JSON.parse(readFileSync(noted, "utf8")) as { packageJson?: string };
       if (typeof raw.packageJson === "string" && raw.packageJson) {
-        candidates.push(isAbsolute(raw.packageJson) ? raw.packageJson : join(process.cwd(), raw.packageJson));
+        candidates.push(isAbsolute(raw.packageJson) ? raw.packageJson : join(cwd, raw.packageJson));
       }
     } catch {
       /* a bad note is skipped */
     }
   }
+  const unique: string[] = [];
   for (const pkg of candidates) {
+    const abs = resolve(pkg);
+    if (!unique.includes(abs)) unique.push(abs);
+  }
+  for (const pkg of unique) {
     const usable = usableCompiler(pkg);
     if (usable) return usable;
+  }
+  if (opts?.repair === false) return null;
+  if (!compilerRepairTried) {
+    compilerRepairTried = true;
+    for (const pkg of unique) {
+      if (!readable(pkg) || !readable(join(dirname(pkg), "package-lock.json"))) continue;
+      try { repairCompiler(dirname(pkg)); } catch { continue; }
+      const usable = usableCompiler(pkg);
+      if (usable) return usable;
+    }
   }
   return null;
 }

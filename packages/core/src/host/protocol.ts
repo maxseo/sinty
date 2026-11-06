@@ -108,6 +108,8 @@ export type ToChild =
   | { t: "context.snapshot"; snapshot: ContextSnapshot }
   | { t: "net.result"; id: number; ok: true; value: NetPublicResult }
   | { t: "net.result"; id: number; ok: false; error: WireError }
+  | { t: "session.fs.result"; id: number; ok: true; value: { path: string; body?: Uint8Array } }
+  | { t: "session.fs.result"; id: number; ok: false; error: WireError }
   | { t: "shutdown" };
 
 export type FromChild =
@@ -140,6 +142,8 @@ export type FromChild =
   | { t: "net.public"; id: number; op: "fetch"; url: string; init: NetPublicInit }
   | { t: "net.public"; id: number; op: "proxy" }
   | { t: "net.public"; id: number; op: "check"; url: string }
+  | { t: "session.fs"; id: number; callId: string; op: "read"; path: string }
+  | { t: "session.fs"; id: number; callId: string; op: "write"; path: string; body: Uint8Array }
   | { t: "memory.result"; id: number; ok: true; value: unknown }
   | { t: "memory.result"; id: number; ok: false; error: WireError }
   | { t: "http.start"; id: number; status: number; headers: [string, string][] }

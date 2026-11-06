@@ -39,6 +39,47 @@ export function compositionRoot(workspace: string): string {
   return join(workspace, "hyperframes");
 }
 
+/** Where new compositions are written: session root when the call has one, else the global workspace. */
+export function compositionWriteRoot(sessionWorkspace: string | undefined, globalWorkspace: string): string {
+  return compositionRoot(sessionWorkspace || globalWorkspace);
+}
+
+/**
+ * Folder of one composition. Prefers a session copy that already has index.html,
+ * then a leftover global copy (older writes), then the path a new write would use.
+ */
+export function compositionDir(slug: string, sessionWorkspace: string | undefined, globalWorkspace: string): string {
+  const sessionDir = sessionWorkspace ? join(compositionRoot(sessionWorkspace), slug) : "";
+  if (sessionDir && existsSync(join(sessionDir, "index.html"))) return sessionDir;
+  const globalDir = join(compositionRoot(globalWorkspace), slug);
+  if (existsSync(join(globalDir, "index.html"))) return globalDir;
+  return join(compositionWriteRoot(sessionWorkspace, globalWorkspace), slug);
+}
+
+/** Global workspace plus each `projects/<slug>` folder, so the tab can list project compositions. */
+export function listWorkspaceRoots(globalWorkspace: string): string[] {
+  const roots = [globalWorkspace];
+  const projects = join(globalWorkspace, "projects");
+  if (!existsSync(projects)) return roots;
+  for (const entry of readdirSync(projects, { withFileTypes: true })) {
+    if (entry.isDirectory()) roots.push(join(projects, entry.name));
+  }
+  return roots;
+}
+
+export function listSlugsAcross(workspaces: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const workspace of workspaces) {
+    for (const slug of listSlugs(workspace)) {
+      if (seen.has(slug)) continue;
+      seen.add(slug);
+      out.push(slug);
+    }
+  }
+  return out.sort();
+}
+
 export function listSlugs(workspace: string): string[] {
   const root = compositionRoot(workspace);
   if (!existsSync(root)) return [];

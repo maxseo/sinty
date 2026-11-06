@@ -158,7 +158,7 @@ hot start and canary. Code: `packages/core/src/agent-plugins.ts`, `patches.ts` (
 |---|---|
 | `runtime: "node"`, `entry` a `.ts`, `.mjs` or `.js` file | `mcp-stdio`, `http` (MCP servers go through `mcp.install`) |
 | kinds `tool`, `ui`, `schedule`, `event` | `provider`, `context`, `channel`, `server`, `memory` |
-| `fs.write` `$DATA` or inside it; `fs.read` also `$PLUGIN` | any other path, `$WORKSPACE`, `$CONFIG.*` |
+| `fs.write` `$DATA` or `$SESSION` (or a folder inside them); `fs.read` also `$PLUGIN` | any other path, `$WORKSPACE`, `$CONFIG.*` |
 | `net` hosts (still cut by `policy.yaml net.allow`), `"$PUBLIC"` | `shell`, `browser` (they open child processes) |
 | `secrets` by name, `models` routes | `env`, `context` |
 | `agent: ["sessions.read"]` | `sessions.write` |

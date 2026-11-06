@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { compositionMeta, inlineAssets, insideDir, listSlugs } from "./gallery.js";
+import { compositionDir, compositionMeta, compositionWriteRoot, inlineAssets, insideDir, listSlugs, listSlugsAcross, listWorkspaceRoots } from "./gallery.js";
 
 test("composition meta reads the stage attributes", () => {
   const html = '<title>Ignored</title><div data-composition-id="neon-loop" data-width="1920" data-height="1080"></div>';
@@ -35,4 +35,31 @@ test("relative images become data urls and outside paths stay", () => {
   assert.match(out, /src="data:image\/png;base64,/);
   assert.match(out, /src="\.\.\/secret\.png"/);
   assert.match(out, /src="https:\/\/example\.com\/a\.png"/);
+});
+
+test("new writes go under the session workspace, and without one they stay global", () => {
+  assert.equal(compositionWriteRoot("/tmp/projects/demo", "/tmp/global"), join("/tmp/projects/demo", "hyperframes"));
+  assert.equal(compositionWriteRoot(undefined, "/tmp/global"), join("/tmp/global", "hyperframes"));
+});
+
+test("render prefers a session composition and falls back to a leftover global one", () => {
+  const global = mkdtempSync(join(tmpdir(), "hf-global-"));
+  const session = mkdtempSync(join(tmpdir(), "hf-session-"));
+  mkdirSync(join(global, "hyperframes", "old-one"), { recursive: true });
+  writeFileSync(join(global, "hyperframes", "old-one", "index.html"), "<title>Old</title>");
+  assert.equal(compositionDir("old-one", session, global), join(global, "hyperframes", "old-one"));
+  mkdirSync(join(session, "hyperframes", "old-one"), { recursive: true });
+  writeFileSync(join(session, "hyperframes", "old-one", "index.html"), "<title>New</title>");
+  assert.equal(compositionDir("old-one", session, global), join(session, "hyperframes", "old-one"));
+  assert.equal(compositionDir("brand-new", session, global), join(session, "hyperframes", "brand-new"));
+});
+
+test("the tab lists compositions from the global workspace and from project folders", () => {
+  const global = mkdtempSync(join(tmpdir(), "hf-lib-"));
+  mkdirSync(join(global, "hyperframes", "global-loop"), { recursive: true });
+  writeFileSync(join(global, "hyperframes", "global-loop", "index.html"), "<title>G</title>");
+  mkdirSync(join(global, "projects", "demo", "hyperframes", "project-loop"), { recursive: true });
+  writeFileSync(join(global, "projects", "demo", "hyperframes", "project-loop", "index.html"), "<title>P</title>");
+  assert.deepEqual(listWorkspaceRoots(global).slice(1), [join(global, "projects", "demo")]);
+  assert.deepEqual(listSlugsAcross(listWorkspaceRoots(global)), ["global-loop", "project-loop"]);
 });

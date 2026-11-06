@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { definePlugin, ToolError, z } from "@sinty/sdk";
-import { compositionMeta, compositionRoot, ensureThumb, findFfmpeg, findVideo, inlineAssets, insideDir, installedVersion, listSlugs, localCli, SLUG } from "./gallery.js";
+import { compositionDir, compositionMeta, compositionRoot, compositionWriteRoot, ensureThumb, findFfmpeg, findVideo, inlineAssets, insideDir, installedVersion, listSlugsAcross, listWorkspaceRoots, localCli, SLUG } from "./gallery.js";
 import { tabHtml } from "./tab-page.js";
 import { readMark, updateAvailable, writeMark, type Remote } from "./updates.js";
 
@@ -138,13 +138,13 @@ export default definePlugin({
 
     ctx.tool({
       name: "hyperframes.write",
-      description: "Save index.html for one composition under the workspace folder hyperframes/<slug>. HTML needs data-composition-id, data-width, data-height and data-duration. The CLI renders that file.",
+      description: "Save index.html for one composition under hyperframes/<slug> in the current session workspace (the project folder in a project chat, or the global workspace when there is no project). HTML needs data-composition-id, data-width, data-height and data-duration. The CLI renders that file.",
       input: z.object({ slug: z.string(), html: z.string().max(500_000) }),
       sideEffects: "write",
       idempotent: true,
-      async run(args) {
+      async run(args, tool) {
         if (!SLUG.test(args.slug)) throw new ToolError("hyperframes_slug", "slug: латиница через дефис");
-        const project = join(ctx.paths.workspace, "hyperframes", args.slug);
+        const project = join(compositionWriteRoot(tool.workspace, ctx.paths.workspace), args.slug);
         mkdirSync(project, { recursive: true });
         writeFileSync(join(project, "index.html"), args.html, "utf8");
         return { content: { dir: project, file: "index.html" } };
@@ -153,14 +153,14 @@ export default definePlugin({
 
     ctx.tool({
       name: "hyperframes.render",
-      description: "Render hyperframes/<slug> to MP4. The file is copied to the chat project _out/video/<slug>/film.mp4. Uses the Playwright Chromium already on this machine. If FFmpeg, Python or ImageMagick is missing, call runtimes.install.",
+      description: "Render hyperframes/<slug> from the current session workspace to MP4. The file is copied to the chat project _out/video/<slug>/film.mp4. Uses the Playwright Chromium already on this machine. If FFmpeg, Python or ImageMagick is missing, call runtimes.install.",
       input: z.object({ slug: z.string() }),
       sideEffects: "external",
       timeoutMs: 600_000,
       idempotent: false,
       async run(args, tool) {
         if (!SLUG.test(args.slug)) throw new ToolError("hyperframes_slug", "slug: латиница через дефис");
-        const project = join(ctx.paths.workspace, "hyperframes", args.slug);
+        const project = compositionDir(args.slug, tool.workspace, ctx.paths.workspace);
         const local = localCli(join(dir, "cli"));
         const bin = local || (process.platform === "win32" ? "npx.cmd" : "npx");
         const result = await run(bin, local ? ["render"] : ["--yes", "hyperframes", "render"], project);
@@ -210,10 +210,12 @@ export default definePlugin({
     const fail = (message: string, status = 400): Response => json({ error: { message } }, status);
     const folderOf = (slug: string): string | undefined => {
       if (!SLUG.test(slug)) return undefined;
-      const root = compositionRoot(ctx.paths.workspace);
-      const folder = join(root, slug);
-      if (!existsSync(join(folder, "index.html")) || !insideDir(root, folder)) return undefined;
-      return folder;
+      for (const workspace of listWorkspaceRoots(ctx.paths.workspace)) {
+        const root = compositionRoot(workspace);
+        const folder = join(root, slug);
+        if (existsSync(join(folder, "index.html")) && insideDir(root, folder)) return folder;
+      }
+      return undefined;
     };
 
     ctx.http({
@@ -224,8 +226,8 @@ export default definePlugin({
       handler: () => {
         try {
           const ffmpeg = findFfmpeg();
-          const items = listSlugs(ctx.paths.workspace).map((slug) => {
-            const folder = join(compositionRoot(ctx.paths.workspace), slug);
+          const items = listSlugsAcross(listWorkspaceRoots(ctx.paths.workspace)).map((slug) => {
+            const folder = folderOf(slug)!;
             const meta = compositionMeta(readFileSync(join(folder, "index.html"), "utf8"));
             const thumbPath = ensureThumb(folder, ffmpeg);
             const thumb = thumbPath ? `data:image/jpeg;base64,${readFileSync(thumbPath).toString("base64")}` : "";

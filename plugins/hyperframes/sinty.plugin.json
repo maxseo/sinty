@@ -1,7 +1,7 @@
 {
   "$schema": "../../schemas/plugin-manifest.schema.json",
   "name": "hyperframes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Write a HyperFrames HTML composition and render it to MP4. The tab shows when heygen-com/hyperframes has a newer release.",
   "kinds": ["tool", "ui"],
   "runtime": "node",

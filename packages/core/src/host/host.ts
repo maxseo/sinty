@@ -1,5 +1,5 @@
 import { fork, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ import { agentManifestViolations, agentRuntimeViolations } from "../agent-plugin
 import { CORE_TOOL_NAMES, reservedToolOwner } from "../coretools.js";
 import { checkPublicUrl, NetGuardError, parseAllowPrivate, publicFetch, startGuardProxy, type GuardOptions, type GuardProxy } from "../netguard.js";
 import { findPlugin, pluginDataDir, resolveFsGrants, type LoadedManifest } from "./manifest.js";
+import { resolveSessionPath, SESSION_FS_MAX_BYTES } from "./session-fs.js";
 import type { AgentOp, CallCtx, FromChild, NetPublicInit, ProviderWireRequest, RouteInfo, SectionInfo, ToChild, ToolInfo, WireError } from "./protocol.js";
 
 const RUNNER = join(dirname(fileURLToPath(import.meta.url)), "runner.js");
@@ -130,6 +131,8 @@ export class PluginProcess {
   private readonly streams = new Map<number, () => void>();
   /** The browser proxy for this process (permissions.browser); closed when the process exits. */
   private proxy: Promise<GuardProxy> | undefined;
+  /** In-flight tool calls, keyed by CallCtx.callId, so session.fs can use that call's workspace. */
+  private readonly toolCalls = new Map<string, CallCtx>();
 
   constructor(
     readonly loaded: LoadedManifest,
@@ -374,6 +377,7 @@ export class PluginProcess {
     await this.whenRunning();
     const id = ++this.nextId;
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+    this.toolCalls.set(ctx.callId, ctx);
     return new Promise<ToolOutcome>((resolveOutcome) => {
       let done = false;
       const finish = (o: ToolOutcome): void => {
@@ -382,6 +386,7 @@ export class PluginProcess {
         clearTimeout(timer);
         opts.signal?.removeEventListener("abort", onAbort);
         this.pending.delete(id);
+        this.toolCalls.delete(ctx.callId);
         resolveOutcome(o);
       };
       const timer = setTimeout(() => {
@@ -407,11 +412,13 @@ export class PluginProcess {
   async recover(name: string, ctx: CallCtx): Promise<RecoverOutcome> {
     await this.whenRunning();
     const id = ++this.nextId;
+    this.toolCalls.set(ctx.callId, ctx);
     return new Promise((resolveOutcome) => {
       const timer = setTimeout(() => finish({ status: "unknown" }), 15_000);
       const finish = (o: RecoverOutcome): void => {
         clearTimeout(timer);
         this.pending.delete(id);
+        this.toolCalls.delete(ctx.callId);
         resolveOutcome(o);
       };
       this.pending.set(id, {
@@ -735,6 +742,51 @@ export class PluginProcess {
     return true;
   }
 
+  private onSessionFs(msg: { id: number; callId: string; op: "read" | "write"; path: string; body?: Uint8Array }): void {
+    const reply = (p: Promise<{ path: string; body?: Uint8Array }>): void => {
+      p.then((value) => this.send({ t: "session.fs.result", id: msg.id, ok: true, value }))
+        .catch((e: unknown) => this.send({ t: "session.fs.result", id: msg.id, ok: false, error: wireOf(e) }));
+    };
+    const ctx = this.toolCalls.get(msg.callId);
+    if (!ctx?.workspace) {
+      return reply(Promise.reject(new Error("no session workspace for this call")));
+    }
+    const grants = resolveFsGrants(this.paths, this.loaded, this.config.plugins.config[this.name] ?? {});
+    const allowed = msg.op === "write" ? grants.sessionWrite : grants.sessionRead;
+    if (!allowed.length) {
+      return reply(Promise.reject(new Error(`plugin ${this.name} lacks $SESSION in permissions.fs.${msg.op === "write" ? "write" : "read"}`)));
+    }
+    const abs = resolveSessionPath(ctx.workspace, String(msg.path ?? ""), allowed);
+    if (!abs) {
+      return reply(Promise.reject(new Error(`path is outside the session root: ${msg.path}`)));
+    }
+    if (msg.op === "read") {
+      reply(
+        Promise.resolve().then(() => {
+          const st = statSync(abs);
+          if (!st.isFile()) throw new Error(`not a file: ${msg.path}`);
+          if (st.size > SESSION_FS_MAX_BYTES) throw new Error(`file is larger than ${SESSION_FS_MAX_BYTES} bytes`);
+          return { path: abs, body: readFileSync(abs) };
+        }),
+      );
+      return;
+    }
+    const body = msg.body;
+    if (!body) {
+      return reply(Promise.reject(new Error("write needs a body")));
+    }
+    if (body.length > SESSION_FS_MAX_BYTES) {
+      return reply(Promise.reject(new Error(`file is larger than ${SESSION_FS_MAX_BYTES} bytes`)));
+    }
+    reply(
+      Promise.resolve().then(() => {
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, body);
+        return { path: abs };
+      }),
+    );
+  }
+
   private onMessage(msg: FromChild): void {
     if (msg.t === "log") return this.events.log(this.name, msg.level, msg.msg, msg.data);
     if (msg.t === "journal.read") {
@@ -745,6 +797,7 @@ export class PluginProcess {
     if (msg.t === "agent.call") return this.onAgentCall(msg.id, msg.op, msg.args);
     if (msg.t === "models.call") return this.onModelsCall(msg.id, msg.op, msg.req);
     if (msg.t === "net.public") return this.onNetPublic(msg);
+    if (msg.t === "session.fs") return this.onSessionFs(msg);
     if (msg.t === "agent.stream") return this.onAgentStream(msg.id, msg.sessionId, msg.afterSeq);
     if (msg.t === "agent.stream.close") {
       this.streams.get(msg.id)?.();
@@ -758,6 +811,7 @@ export class PluginProcess {
     const crash: WireError = { code: "plugin_crashed", message: `plugin ${this.name} exited with code ${code}`, hint: "The plugin process restarts automatically; retry once." };
     for (const p of [...this.pending.values()]) p.onCrash(crash);
     this.pending.clear();
+    this.toolCalls.clear();
     for (const unsubscribe of this.streams.values()) unsubscribe();
     this.streams.clear();
     this.closeProxy();
