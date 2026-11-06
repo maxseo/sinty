@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The composer has hold-to-record voice input. When the browser exposes Speech Recognition, the transcript is inserted into the draft; otherwise the button only shows a recording state and a hint.
 - Settings → **Расход** (`usage`, on by default) shows requests, tokens, and charts for model calls. Switch by time, task, or call. A dollar figure appears only when the provider stored `costUsd`.
 - `stt.transcribe` returns timed phrases. Each phrase has start and end in seconds, word times when the speech model sends them, and a speaker label when the model tells voices apart. The same JSON is written to `_out/stt`. `whisper-1` fills the word times. A model whose id contains `diarize` fills the speaker.
 - `audio.listen` asks a chat model what is heard in an audio or video file. ffmpeg sends a short mono mp3. The model is Settings → Models → **listen — разбор звука** (`models.routes.listen`). Plugin `tool-listen` is on by default.
@@ -21,6 +22,8 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Changed
+- The left sidebar lists projects (a letter in a colored circle) and chats outside a project at the root, then slides into a project the same way it slides into Agents. The same workspace tabs sit under the list in the root (sandbox `workspace`) and inside a project (`workspace/projects/<name>`). Destinations stay the existing plugin/builtin routes; a project id is passed when one is open. The footer is the account initial, «Подключить прил…» (Settings → MCP or Plugins), and an update control that is not yet wired to a client updater. The theme toggle left the footer; theme stays in Settings → Основные.
+- The chat header is `project / chat`, the agent pill and status, then the existing view tabs (Чат, Журнал, Супервизор, session plugin tabs such as Контекст). The composer is a compact pill: attach, text, hold-to-talk microphone, and a live-wave button that becomes send (arrow up) when there is text or an attachment. It grows up to six lines, then a thin scrollbar; attachments sit above the text; attach, mic and send stay on the bottom row. There is no tray or backdrop under the form.
 - Chat attach / blob stream cap is 8 GB (was 512 MB). The model prompt still only inlines the first 8 MB. The composer tracks in-flight uploads and keeps Send off until they finish.
 - The editor, transcription and listen skills say which tool to call on a film. `stt.transcribe` times become `sourceIn` and `sourceOut`. `audio.listen` times stay inside the asked window. One call per source file. The mixed export is for a question about the mix.
 - `diffusion.run` no longer has `generate`, `transcribe`, `listen`, `job`, `logs` or `window`. `diffusion.generate` is removed. Speech is `stt.transcribe`, a question about the sound is `audio.listen`, and a new picture or video is `runninghub`.
