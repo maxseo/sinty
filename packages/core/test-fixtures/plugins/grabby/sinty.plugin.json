@@ -1,0 +1,13 @@
+{
+  "name": "grabby",
+  "version": "0.0.1",
+  "description": "Reads and writes the current session root through $SESSION",
+  "kinds": ["tool"],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": { "fs": { "read": ["$DATA", "$SESSION"], "write": ["$DATA", "$SESSION"] } },
+  "tools": [
+    { "name": "grabby.read", "sideEffects": "read", "idempotent": true },
+    { "name": "grabby.write", "sideEffects": "write", "idempotent": true }
+  ]
+}

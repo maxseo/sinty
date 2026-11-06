@@ -4,6 +4,7 @@ import { z, type PluginManifest } from "@sinty/sdk";
 import { agentMadePlugins } from "../agent-plugins.js";
 import { checkFsGrant } from "../policy.js";
 import { isInside, type SintyPaths } from "../paths.js";
+import { parseSessionGrants } from "./session-fs.js";
 
 /** A Web UI tab: a public GET route of the plugin, shown in a sandboxed iframe. */
 const uiTabSchema = z
@@ -134,10 +135,14 @@ export function findPlugin(paths: SintyPaths, name: string, searchPaths: readonl
 export interface FsGrants {
   read: string[];
   write: string[];
+  /** `$SESSION` grants: resolved per tool call against CallCtx.workspace, never into Node --allow-fs-* at start. */
+  sessionRead: string[];
+  sessionWrite: string[];
 }
 
 /**
  * Expands `$WORKSPACE`, `$SKILLS`, `$PLUGIN`, `$DATA` and relative paths; rejects grants that touch core-owned files or other plugins' data.
+ * `$SESSION` is not expanded here: the host resolves it per tool call to that call's session root.
  * Read grants may also be `$CONFIG.<key>`: the path the human set in config.yaml `plugins.config.<plugin>.<key>`
  * (never the manifest's own defaults, which the agent can patch). An unset key drops the grant.
  */
@@ -159,8 +164,10 @@ export function resolveFsGrants(paths: SintyPaths, loaded: LoadedManifest, human
   };
   const fs = loaded.manifest.permissions.fs ?? {};
   if ((fs.write ?? []).some((p) => p.startsWith("$CONFIG"))) throw new Error(`plugin ${loaded.manifest.name}: $CONFIG grants are read-only`);
-  const read = (fs.read ?? []).map(fromConfig).filter((p): p is string => p !== undefined).map(expand);
-  const write = (fs.write ?? []).map(expand);
+  const sessionRead = parseSessionGrants(fs.read);
+  const sessionWrite = parseSessionGrants(fs.write);
+  const read = (fs.read ?? []).filter((p) => !sessionRead.includes(p)).map(fromConfig).filter((p): p is string => p !== undefined).map(expand);
+  const write = (fs.write ?? []).filter((p) => !sessionWrite.includes(p)).map(expand);
   for (const p of [...read, ...write]) {
     if ((isInside(p, paths.data) || isInside(paths.data, p)) && !isInside(p, ownData)) {
       throw new Error(`plugin ${loaded.manifest.name}: may only use its own data folder ($DATA), not ${p}`);
@@ -177,5 +184,5 @@ export function resolveFsGrants(paths: SintyPaths, loaded: LoadedManifest, human
       throw new Error(`plugin ${loaded.manifest.name}: may not write plugin code (${p}); use plugin.propose_patch`);
     }
   }
-  return { read, write };
+  return { read, write, sessionRead, sessionWrite };
 }

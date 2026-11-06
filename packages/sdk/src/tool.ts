@@ -17,6 +17,18 @@ export interface ToolRunContext {
   workspace?: string;
   /** Chat project id, when the session belongs to one. */
   projectId?: string;
+  /**
+   * Read a file under this call's workspace. The host resolves the path against
+   * `workspace` (a project folder, or the global workspace when there is no project)
+   * and does not grant the plugin the rest of the desk. Needs `$SESSION` in the
+   * manifest `permissions.fs.read`.
+   */
+  readSessionFile(path: string): Promise<Uint8Array>;
+  /**
+   * Write a file under this call's workspace. Needs `$SESSION` in
+   * `permissions.fs.write`. Returns the absolute path the host wrote.
+   */
+  writeSessionFile(path: string, data: Uint8Array | string): Promise<string>;
   signal: AbortSignal;
   progress(update: { message?: string; ratio?: number }): void;
 }

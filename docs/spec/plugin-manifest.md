@@ -72,6 +72,7 @@ Input schemas are declared in code (zod) and exported by the plugin at load time
 ## `$DATA`, HTTP routes and agent access
 
 - `$DATA` expands to `$SINTY_HOME/data/<plugin>`. A grant that touches another plugin's data folder is rejected.
+- `$SESSION` is the current tool call's session root (`tool.workspace` / `CallCtx.workspace`): `workspace/projects/<slug>` in a project chat, or the global workspace when there is no project. The host does not expand it to Node `--allow-fs-read` at process start, so the plugin never receives the whole global desk. File bytes go through IPC (`readSessionFile` / `writeSessionFile`). `$SESSION/_inbox` may narrow the grant to that folder. Agent-made plugins may request `$SESSION`; they still may not request `$WORKSPACE`.
 - `$CONFIG.<key>` (read grants only) expands to the absolute path the human set in `config.yaml`
   `plugins.config.<plugin>.<key>`; the manifest's own `config` defaults are ignored, and an unset or relative value
   drops the grant. Used by `memory-obsidian` for its vault.

@@ -23,7 +23,7 @@ import {
 import { hostAllowed } from "../policy.js";
 import { connectMcp } from "./mcp-stdio.js";
 import { connectMcpHttp } from "./mcp-http.js";
-import type { AgentOp, FromChild, InitMessage, NetPublicInit, ToChild, ToolInfo, WireError, WireHttpRequest } from "./protocol.js";
+import type { AgentOp, CallCtx, FromChild, InitMessage, NetPublicInit, ToChild, ToolInfo, WireError, WireHttpRequest } from "./protocol.js";
 
 const send = (msg: FromChild): void => {
   process.send?.(msg);
@@ -50,6 +50,8 @@ const modelWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Erro
 let modelSeq = 0;
 const netWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
 let netSeq = 0;
+const sessionWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
+let sessionSeq = 0;
 let closeMcp: (() => void) | undefined;
 
 function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
@@ -66,6 +68,29 @@ function modelsCall<T>(op: "complete" | "embed" | "transcribe", req: object): Pr
     modelWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
     send({ t: "models.call", id, op, req: { ...req } as Record<string, unknown> });
   });
+}
+
+function sessionCall<T>(msg: { callId: string; op: "read"; path: string } | { callId: string; op: "write"; path: string; body: Uint8Array }): Promise<T> {
+  const id = ++sessionSeq;
+  return new Promise<T>((resolve, reject) => {
+    sessionWaiters.set(id, { resolve: resolve as (v: unknown) => void, reject });
+    send({ t: "session.fs", id, ...msg });
+  });
+}
+
+function sessionFileApi(callId: string) {
+  return {
+    async readSessionFile(path: string): Promise<Uint8Array> {
+      const v = await sessionCall<{ path: string; body?: Uint8Array }>({ callId, op: "read", path });
+      if (!v.body) throw new ToolError("session_fs", `файл ${path} пустой или недоступен`);
+      return v.body;
+    },
+    async writeSessionFile(path: string, data: Uint8Array | string): Promise<string> {
+      const body = typeof data === "string" ? new TextEncoder().encode(data) : data;
+      const v = await sessionCall<{ path: string }>({ callId, op: "write", path, body });
+      return v.path;
+    },
+  };
 }
 
 function netCall<T>(msg: { op: "fetch"; url: string; init: NetPublicInit } | { op: "proxy" } | { op: "check"; url: string }): Promise<T> {
@@ -334,7 +359,7 @@ async function init(msg: InitMessage): Promise<void> {
   });
 }
 
-async function runTool(id: number, name: string, args: unknown, c: { sessionId: string; turnId: string; callId: string; idempotencyKey: string }): Promise<void> {
+async function runTool(id: number, name: string, args: unknown, c: CallCtx): Promise<void> {
   const tool = tools.get(name);
   if (!tool) return send({ t: "tool.result", id, ok: false, error: { code: "unknown_tool", message: `no tool ${name}` } });
   const parsed = (tool.input as z.ZodType).safeParse(args);
@@ -351,6 +376,7 @@ async function runTool(id: number, name: string, args: unknown, c: { sessionId: 
   try {
     const result = await tool.run(parsed.data, {
       ...c,
+      ...sessionFileApi(c.callId),
       signal: ac.signal,
       progress: (u) => send({ t: "tool.progress", id, ...u }),
     });
@@ -408,7 +434,7 @@ process.on("message", (raw: ToChild) => {
         break;
       }
       tool
-        .recover(raw.ctx.idempotencyKey, { ...raw.ctx, signal: new AbortController().signal })
+        .recover(raw.ctx.idempotencyKey, { ...raw.ctx, ...sessionFileApi(raw.ctx.callId), signal: new AbortController().signal })
         .then((outcome) => send({ t: "tool.recovered", id: raw.id, outcome }))
         .catch(() => send({ t: "tool.recovered", id: raw.id, outcome: { status: "unknown" } }));
       break;
@@ -464,6 +490,13 @@ process.on("message", (raw: ToChild) => {
     case "net.result": {
       const w = netWaiters.get(raw.id);
       netWaiters.delete(raw.id);
+      if (raw.ok) w?.resolve(raw.value);
+      else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
+      break;
+    }
+    case "session.fs.result": {
+      const w = sessionWaiters.get(raw.id);
+      sessionWaiters.delete(raw.id);
       if (raw.ok) w?.resolve(raw.value);
       else w?.reject(new ToolError(raw.error.code, raw.error.message, raw.error.hint ? { hint: raw.error.hint } : {}));
       break;

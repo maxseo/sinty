@@ -33,6 +33,7 @@ export function markAgentMade(paths: SintyPaths, name: string, on: boolean): voi
 
 const DATA_PATH = /^\$DATA(\/[A-Za-z0-9_.\-/]*)?$/;
 const PLUGIN_PATH = /^\$PLUGIN(\/[A-Za-z0-9_.\-/]*)?$/;
+const SESSION_PATH = /^\$SESSION(\/[A-Za-z0-9_.\-/]*)?$/;
 
 /** What the manifest of an agent-made plugin may not ask for. Empty when it is within the rules. */
 export function agentManifestViolations(m: PluginManifest): string[] {
@@ -47,8 +48,14 @@ export function agentManifestViolations(m: PluginManifest): string[] {
   if (p.context?.length) out.push("permissions.context is not allowed");
   if (p.env?.length) out.push("permissions.env is not allowed; read secrets by name through permissions.secrets");
   if (p.agent?.includes("sessions.write")) out.push('permissions.agent "sessions.write" is not allowed');
-  for (const g of p.fs?.write ?? []) if (!DATA_PATH.test(g) || g.includes("..")) out.push(`fs.write "${g}": only $DATA or a folder inside it`);
-  for (const g of p.fs?.read ?? []) if ((!DATA_PATH.test(g) && !PLUGIN_PATH.test(g)) || g.includes("..")) out.push(`fs.read "${g}": only $DATA or $PLUGIN`);
+  for (const g of p.fs?.write ?? []) {
+    if ((DATA_PATH.test(g) || SESSION_PATH.test(g)) && !g.includes("..")) continue;
+    out.push(`fs.write "${g}": only $DATA, $SESSION or a folder inside them`);
+  }
+  for (const g of p.fs?.read ?? []) {
+    if ((DATA_PATH.test(g) || PLUGIN_PATH.test(g) || SESSION_PATH.test(g)) && !g.includes("..")) continue;
+    out.push(`fs.read "${g}": only $DATA, $PLUGIN or $SESSION`);
+  }
   if (m.ui?.static) out.push("ui.static is not allowed; show pages through ui.tabs with path");
   for (const t of m.ui?.tabs ?? []) if (t.builtin) out.push(`ui.tabs "${t.id}": builtin pages belong to the core Web UI`);
   for (const t of m.tools ?? []) {
