@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
 import { go, href } from "./route.js";
 import { KitPage } from "./kit.js";
@@ -74,13 +74,22 @@ function useEnabledModels(): string[] {
   return (data?.models ?? []).filter((m) => m.enabled).map((m) => m.route);
 }
 
-function ModelSelect({ label, value, onChange, allowEmpty }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean }) {
+function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean; variant?: "native" | "cselect" }) {
   const routes = useEnabledModels();
   const shown = value.includes("/") ? value : "";
+  const selected = routes.includes(shown) ? shown : "";
+  if (variant === "cselect") {
+    return (
+      <label class="field">
+        {label}
+        <CSelect value={selected} onChange={onChange} options={routes.map((r) => ({ value: r, label: r }))} emptyLabel={allowEmpty ? "модель установки" : undefined} />
+      </label>
+    );
+  }
   return (
     <label class="field">
       {label}
-      <select value={routes.includes(shown) ? shown : ""} onChange={(e) => onChange(e.currentTarget.value)}>
+      <select value={selected} onChange={(e) => onChange(e.currentTarget.value)}>
         {allowEmpty && <option value="">модель установки</option>}
         {routes.map((r) => <option key={r} value={r}>{r}</option>)}
       </select>
@@ -88,18 +97,64 @@ function ModelSelect({ label, value, onChange, allowEmpty }: { label: string; va
   );
 }
 
+function CSelect({ value, onChange, options, emptyLabel }: { value: string; onChange: (v: string) => void; options: { value: string; label: string; sub?: string }[]; emptyLabel?: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (): void => setOpen(false);
+    const timer = window.setTimeout(() => document.addEventListener("click", close), 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("click", close);
+    };
+  }, [open]);
+  const current = options.find((o) => o.value === value);
+  const shown = current?.label || (value ? value : (emptyLabel || "—"));
+  return (
+    <div class={open ? "cselect open" : "cselect"} onClick={(e) => e.stopPropagation()}>
+      <button type="button" class="cselect-btn" aria-haspopup="listbox" onClick={() => setOpen((v) => !v)}>
+        <span class="cselect-val">{shown}</span>
+        <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4.2 6.2 8 10l3.8-3.8 1.2 1.2L8 12.4 3 7.4z"/></svg>
+      </button>
+      {open && (
+        <div class="cselect-menu" role="listbox">
+          {emptyLabel !== undefined && (
+            <button type="button" class={!value ? "cselect-opt on" : "cselect-opt"} onClick={() => { onChange(""); setOpen(false); }}>{emptyLabel}</button>
+          )}
+          {options.map((o) => (
+            <button key={o.value} type="button" class={o.value === value ? "cselect-opt on" : "cselect-opt"} onClick={() => { onChange(o.value); setOpen(false); }}>
+              {o.label}
+              {o.sub && <span class="sub">{o.sub}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function modelShort(route: string): string {
+  const i = route.lastIndexOf("/");
+  return i >= 0 ? route.slice(i + 1) : route;
+}
+
 function FallbackPick({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const routes = useEnabledModels();
   const picked = value.split(/\s+/).filter(Boolean);
   return (
     <div class="field">
-      Запасные модели
-      {routes.map((r) => (
-        <label key={r} class="check">
-          <input type="checkbox" checked={picked.includes(r)} onChange={() => onChange((picked.includes(r) ? picked.filter((x) => x !== r) : [...picked, r]).join(" "))} />
-          {r}
-        </label>
-      ))}
+      Запасные
+      <div class="chips">
+        {routes.map((r) => {
+          const on = picked.includes(r);
+          return (
+            <button key={r} type="button" class={on ? "chip on" : "chip"} onClick={() => onChange((on ? picked.filter((x) => x !== r) : [...picked, r]).join(" "))}>
+              <i />
+              {modelShort(r)}
+            </button>
+          );
+        })}
+      </div>
       {routes.length === 0 && <p class="small muted">Сначала включи модели в настройках.</p>}
     </div>
   );
@@ -688,25 +743,28 @@ const blankAgent = (): AgentRecord => ({
   excludedPlugins: [],
 });
 
-interface ProjectRecord {
-  id: string;
-  name: string;
-  leadId: string;
-  agentIds: string[];
+const AGENT_AVATAR_COLORS = ["#6366f1", "#0ea5e9", "#f97316", "#22c55e", "#eab308", "#ef4444", "#7c3aed", "#ec4899", "#06b6d4", "#8b5cf6"];
+
+function agentLetter(name: string): string {
+  const trimmed = name.trim();
+  return trimmed ? trimmed[0]!.toUpperCase() : "?";
+}
+
+function agentHue(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = Math.imul(31, h) + name.charCodeAt(i) | 0;
+  return AGENT_AVATAR_COLORS[Math.abs(h) % AGENT_AVATAR_COLORS.length]!;
 }
 
 export function AgentsPage({ agentId }: { agentId?: string }) {
   const agents = useLoad<{ agents: AgentRecord[] }>("/v1/roster/agents", []);
-  const projects = useLoad<{ projects: ProjectRecord[] }>("/v1/roster/projects", []);
   const plugins = useLoad<{ plugins: PluginRow[] }>("/v1/plugins", []);
   const skills = useLoad<{ skills: { name: string; description: string }[]; disabled?: boolean }>("/v1/roster/skills", []);
   const installModel = useInstallModel();
   const [draft, setDraft] = useState<AgentRecord | undefined>();
   const [tab, setTab] = useState<"general" | "plugins" | "skills" | "mcp">("general");
-  const [projectName, setProjectName] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
-  const [lead, setLead] = useState("");
   const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const saveAgentForm = async (): Promise<void> => {
     if (!draft?.name.trim()) return;
@@ -724,19 +782,6 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
       dispatchEvent(new Event("sinty-agents"));
       if (!draft.id) go({ page: "agents", agentId: saved.id });
       agents.reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const saveProject = async (): Promise<void> => {
-    setError("");
-    try {
-      await api("/v1/roster/projects", { body: { name: projectName, agentIds: picked, leadId: lead || picked[0] } });
-      setProjectName("");
-      setPicked([]);
-      setLead("");
-      projects.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -785,89 +830,130 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
     reader.readAsDataURL(file);
   };
 
-  return (
-    <section class="page">
-      <h2>Агенты</h2>
-      <p class="muted small">Карточка — это запись агента. Своего чата у неё нет, пока агента не добавили в проект.</p>
-      {error && <p class="error">{error}</p>}
-      {!agentId && <p class="muted small">Выберите агента слева или создайте нового.</p>}
-      {draft && (
-        <div class="settings-sheet">
-            <div class="tabs">
-              {(["general", "plugins", "skills", "mcp"] as const).map((id) => (
-                <button key={id} class={tab === id ? "on" : ""} onClick={() => setTab(id)}>
-                  {id === "general" ? "Общее" : id === "plugins" ? "Плагины" : id === "skills" ? "Навыки" : "MCP"}
-                </button>
-              ))}
-            </div>
-            {tab === "general" && (
-              <div class="fields">
-                <label>Аватар<input type="file" accept="image/*" onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onAvatar(f); }} /></label>
-                <label>Имя<input value={draft.name} onInput={(e) => patch({ name: e.currentTarget.value })} /></label>
-                <label>Специализация<input value={draft.specialization} onInput={(e) => patch({ specialization: e.currentTarget.value })} /></label>
-                <label>Краткое описание<textarea rows={2} value={draft.summary} onInput={(e) => patch({ summary: e.currentTarget.value })} /></label>
-                <label>AGENTS.md<textarea rows={8} value={draft.persona} onInput={(e) => patch({ persona: e.currentTarget.value })} /></label>
-                <ModelSelect label="Модель по умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
-                <FallbackPick value={draft.fallback || draft.model || installModel} onChange={(fallback) => patch({ fallback })} />
-                <h3>Служебные вызовы</h3>
-                <ModelSelect label="Модель служебных вызовов" value={draft.serviceModel || draft.model || installModel} onChange={(serviceModel) => patch({ serviceModel })} />
-                <label>Сжатие переписки<textarea rows={4} value={draft.compress} onInput={(e) => patch({ compress: e.currentTarget.value })} /></label>
-                <label>Факты<textarea rows={4} value={draft.facts} onInput={(e) => patch({ facts: e.currentTarget.value })} /></label>
-                <h3>Зависший ход</h3>
-                <label>Секунд тишины. Пусто — порог установки. 0 — не следить.<input value={draft.stallSeconds ?? ""} onInput={(e) => { const v = e.currentTarget.value.trim(); patch({ stallSeconds: v === "" ? null : Number(v) }); }} /></label>
-              </div>
-            )}
-            {tab === "plugins" && <AgentPluginTiles rows={tools} chosen={chosen} onToggle={togglePlugin} />}
-            {tab === "mcp" && <AgentPluginTiles rows={mcp} chosen={chosen} onToggle={togglePlugin} empty="Подключённых MCP нет." />}
-            {tab === "skills" && (
-              <div class="checks">
-                {(skills.data?.skills ?? []).map((s) => (
-                  <label key={s.name} class="check">
-                    <input type="checkbox" checked={draft.skills.includes(s.name)} onChange={() => patch({ skills: draft.skills.includes(s.name) ? draft.skills.filter((n) => n !== s.name) : [...draft.skills, s.name] })} />
-                    <span><b>{s.name}</b><div class="small muted">{s.description}</div></span>
-                  </label>
-                ))}
-                {skills.data?.disabled ? (
-                  <p class="muted small">Плагин skills выключен в настройках: каталога навыков и инструментов skill.* нет ни у одного агента.</p>
-                ) : (
-                  <>
-                    {(draft.excludedPlugins ?? []).includes("skills") && <p class="muted small">Плагин skills убран у этого агента на вкладке «Плагины»: отмеченные навыки он не увидит.</p>}
-                    {(skills.data?.skills.length ?? 0) === 0 && <p class="muted small">В папке skills пока нет навыков.</p>}
-                  </>
-                )}
-              </div>
-            )}
-            <div class="tool-actions">
-              <button disabled={!draft.name.trim()} onClick={() => void saveAgentForm()}>Сохранить</button>
-            </div>
+  if (!draft) {
+    return (
+      <section class="page agent-page">
+        <div class="agent-empty">
+          <div class="agent-empty-av">?</div>
+          <p>Выберите агента слева</p>
+          <button type="button" onClick={() => go({ page: "agents", agentId: "new" })}>+ Новый агент</button>
+          {error && <p class="error">{error}</p>}
         </div>
-      )}
-      <h2>Проекты</h2>
-      <ul>
-        {projects.data?.projects.map((p) => (
-          <li key={p.id}>
-            <b>{p.name}</b> <span class="muted small">агентов: {p.agentIds.length}</span>
-            <button class="link small" onClick={() => void api(`/v1/roster/projects/${p.id}`, { method: "DELETE" }).then(() => projects.reload())}>удалить</button>
-          </li>
-        ))}
-      </ul>
-      <div class="fields">
-        <label>Название<input value={projectName} onInput={(e) => setProjectName(e.currentTarget.value)} /></label>
-        {(agents.data?.agents ?? []).map((a) => (
-          <label key={a.id} class="check">
-            <input type="checkbox" checked={picked.includes(a.id)} onChange={() => { const next = picked.includes(a.id) ? picked.filter((id) => id !== a.id) : [...picked, a.id]; setPicked(next); if (!next.includes(lead)) setLead(next[0] ?? ""); }} />
-            {a.name}{" "}
-            {picked.includes(a.id) && <button type="button" class="link small" onClick={() => setLead(a.id)}>{lead === a.id ? "ведущий" : "сделать ведущим"}</button>}
-          </label>
-        ))}
-        <button disabled={!projectName.trim()} onClick={() => void saveProject()}>Создать проект</button>
-        <p class="muted small">Папки: workspace/projects/имя/_inbox, _out, _work.</p>
+      </section>
+    );
+  }
+
+  const letter = agentLetter(draft.name || draft.id || "?");
+  const hue = agentHue(draft.name || draft.id || "?");
+  const subtitle = [draft.specialization.trim(), draft.id ? "карточка агента" : "новый агент"].filter(Boolean).join(" · ");
+
+  return (
+    <section class="page agent-page">
+      <header class="bar agent-bar">
+        <span class="bar-av" style={draft.avatar ? undefined : { background: hue }}>
+          {draft.avatar ? <img src={draft.avatar} alt="" /> : letter}
+        </span>
+        <div class="bar-meta">
+          <b>{draft.name.trim() || "Новый агент"}</b>
+          <span>{subtitle}</span>
+        </div>
+        <div class="tabs">
+          {(["general", "plugins", "skills", "mcp"] as const).map((id) => (
+            <button key={id} type="button" class={tab === id ? "on" : ""} onClick={() => setTab(id)}>
+              {id === "general" ? "Общее" : id === "plugins" ? "Плагины" : id === "skills" ? "Навыки" : "MCP"}
+            </button>
+          ))}
+        </div>
+        <button type="button" class="agent-save" disabled={!draft.name.trim()} onClick={() => void saveAgentForm()}>Сохранить</button>
+      </header>
+      {error && <p class="error agent-page-error">{error}</p>}
+      <div class="agent-sheet">
+        {tab === "general" && (
+          <div class="card">
+            <div class="agent-section">
+              <div class="section-h"><h3>Личность</h3></div>
+              <div class="persona">
+                <button type="button" class="ava-edit" style={draft.avatar ? undefined : { background: hue }} onClick={() => fileRef.current?.click()}>
+                  {draft.avatar ? <img src={draft.avatar} alt="" /> : letter}
+                  <span>сменить</span>
+                </button>
+                <input ref={fileRef} class="file-hidden" type="file" accept="image/*" onChange={(e) => { const f = e.currentTarget.files?.[0]; if (f) onAvatar(f); e.currentTarget.value = ""; }} />
+                <div class="persona-fields">
+                  <div class="grid-2">
+                    <label class="field">Имя<input value={draft.name} onInput={(e) => patch({ name: e.currentTarget.value })} /></label>
+                    <label class="field">Специализация<input value={draft.specialization} onInput={(e) => patch({ specialization: e.currentTarget.value })} /></label>
+                  </div>
+                  <label class="field">Краткое описание<textarea rows={2} value={draft.summary} onInput={(e) => patch({ summary: e.currentTarget.value })} /></label>
+                </div>
+              </div>
+            </div>
+            <div class="agent-section">
+              <div class="section-h"><h3>Инструкция</h3></div>
+              <div class="code-card">
+                <div class="cap"><span>AGENTS.md</span><span>markdown</span></div>
+                <textarea rows={8} value={draft.persona} onInput={(e) => patch({ persona: e.currentTarget.value })} />
+              </div>
+            </div>
+            <div class="agent-section">
+              <details class="acc" open>
+                <summary>Модели</summary>
+                <div class="body">
+                  <ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                  <FallbackPick value={draft.fallback || draft.model || installModel} onChange={(fallback) => patch({ fallback })} />
+                </div>
+              </details>
+            </div>
+            <div class="agent-section">
+              <details class="acc">
+                <summary>Служебные вызовы</summary>
+                <div class="body">
+                  <ModelSelect variant="cselect" label="Модель для служебных вызовов" value={draft.serviceModel || draft.model || installModel} onChange={(serviceModel) => patch({ serviceModel })} />
+                  <label class="field">Сжатие переписки<textarea rows={3} value={draft.compress} onInput={(e) => patch({ compress: e.currentTarget.value })} /></label>
+                  <label class="field">Факты<textarea rows={3} value={draft.facts} onInput={(e) => patch({ facts: e.currentTarget.value })} /></label>
+                  <label class="field">Таймаут хода, сек<input value={draft.stallSeconds ?? ""} placeholder="пусто — порог установки, 0 — не следить" onInput={(e) => { const v = e.currentTarget.value.trim(); patch({ stallSeconds: v === "" ? null : Number(v) }); }} /></label>
+                </div>
+              </details>
+            </div>
+            <p class="note">Проекты здесь не редактируются — состав агентов правится из карточки проекта в левой панели.</p>
+          </div>
+        )}
+        {tab === "plugins" && (
+          <div class="card">
+            <div class="section-h"><h3>Плагины агента</h3></div>
+            <AgentPluginTiles rows={tools} chosen={chosen} onToggle={togglePlugin} />
+          </div>
+        )}
+        {tab === "mcp" && (
+          <div class="card">
+            <div class="section-h"><h3>MCP</h3></div>
+            <AgentPluginTiles rows={mcp} chosen={chosen} onToggle={togglePlugin} empty="Подключённых MCP нет." />
+            <p class="note">Пусто? Подключи MCP в Параметры, затем включи здесь тумблером.</p>
+          </div>
+        )}
+        {tab === "skills" && (
+          <div class="card">
+            <div class="section-h"><h3>Навыки</h3></div>
+            {skills.data?.disabled ? (
+              <p class="muted small">Плагин skills выключен в настройках: каталога навыков и инструментов skill.* нет ни у одного агента.</p>
+            ) : (
+              <>
+                <AgentPluginTiles
+                  rows={skills.data?.skills ?? []}
+                  chosen={draft.skills}
+                  onToggle={(name) => patch({ skills: draft.skills.includes(name) ? draft.skills.filter((n) => n !== name) : [...draft.skills, name] })}
+                  empty="В папке skills пока нет навыков."
+                />
+                {(draft.excludedPlugins ?? []).includes("skills") && <p class="note">Плагин skills убран у этого агента на вкладке «Плагины»: отмеченные навыки он не увидит.</p>}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: PluginRow[]; chosen: string[]; onToggle: (name: string) => void; empty?: string }) {
+function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: { name: string; description: string; defaultOn?: boolean }[]; chosen: string[]; onToggle: (name: string) => void; empty?: string }) {
   if (!rows.length) return <p class="muted small">{empty || "Запущенных плагинов нет."}</p>;
   return (
     <div class="plugin-grid">
@@ -875,8 +961,12 @@ function AgentPluginTiles({ rows, chosen, onToggle, empty }: { rows: PluginRow[]
         const on = chosen.includes(p.name);
         return (
           <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
-            <div><b>{p.name}</b>{p.defaultOn && <span class="small muted"> встроенный, у всех агентов</span>}<div class="small muted">{p.description}</div></div>
-            <button type="button" class={on ? "secondary sm" : "ghost sm"} onClick={() => onToggle(p.name)}>{on ? "включён" : "выключен"}</button>
+            <div class="plugin-av">{agentLetter(p.name)}</div>
+            <div class="plugin-txt">
+              <b>{p.name}</b>
+              <span>{p.description}{p.defaultOn ? " · встроенный, у всех агентов" : ""}</span>
+            </div>
+            <button type="button" class={on ? "tog on" : "tog"} aria-label={on ? "включён" : "выключен"} onClick={() => onToggle(p.name)}></button>
           </div>
         );
       })}

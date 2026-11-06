@@ -1,5 +1,8 @@
 ## Unreleased
 
+- UX: Agents card matches sidebar/chat — 65px bar, centered 920px column, persona/AGENTS.md, model accordions, custom select, plugin toggles; projects form removed from the page.
+- UX: chat media (images/video) sit in shared-height rows at natural aspect ratios.
+- UX: chat column centered at 920px (composer same width).
 - UX: chat log/composer centered in a 720px column.
 - UX: footer M/update forced square (was height:auto → ellipses); .bar/.brand 65px.
 - UX: agent list avatars match chat rows (36px circle + title/sub); footer inset 16px; chat bar height 60px aligned with brand.
@@ -28,6 +31,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.film` creates a film in the chat's project. Files dropped into a film's library are copied to `_inbox/assets/<film name>/`, which the agent can read. `diffusion.run` `export` draws every timeline layer, mixes the timeline audio, and ffmpeg writes `_out/video/<film name>/film.mp4`. `hyperframes.render` writes its mp4 under `_out/video/<slug>/` too.
 
 ### Changed
+- Agents card: 65px header with avatar/name/specialization and pill tabs, centered 920px editor (persona, AGENTS.md code card, model/service accordions, custom model select, plugin/skill/MCP toggles). Projects are managed from the left panel, not this page.
 - The left sidebar lists projects (a letter in a colored circle) and chats outside a project at the root, then slides into a project the same way it slides into Agents. The same workspace tabs sit under the list in the root (sandbox `workspace`) and inside a project (`workspace/projects/<name>`). Destinations stay the existing plugin/builtin routes; a project id is passed when one is open. The footer is the account initial, «Подключить прил…» (Settings → MCP or Plugins), and an update control that is not yet wired to a client updater. The theme toggle left the footer; theme stays in Settings → Основные.
 - The chat header is `project / chat`, the agent pill and status, then the existing view tabs (Чат, Журнал, Супервизор, session plugin tabs such as Контекст). The composer is a compact pill: attach, text, hold-to-talk microphone, and a live-wave button that becomes send (arrow up) when there is text or an attachment. It grows up to six lines, then a thin scrollbar; attachments sit above the text; attach, mic and send stay on the bottom row. There is no tray or backdrop under the form.
 - Chat attach / blob stream cap is 8 GB (was 512 MB). The model prompt still only inlines the first 8 MB. The composer tracks in-flight uploads and keeps Send off until they finish.
