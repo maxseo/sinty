@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import { api, subscribe, token, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
 import { IconArrowUp, IconMic, IconPlus, IconWave } from "./icons.js";
 import { Markdown } from "./markdown.js";
-import { MediaView } from "./media.js";
+import { MediaStrip } from "./media.js";
 import { mergeMedia, splitMedia, type MediaRef } from "./media-ref.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
 import { waitNote } from "./wait-note.js";
@@ -205,7 +205,7 @@ function AgentBody({ text, media, sessionId }: { text: string; media: MediaRef[]
   return (
     <>
       {parsed.text && <Markdown text={parsed.text} />}
-      {files.map((file) => <MediaView key={file.path} sessionId={sessionId} file={file} />)}
+      {files.length > 0 && <MediaStrip sessionId={sessionId} files={files} />}
     </>
   );
 }
