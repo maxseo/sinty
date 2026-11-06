@@ -28,6 +28,7 @@ All notable changes to this project are documented here. The format follows
 - `diffusion.run` no longer has `generate`, `transcribe`, `listen`, `job`, `logs` or `window`. `diffusion.generate` is removed. Speech is `stt.transcribe`, a question about the sound is `audio.listen`, and a new picture or video is `runninghub`.
 
 ### Fixed
+- Opening a film no longer shows «компилятор не найден» when the plugin's `compiler/node_modules` is a dangling junction to an old app folder. The plugin removes that folder once and runs `npm ci` from `compiler/package-lock.json`, then compiles.
 - **Стоп всё** ends an in-flight `shell.run`. The turn abort reaches the cage process; on Windows the button no longer waits for `taskkill` / the command timeout. The label shows **Останавливаю…** while stop runs.
 - CI on the RunningHub tip: refresh golden prompts for default-on `runninghub`/`tool-stt`, keep the fallback-window test off DEFAULT_ON plugins, match the new `agent.task` background copy, and seed kanban cards with roster `assigneeId`/`reviewerId`.
 - The context-inspector session tab tests run again. `drawSteps` uses `querySelector(".step.on")`; the FakeEl harness now implements that call so a missing method no longer aborts `refresh` before the snapshot request.
