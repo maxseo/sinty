@@ -4,6 +4,7 @@ import { McpPane } from "./mcp-pane";
 import { PluginTab, type PluginTabInfo } from "./plugin-tab";
 import { api, shortTime, type SintyEvent } from "./api.js";
 import { href } from "./route.js";
+import { CSelect, Tog } from "./cselect.js";
 
 // ---- the «Супервизор» chat-header tab ----
 
@@ -248,66 +249,76 @@ export function SectionPane({ id }: { id: string }) {
     else groups.push({ name, fields: [f] });
   }
   return (
-    <div class="settings-sheet section-pane">
-      <h3>{section.title}</h3>
-      {section.description && <p class="small muted">{section.description}</p>}
-      {section.owner === "plugin" && <p class="small muted">Плагин <code>{section.plugin}</code>. Значения в config.yaml: plugins.config.{section.plugin}.</p>}
-      {section.id === "policy" && <p class="small muted">Файл <code>policy.yaml</code>. Инструменты его писать не могут — только этот экран (и ручное редактирование).</p>}
-      {groups.map((g) => (
-        <fieldset key={g.name} class="set-group">
-          {g.name && <legend>{g.name}</legend>}
-          {g.fields.map((f) => {
+    <div class="settings-sheet settings-ux section-pane">
+      <div class="card">
+        <div class="section-h"><h3>{section.title}</h3></div>
+        {section.description && <p class="note">{section.description}</p>}
+        {section.owner === "plugin" && <p class="note">Плагин <code>{section.plugin}</code>. Значения в config.yaml: plugins.config.{section.plugin}.</p>}
+        {section.id === "policy" && <p class="note">Файл <code>policy.yaml</code>. Инструменты его писать не могут — только этот экран (и ручное редактирование).</p>}
+        {groups.map((g, i) => {
+          const firstNamed = groups.findIndex((x) => x.name);
+          const body = g.fields.map((f) => {
             const v = draft[f.key];
             const set = (x: string | boolean): void => setDraft({ ...draft, [f.key]: x });
             const fallback = section.defaults[f.key];
-            const help = f.help ? <span class="small muted">{f.help}</span> : null;
+            const help = f.help ? <span class="field-help">{f.help}</span> : null;
             if (f.type === "boolean") {
               return (
-                <label key={f.key} class="check">
-                  <input type="checkbox" checked={v === true} onChange={(e) => set(e.currentTarget.checked)} />
-                  <span>
-                    {f.label}
-                    {help && <br />}
-                    {help}
-                  </span>
+                <div key={f.key} class="set-row">
+                  <div class="left">
+                    <b>{f.label}</b>
+                    {f.help && <span class="hint">{f.help}</span>}
+                  </div>
+                  <div class="ctl">
+                    <Tog on={v === true} onClick={() => set(v !== true)} label={f.label} />
+                  </div>
+                </div>
+              );
+            }
+            if (f.type === "select") {
+              return (
+                <label key={f.key} class="field">
+                  {f.label}{f.unit ? <span class="unit">{f.unit}</span> : null}
+                  <CSelect
+                    value={String(v)}
+                    onChange={(x) => set(x)}
+                    options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))}
+                  />
+                  {help}
                 </label>
               );
             }
             return (
-              <label key={f.key} class="field set-field">
-                <span>
-                  {f.label}
-                  {f.unit ? `, ${f.unit}` : ""}
-                </span>
-                {f.type === "select" ? (
-                  <select value={String(v)} onChange={(e) => set(e.currentTarget.value)}>
-                    {(f.options ?? []).map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type={f.type === "number" ? "number" : "text"}
-                    value={String(v)}
-                    {...(f.min !== undefined ? { min: f.min } : {})}
-                    {...(f.max !== undefined ? { max: f.max } : {})}
-                    step={f.step ?? (f.integer ? 1 : "any")}
-                    placeholder={f.optional && fallback !== undefined ? `пусто: ${String(fallback)}` : ""}
-                    onInput={(e) => set(e.currentTarget.value)}
-                  />
-                )}
+              <label key={f.key} class="field">
+                {f.label}{f.unit ? <span class="unit">{f.unit}</span> : null}
+                <input
+                  type={f.type === "number" ? "number" : "text"}
+                  value={String(v)}
+                  {...(f.min !== undefined ? { min: f.min } : {})}
+                  {...(f.max !== undefined ? { max: f.max } : {})}
+                  step={f.step ?? (f.integer ? 1 : "any")}
+                  placeholder={f.optional && fallback !== undefined ? `пусто: ${String(fallback)}` : ""}
+                  onInput={(e) => set(e.currentTarget.value)}
+                />
                 {help}
               </label>
             );
-          })}
-        </fieldset>
-      ))}
-      <div class="row">
-        <button disabled={!changed.length} onClick={() => void save()}>Сохранить</button>
-        {changed.length > 0 && <button class="secondary" onClick={() => setDraft(base)}>Отменить</button>}
+          });
+          if (!g.name) return <div key="ungrouped" class="section">{body}</div>;
+          return (
+            <details key={g.name} class="acc" open={i === firstNamed}>
+              <summary>{g.name}</summary>
+              <div class="body">{body}</div>
+            </details>
+          );
+        })}
+        <div class="actions" style={{ marginTop: 12 }}>
+          <button class="agent-save" type="button" disabled={!changed.length} onClick={() => void save()}>Сохранить</button>
+          {changed.length > 0 && <button type="button" class="btn" onClick={() => setDraft(base)}>Отменить</button>}
+        </div>
+        {notice && <p class="note">{notice}</p>}
+        {error && <p class="error">{error}</p>}
       </div>
-      {notice && <p class="small">{notice}</p>}
-      {error && <p class="error">{error}</p>}
     </div>
   );
 }

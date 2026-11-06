@@ -2,60 +2,71 @@
 export function tabHtml(): string {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>RunningHub</title>
 <style>
-:root{color-scheme:light;--bg:#f4f4f5;--panel:#fff;--text:#050505;--muted:#71717a;--line:rgba(0,0,0,.1);--accent:#74ff2a}
-[data-theme="dark"]{color-scheme:dark;--bg:#050505;--panel:#141414;--text:#fff;--muted:#a1a1aa;--line:rgba(255,255,255,.12)}
+:root{color-scheme:light;--bg:#f4f4f5;--panel:#fff;--panel-2:#fafafa;--text:#050505;--muted:#71717a;--line:rgba(0,0,0,.1);--accent:#74ff2a}
+[data-theme="dark"]{color-scheme:dark;--bg:#09090b;--panel:#111113;--panel-2:#18181b;--text:#fafafa;--muted:#a1a1aa;--line:rgba(255,255,255,.1)}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif}
-header{padding:16px 16px 8px}
-h1{font-size:16px;margin:0 0 4px}
-p{margin:0;color:var(--muted)}
-.bar{display:flex;gap:8px;flex-wrap:wrap;padding:8px 16px}
-input,select,button,textarea{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
-button.primary{background:var(--accent);color:#111;border-color:transparent;cursor:pointer}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif;padding:20px max(16px,calc((100% - 920px) / 2)) 48px}
+h1,h3{margin:0}
+p{margin:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:14px}
+.section-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.section-h h3{font-size:13px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
+.status,.note{margin:0 0 12px;font-size:12px;color:var(--muted)}
+.seg{display:inline-flex;gap:2px;padding:3px;border-radius:999px;background:var(--bg);border:1px solid var(--line);flex-wrap:wrap;margin-bottom:14px}
+.seg button{border:0;background:transparent;padding:6px 12px;border-radius:999px;cursor:pointer;color:var(--muted);font:inherit;font-size:13px;font-weight:500}
+.seg button.on{background:var(--panel);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+input,select,button,textarea{font:inherit;color:var(--text);background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+input.search{flex:1;min-width:180px}
+button.primary{background:var(--accent);color:#111;border-color:transparent;font-weight:650;cursor:pointer}
 button:disabled{opacity:.6}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:8px 16px 24px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;cursor:pointer}
-.card b{display:block}
-.card span{color:var(--muted);font-size:12px}
-.err{color:#b91c1c;padding:0 16px 8px}
-form{padding:0 16px 24px;display:grid;gap:8px;max-width:640px}form[hidden]{display:none}
-label{display:grid;gap:4px}
-pre{white-space:pre-wrap;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px}
-table{width:calc(100% - 32px);margin:8px 16px 16px;border-collapse:collapse;background:var(--panel)}
-th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;padding:0;margin:0 0 14px}
+.card.model{padding:12px;border-radius:14px;cursor:pointer;background:var(--panel-2);text-align:left;margin:0}
+.card.model:hover,.card.model.on{border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.card.model b{display:block}
+.card.model span{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.err{color:#b91c1c;margin:0 0 12px;font-size:13px}
+form{display:grid;gap:8px;margin-top:4px}form[hidden]{display:none}
+label{display:grid;gap:6px;font-size:12px;color:var(--muted);font-weight:600}
+pre{white-space:pre-wrap;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:8px}
+table{width:100%;border-collapse:collapse;background:transparent}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12px;font-weight:600}
 tr{cursor:pointer}
+tr:hover td{background:rgba(127,127,127,.06)}
 #history[hidden],#catalog[hidden]{display:none}
 </style></head><body>
-<header>
-  <h1>RunningHub</h1>
-  <p id="status">Каталог стандартных моделей. Текстовые модели и ключ — в разделе «Модели», плашка runninghub.</p>
-</header>
-<div class="bar">
-  <button type="button" id="show-catalog" class="primary">Каталог</button>
-  <button type="button" id="show-history">История</button>
-</div>
-<div id="catalog">
-<div class="bar">
-  <input id="q" placeholder="поиск: nano, video, suno">
-  <select id="kind"><option value="">все</option><option value="image">картинка</option><option value="video">видео</option><option value="audio">звук</option><option value="3d">3D</option></select>
-  <button type="button" id="find" class="primary">Найти</button>
-  <button type="button" id="refresh">Обновить реестр</button>
-</div>
-<p id="err" class="err"></p>
-<div id="grid" class="grid"></div>
-<form id="form" hidden>
-  <b id="form-title"></b>
-  <div id="fields"></div>
-  <button type="submit" class="primary">Запустить</button>
-  <pre id="out" hidden></pre>
-</form>
-</div>
-<div id="history" hidden>
-  <table>
-    <thead><tr><th>Время</th><th>Модель</th><th>Статус</th><th>Длительность</th><th>Задача</th><th>Монеты</th><th>Сумма</th></tr></thead>
-    <tbody id="rows"></tbody>
-  </table>
-  <pre id="detail" hidden></pre>
+<div class="card">
+  <div class="section-h"><h3>RunningHub</h3></div>
+  <p class="status" id="status">Каталог стандартных моделей. Текстовые модели и ключ — в разделе «Модели», плашка runninghub.</p>
+  <p class="note">Каталог стандартных моделей. Текстовые модели и ключ — в разделе «Модели», плашка runninghub.</p>
+  <div class="seg">
+    <button type="button" id="show-catalog" class="on">Каталог</button>
+    <button type="button" id="show-history">История</button>
+  </div>
+  <div id="catalog">
+    <div class="filters">
+      <input id="q" class="search" placeholder="поиск: nano, video, suno">
+      <select id="kind"><option value="">все</option><option value="image">картинка</option><option value="video">видео</option><option value="audio">звук</option><option value="3d">3D</option></select>
+      <button type="button" id="find" class="primary">Найти</button>
+      <button type="button" id="refresh">Обновить реестр</button>
+    </div>
+    <p id="err" class="err"></p>
+    <div id="grid" class="grid"></div>
+    <form id="form" hidden>
+      <b id="form-title"></b>
+      <div id="fields"></div>
+      <button type="submit" class="primary">Запустить</button>
+      <pre id="out" hidden></pre>
+    </form>
+  </div>
+  <div id="history" hidden>
+    <table>
+      <thead><tr><th>Время</th><th>Модель</th><th>Статус</th><th>Длительность</th><th>Задача</th><th>Монеты</th><th>Сумма</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <pre id="detail" hidden></pre>
+  </div>
 </div>
 <script>
 const send = (op, extra) => parent.postMessage(Object.assign({ sinty: "tab/1", op }, extra || {}), "*");
@@ -95,13 +106,16 @@ async function search() {
   for (const item of items) {
     const card = document.createElement("button");
     card.type = "button";
-    card.className = "card";
+    card.className = "card model";
     const name = document.createElement("b");
     name.textContent = item.name || item.endpoint;
     const meta = document.createElement("span");
     meta.textContent = (item.outputType || item.category || "") + " · " + item.endpoint;
     card.append(name, meta);
-    card.onclick = () => openItem(item.endpoint);
+    card.onclick = () => {
+      grid.querySelectorAll(".card.model").forEach((el) => el.classList.toggle("on", el === card));
+      openItem(item.endpoint);
+    };
     grid.append(card);
   }
 }
@@ -172,13 +186,19 @@ function clock(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
+function markTab(id) {
+  document.getElementById("show-catalog").classList.toggle("on", id === "catalog");
+  document.getElementById("show-history").classList.toggle("on", id === "history");
+}
 function showCatalog() {
   document.getElementById("catalog").hidden = false;
   document.getElementById("history").hidden = true;
+  markTab("catalog");
 }
 async function showHistory() {
   document.getElementById("catalog").hidden = true;
   document.getElementById("history").hidden = false;
+  markTab("history");
   setErr("");
   const m = await ask("get", "/history");
   const rows = document.getElementById("rows");
