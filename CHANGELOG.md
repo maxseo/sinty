@@ -1,5 +1,6 @@
 ## Unreleased
 
+- UX: footer M/update forced square (was height:auto → ellipses); .bar/.brand 65px.
 - UX: agent list avatars match chat rows (36px circle + title/sub); footer inset 16px; chat bar height 60px aligned with brand.
 
 # Changelog
