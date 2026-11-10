@@ -1,3 +1,4 @@
+import { ModelSettings, type ModelProfiles } from "./model-settings.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
 import { go, href } from "./route.js";
@@ -773,6 +774,7 @@ interface AgentRecord {
   avatar: string;
   persona: string;
   model: string;
+  modelProfiles?: ModelProfiles;
   fallback: string;
   serviceModel: string;
   compress: string;
@@ -967,7 +969,9 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
               <details class="acc" open>
                 <summary>Модели</summary>
                 <div class="body">
-                  <ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                  <div class="model-with-settings"><ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                    <ModelSettings key={draft.id || "new"} route={draft.model || installModel} profiles={draft.modelProfiles ?? {}} onChange={(modelProfiles) => patch({ modelProfiles })} />
+                  </div>
                   <FallbackPick value={draft.fallback || draft.model || installModel} onChange={(fallback) => patch({ fallback })} />
                 </div>
               </details>

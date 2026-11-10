@@ -1,5 +1,7 @@
 # Sinty
 
+Native per-agent/model generation overrides: [model profiles](docs/spec/model-profiles.md).
+
 **Syntet AI agent that runs the same on a laptop and on any VPS.**
 One process, one SQLite file, plugins for everything else.
 
