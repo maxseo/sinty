@@ -158,3 +158,45 @@ Plugin surfaces (enable the plugin in `config.yaml`):
 ## Idempotent message delivery
 
 `POST /messages` accepts `Idempotency-Key`. A repeated key returns the original `turnId` without starting a second turn. Channels (Telegram webhooks, n8n-compatible webhooks) use this to survive retries.
+
+## OpenAI-compatible tool-name contract
+
+The generic adapter defaults to delta assembly. Enable a provider-wide, model-independent contract once:
+
+```yaml
+providers:
+  runninghub:
+    # Keep existing protocol/baseUrl/apiKey and other options.
+    options:
+      toolCallNameMode: catalog-compatible
+```
+
+All model IDs on that endpoint use the same state machine; no provider/model-name hardcoding or whitelist.
+The local option is validated and stripped from HTTP bodies. The obsolete `toolCallNameModes` model-map key is
+also stripped for compatibility; this change does not migrate or modify user configuration. SDK/core contracts are unchanged.
+
+For each isolated tool index/callID, maintain all interpretations that are prefixes of an advertised name:
+(1) append a genuine name delta; (2) retain the existing name only when the incoming field equals that exact,
+complete advertised name. Equal partial fragments are never deduplicated. Once assembled, a complete name can
+repeat as metadata. Arguments always concatenate unchanged, including identical fragments.
+
+Resolve only when exactly one candidate remains and it is complete. Do not prefer a shorter complete candidate
+over a different incomplete prefix. Example: catalog foo/foofoo or foo/foofoobar plus fields foo,foo is ambiguous;
+no tool runs. Catalog foofoo alone plus foo,foo correctly resolves foofoo. A later bar disambiguates foo/foofoobar
+into foofoobar. Unknown concatenated names are not stripped/repaired. Duplicate advertised wire names fail before
+fetch because their schemas/identities cannot be distinguished safely.
+
+ID changes at one index, reuse across indices, missing identities/indices, and malformed metadata cannot execute.
+ProviderChunk has no multiple-choice channel: nonzero/multiple choices are refused rather than mixed. All calls
+are resolved before any tool_call is emitted. Candidate count/string size is bounded by advertised name prefixes.
+
+On a name/identity ambiguity or conflict, drain the stream to capture its reported usage, emit a clearly labeled
+LOCAL [Sinty adapter error: fixed_code. Tool calls were not executed.] text and done(stop), without any tool_call.
+This ends the turn through existing core handling, retaining usage without a new accounting mechanism or triggering
+transport fallback/retry. The error includes no upstream names, IDs, arguments, secrets or reasoning. Existing
+HTTP/upstream errors and aborts retain their previous semantics. This is not the revoked P0 terminal/JSON validation
+package, nor a general fix for accounting loss on unrelated upstream/transport exceptions.
+
+Evidence: actual authorized RH Opus synthetic stream on 2026-11-10 17:09 MSK repeated fs__read six times on one
+callID, choice0/index1; argument lengths0,0,12,8,10,3; tool_calls then [DONE]. Tests replay those fields with synthetic
+arguments and cover fragments, collisions, interleaving and arbitrary model IDs. No additional paid model tests.
