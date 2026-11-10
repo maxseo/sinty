@@ -127,14 +127,15 @@ test("denied call is reported to the model and the turn continues", async () => 
   }
 });
 
-test("invalid arguments fail before the tool runs, with a hint", async () => {
+test("invalid advertised-schema arguments fail before executable journal events", async () => {
   const { home, cleanup } = tempHome();
   const sinty = await boot(home, [{ toolCalls: [{ name: "echo__say", args: { text: 42 } }] }, { echoLastTool: true }], { policy: allowAll });
   try {
     const { events } = await runTurn(sinty, "x");
-    const failed = find<{ code: string; hint: string }>(events, "tool.call.failed")!;
-    assert.equal(failed.code, "invalid_args");
-    assert.match(find<{ text: string }>(events, "message.agent")!.text, /ERROR invalid_args/);
+    const failed = find<{ code: string; message: string }>(events, "turn.failed")!;
+    assert.equal(failed.code, "provider_protocol_error");
+    assert.match(failed.message, /invalid_arguments/);
+    assert.ok(!events.some((e) => ["model.response", "tool.call.requested", "tool.call.started", "tool.call.completed"].includes(e.type)));
   } finally {
     await sinty.stop();
     cleanup();

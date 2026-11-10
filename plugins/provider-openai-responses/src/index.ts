@@ -1,4 +1,5 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderChunk, type ProviderRequest, openAIModelList } from "@sinty/sdk";
+import { isDeepStrictEqual } from "node:util";
+import { definePlugin, parseSSE, ToolError, ProviderStreamError, StreamDiagnostics, parseProviderJSON, parseToolArguments, validateProviderCalls, type ProviderToolCall, type ChatMessage, type ProviderChunk, type ProviderRequest, openAIModelList } from "@sinty/sdk";
 
 type Usage = Extract<ProviderChunk, { type: "done" }>["usage"];
 
@@ -8,6 +9,7 @@ export default definePlugin({
     ctx.provider({
       protocol: "openai-responses",
       async *stream(req) {
+        req.signal.throwIfAborted();
         const baseUrl = (req.endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
         const res = await ctx.net.fetch(`${baseUrl}/responses`, {
           method: "POST",
@@ -22,38 +24,92 @@ export default definePlugin({
         if (!res.ok || !res.body) throw await httpError(res);
 
         let usage: Usage = { inputTokens: 0, outputTokens: 0 };
+        const complete = new Map<number, ProviderToolCall>();
+        const itemIds = new Map<string, number>();
+        const identities = new Map<number, { id: string; type: string; callId?: string; name?: string }>();
+        const added = new Set<number>(), ended = new Set<number>();
+        const diag = new StreamDiagnostics(req.endpoint.options?.streamDiagnostics === true);
+        const claim = (index: number | undefined, id: string | undefined, type: string, callId?: string, name?: string): number => {
+          if (!Number.isSafeInteger(index) || index! < 0 || index! > 127) throw diag.error("conflicting_output_index");
+          if (typeof id !== "string" || !id || id.length > 256) throw diag.error("invalid_output_item_id");
+          if (itemIds.has(id) && itemIds.get(id) !== index) throw diag.error("duplicate_output_item");
+          const previous = identities.get(index!);
+          if (previous && (previous.id !== id || previous.type !== type || (previous.callId !== undefined && callId !== undefined && previous.callId !== callId) || (previous.name !== undefined && name !== undefined && previous.name !== name))) throw diag.error("conflicting_output_identity");
+          identities.set(index!, { id, type, ...(previous?.callId !== undefined ? { callId: previous.callId } : callId !== undefined ? { callId } : {}), ...(previous?.name !== undefined ? { name: previous.name } : name !== undefined ? { name } : {}) });
+          itemIds.set(id, index!);
+          return index!;
+        };
+        let terminal = false;
         let stopReason = "stop";
-        let sawCall = false;
-
-        for await (const msg of parseSSE(res.body, req.signal)) {
-          if (!msg.data || msg.data === "[DONE]") continue;
-          const ev = JSON.parse(msg.data) as ResponsesEvent;
-          switch (ev.type) {
-            case "response.output_text.delta":
-              if (ev.delta) yield { type: "text", text: ev.delta };
-              break;
-            case "response.reasoning_summary_text.delta":
-            case "response.reasoning_text.delta":
-              if (ev.delta) yield { type: "reasoning", text: ev.delta };
-              break;
-            case "response.output_item.done":
-              if (ev.item?.type === "function_call") {
-                sawCall = true;
-                yield { type: "tool_call", id: ev.item.call_id ?? ev.item.id ?? "", name: ev.item.name ?? "", args: parseArgs(ev.item.arguments ?? "") };
+        try {
+          req.signal.throwIfAborted();
+          for await (const msg of parseSSE(res.body, req.signal)) {
+            req.signal.throwIfAborted(); diag.frame();
+            if (!msg.data || msg.data === "[DONE]") continue;
+            const ev = parseProviderJSON(msg.data) as ResponsesEvent;
+            if (!ev || typeof ev.type !== "string") throw diag.error("invalid_frame");
+            if (terminal) throw diag.error("data_after_terminal");
+            switch (ev.type) {
+              case "response.output_text.delta":
+                if (ev.delta) yield { type: "text", text: ev.delta }; break;
+              case "response.reasoning_summary_text.delta":
+              case "response.reasoning_text.delta":
+                if (ev.delta) yield { type: "reasoning", text: ev.delta }; break;
+              case "response.output_item.added": {
+                if (!ev.item || typeof ev.item.type !== "string") throw diag.error("invalid_output_item");
+                const index = claim(ev.output_index, ev.item.id, ev.item.type, ev.item.call_id, ev.item.name);
+                if (added.has(index) || ended.has(index)) throw diag.error("duplicate_output_item");
+                added.add(index); break;
               }
-              break;
-            case "response.completed":
-            case "response.incomplete":
-              usage = usageOf(ev.response?.usage);
-              stopReason = ev.type === "response.incomplete" ? (ev.response?.incomplete_details?.reason === "max_output_tokens" ? "length" : (ev.response?.incomplete_details?.reason ?? "incomplete")) : sawCall ? "tool_calls" : "stop";
-              break;
-            case "response.failed":
-              throw new ToolError("provider_error", ev.response?.error?.message ?? "response failed", { retryable: ev.response?.error?.code === "server_error" });
-            case "error":
-              throw new ToolError("provider_error", ev.message ?? "stream error", { retryable: ev.code === "server_error" || ev.code === "rate_limit_exceeded" });
+              case "response.function_call_arguments.delta":
+              case "response.function_call_arguments.done":
+                // These are progress, not the final full snapshot. Check correlation but never append snapshots.
+                if (ended.has(claim(ev.output_index, ev.item_id, "function_call"))) throw diag.error("data_after_output_done");
+                break;
+              case "response.output_item.done": {
+                if (!ev.item || typeof ev.item.type !== "string") throw diag.error("invalid_output_item");
+                const index = claim(ev.output_index, ev.item.id, ev.item.type, ev.item.call_id, ev.item.name);
+                if (ended.has(index)) throw diag.error("duplicate_output_item");
+                ended.add(index);
+                if (ev.item.type === "function_call") {
+                  if (ev.item.status !== undefined && ev.item.status !== "completed") throw diag.error("incomplete_tool_calls");
+                  const raw = ev.item.arguments ?? "";
+                  diag.call(index, ev.item.call_id ?? "", ev.item.name ?? "", raw);
+                  complete.set(index, { id: ev.item.call_id ?? "", name: ev.item.name ?? "", args: parseToolArguments(raw) });
+                }
+                break;
+              }
+              case "response.completed":
+                if (ev.response?.status !== undefined && ev.response.status !== "completed") throw diag.error("incomplete_response");
+                if (ev.response?.output !== undefined && !Array.isArray(ev.response.output)) throw diag.error("conflicting_response_snapshot");
+                if (ev.response?.output) {
+                  const snapshots = ev.response.output.map((entry, index) => ({ entry, index })).filter(({ entry }) => entry.type === "function_call");
+                  if (snapshots.length !== complete.size) throw diag.error("conflicting_response_snapshot");
+                  for (const { entry, index } of snapshots) {
+                    const call = complete.get(index);
+                    if ((entry.status !== undefined && entry.status !== "completed") || !call || identities.get(index)?.id !== entry.id || call.id !== entry.call_id || call.name !== entry.name || !isDeepStrictEqual(call.args, parseToolArguments(entry.arguments ?? ""))) throw diag.error("conflicting_response_snapshot");
+                  }
+                }
+                usage = usageOf(ev.response?.usage); terminal = true; diag.end(); break;
+              case "response.incomplete":
+                if (complete.size || ev.response?.output?.some((entry) => entry.type === "function_call")) throw diag.error("incomplete_tool_calls");
+                stopReason = ev.response?.incomplete_details?.reason === "max_output_tokens" ? "length" : "incomplete";
+                usage = usageOf(ev.response?.usage); terminal = true; diag.end(); break;
+              case "response.failed": throw new ToolError("provider_error", "upstream_stream_error", { retryable: ev.response?.error?.code === "server_error" });
+              case "error": throw new ToolError("provider_error", "upstream_stream_error", { retryable: ev.code === "server_error" || ev.code === "rate_limit_exceeded" });
+            }
           }
+          req.signal.throwIfAborted();
+          if (!terminal) throw diag.error("missing_terminal");
+          if ([...identities.entries()].some(([index, item]) => item.type === "function_call" && !complete.has(index))) throw diag.error("incomplete_tool_calls");
+          const calls = [...complete.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
+          validateProviderCalls(calls, req.tools);
+          for (const call of calls) yield { type: "tool_call", ...call };
+          yield { type: "done", stopReason: calls.length ? "tool_calls" : stopReason, usage };
+        } catch (e) {
+          if (e instanceof ProviderStreamError) throw diag.error(e.message.replace("Invalid provider stream: ", ""));
+          throw e;
         }
-        yield { type: "done", stopReason, usage };
       },
       async listModels(endpoint) {
         const baseUrl = (endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
@@ -71,7 +127,7 @@ export default definePlugin({
  * instructions. `prompt_cache_key` is the core's per-session `cacheKey` unless `options.promptCacheKey` is false.
  */
 export function buildBody(req: ProviderRequest): Record<string, unknown> {
-  const { promptCacheKey, ...options } = req.endpoint.options ?? {};
+  const { promptCacheKey, streamDiagnostics: _diagnostics, toolCallNameMode: _nameMode, ...options } = req.endpoint.options ?? {};
   const lead = req.messages.findIndex((m) => m.role !== "system");
   const head = lead < 0 ? req.messages : req.messages.slice(0, lead);
   const rest = lead < 0 ? [] : req.messages.slice(lead);
@@ -117,14 +173,6 @@ export function usageOf(u: ResponsesUsage | undefined): Usage {
   };
 }
 
-function parseArgs(raw: string): unknown {
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return { __invalid_json: raw };
-  }
-}
 
 async function httpError(res: Response): Promise<ToolError> {
   const text = await res.text().catch(() => "");
@@ -144,10 +192,14 @@ interface ResponsesUsage {
 interface ResponsesEvent {
   type: string;
   delta?: string;
+  output_index?: number;
+  item_id?: string;
   message?: string;
   code?: string;
-  item?: { type?: string; id?: string; call_id?: string; name?: string; arguments?: string };
+  item?: { type?: string; id?: string; call_id?: string; name?: string; arguments?: string; status?: string };
   response?: {
+    status?: string;
+    output?: { type?: string; id?: string; call_id?: string; name?: string; arguments?: string; status?: string }[];
     usage?: ResponsesUsage;
     incomplete_details?: { reason?: string } | null;
     error?: { code?: string; message?: string } | null;

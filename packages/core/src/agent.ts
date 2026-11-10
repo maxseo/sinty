@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { z, type TurnInfo, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
+import { z, ProviderStreamError, validateProviderCalls, validateProviderChunk, readStreamDiagnostic, toolTerminal, type ProviderToolCall, type TurnInfo, type Actor, type BlobRef, type ChatMessage, type EventDataMap, type EventType, type SintyEvent, type ToolCallRef, type ToolSchema, type Usage } from "@sinty/sdk";
 import { budgetTokens, type CheckpointPhase, type SupervisedTool } from "@sinty/supervisor";
 import type { Bus, StreamOnlyEvent } from "./bus.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, effectiveBudget, type SintyConfig, type SintyPolicy } from "./config.js";
@@ -595,6 +595,16 @@ export class Agent {
         const view = this.view(turnId);
         const open = view.calls.filter((c) => c.status.kind !== "resolved");
         if (open.length) {
+          // Recovery is also an acceptance boundary. Validate the pending batch BEFORE parallel dispatch.
+          try {
+            const response = view.lastResponse!.data;
+            if (!toolTerminal(response.stopReason) || (response as { partial?: boolean }).partial === true || open.some(({ call }) => (call as ToolCallRef & { partial?: boolean }).partial === true)) throw new ProviderStreamError("incomplete_tool_calls");
+            const previous = this.d.journal.turnEvents(turnId).flatMap((e) => e.type === "model.response" ? (e as SintyEvent<"model.response">).data.toolCalls : []);
+            if (open.some(({ call }) => previous.filter((c) => c.callId === call.callId).length > 1)) throw new ProviderStreamError("duplicate_call_id");
+            validateProviderCalls(open.map(({ call }) => ({ id: call.callId, name: toWire(call.tool), args: call.args })), this.toolSchemas());
+          } catch (e) {
+            throw new TurnError("provider_protocol_error", e instanceof ProviderStreamError ? e.message : "Invalid recovered call batch");
+          }
           const stepId = view.lastResponse!.stepId!;
           const parallel = open.filter((c) => this.canRunTogether(c.call.tool, c.call.args));
           const batch = parallel.length >= 2 ? parallel : [open[0]!];
@@ -953,6 +963,7 @@ export class Agent {
   }
 
   private async callModel(sessionId: string, turnId: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
     const speaker = this.speaker(sessionId);
     const ownFallback = speaker?.fallback ? speaker.fallback.split(/\s+/).filter(Boolean) : [];
     const routes = [speaker?.model || this.d.config.models.default, ...ownFallback, ...this.d.config.models.fallback].filter((r): r is string => Boolean(r));
@@ -961,9 +972,12 @@ export class Agent {
     const trace = inspectors.length ? newTrace() : undefined;
     const messages = await this.buildContext(sessionId, turnId, signal, trace);
     const allow = this.allowedTools(sessionId);
-    // Schemas carry wire names (web_search); a child turn's list holds tool names (web.search).
-    const allowWire = allow?.map(toWire);
-    const tools = this.toolSchemas().filter((t) => (!allowWire || allowWire.includes(t.name)) && this.pluginVisible(sessionId, t.name));
+    // Schemas carry wire names (web__search); a child turn's list holds tool names (web.search).
+    const canonicalNames = new Map(this.allTools().map((t) => [toWire(t.name), t.name]));
+    const tools = this.toolSchemas().filter((t) => {
+      const canonical = canonicalNames.get(t.name);
+      return canonical !== undefined && (!allow || allow.includes(canonical)) && this.pluginVisible(sessionId, canonical);
+    });
     const stepId = newId("stp");
     if (trace) this.sendSnapshot(inspectors, trace, { sessionId, turnId, stepId, messages, tools, route: routes[0], speaker });
     else this.lastPrompt.clear();
@@ -972,6 +986,7 @@ export class Agent {
     let lastError: WireError | undefined;
 
     for (const [i, route] of routes.entries()) {
+      signal.throwIfAborted();
       const slash = route.indexOf("/");
       const providerId = slash > 0 ? route.slice(0, slash) : route;
       const model = slash > 0 ? route.slice(slash + 1) : "";
@@ -1000,6 +1015,8 @@ export class Agent {
           let text = "";
           const toolCalls: ToolCallRef[] = [];
           let stopReason = "stop";
+          let terminal = false;
+          const pending: ProviderToolCall[] = [];
           let usage: Usage = { provider: providerId, model, inputTokens: 0, outputTokens: 0 };
           const apiKey = this.d.secrets.resolve(prov.apiKey);
           if (prov.apiKey && !apiKey) throw new ProviderError({ code: "secret_missing", message: `${prov.apiKey} is not set`, hint: `sinty secret set ${prov.apiKey.replace("secret://", "")}` });
@@ -1016,18 +1033,34 @@ export class Agent {
             signal,
           );
           for await (const chunk of stream) {
+            signal.throwIfAborted();
+            validateProviderChunk(chunk);
+            if (terminal) throw new ProviderStreamError("data_after_terminal");
             if (chunk.type === "text") {
               text += chunk.text;
               this.streamEvent({ type: "model.delta", sessionId, turnId, ts: new Date().toISOString(), data: { text: chunk.text } });
             } else if (chunk.type === "reasoning") {
               this.streamEvent({ type: "model.delta", sessionId, turnId, ts: new Date().toISOString(), data: { reasoning: chunk.text } });
             } else if (chunk.type === "tool_call") {
-              toolCalls.push({ callId: chunk.id || newId("call"), tool: fromWire(chunk.name), args: chunk.args });
+              pending.push({ id: chunk.id, name: chunk.name, args: chunk.args });
+              if (pending.length > 128) throw new ProviderStreamError("call_limit");
             } else if (chunk.type === "done") {
+              terminal = true;
               stopReason = chunk.stopReason;
               usage = { provider: providerId, model, ...chunk.usage };
             }
           }
+          signal.throwIfAborted();
+          if (!terminal) throw new ProviderStreamError("missing_terminal");
+          if (pending.length && !toolTerminal(stopReason)) throw new ProviderStreamError("incomplete_tool_calls");
+          const reservedIds = this.d.journal.turnEvents(turnId).flatMap((e) => e.type === "model.response" ? (e as SintyEvent<"model.response">).data.toolCalls.map((c) => c.callId) : []);
+          reservedIds.push(...request.messages.flatMap((m) => m.toolCalls?.map((c) => c.id) ?? []));
+          validateProviderCalls(pending, tools, reservedIds);
+          toolCalls.push(...pending.map((c) => {
+            const canonical = canonicalNames.get(c.name);
+            if (!canonical) throw new ProviderStreamError("ambiguous_catalog");
+            return { callId: c.id, tool: canonical, args: c.args };
+          }));
           this.record({ sessionId, turnId, stepId, type: "model.response", actor: AGENT, data: strip({ text: text || undefined, toolCalls, stopReason, usage }) });
           this.record({ sessionId, turnId, stepId, type: "usage.recorded", actor: SYSTEM, data: usage });
           const ratio = tokenRatio(request.estTokens, usage.inputTokens);
@@ -1036,7 +1069,11 @@ export class Agent {
           return;
         } catch (e) {
           if (signal.aborted) throw e;
-          lastError = e instanceof ProviderError ? e.wire : { code: "provider_error", message: e instanceof Error ? e.message : String(e) };
+          lastError = e instanceof ProviderStreamError ? { code: e.code, message: e.message, ...(e.hint ? { hint: e.hint } : {}) } : e instanceof ProviderError ? e.wire : { code: "provider_error", message: e instanceof Error ? e.message : String(e) };
+          if (lastError.code === "provider_protocol_error" && prov.options?.streamDiagnostics === true) {
+            const diagnostics = readStreamDiagnostic(lastError.hint);
+            this.record({ sessionId, turnId, stepId, type: "model.stream_error", actor: SYSTEM, data: { attempt: i, code: "provider_protocol_error", ...(diagnostics ? { diagnostics } : {}) } });
+          }
         }
       }
       const next = routes[i + 1];
@@ -1045,7 +1082,11 @@ export class Agent {
     throw new ProviderError(lastError ?? { code: "provider_error", message: "no route succeeded" });
   }
 
-  private async processCall(sessionId: string, turnId: string, stepId: string, call: ToolCallRef, status: CallStatus, signal: AbortSignal): Promise<"done" | "blocked"> {
+  private refuseDispatch(sessionId: string, turnId: string, stepId: string, call: ToolCallRef): "done" | undefined {
+    // A failed event cannot resolve an empty or ambiguous ID in the journal view: stop, never loop.
+    if (typeof call.callId !== "string" || !call.callId || call.callId.length > 256) throw new TurnError("provider_protocol_error", "Invalid recovered call: invalid_identity");
+    const historical = this.d.journal.turnEvents(turnId).filter((e): e is SintyEvent<"model.response"> => e.type === "model.response");
+    if (historical.flatMap((e) => e.data.toolCalls).filter((c) => c.callId === call.callId).length > 1) throw new TurnError("provider_protocol_error", "Invalid recovered call: duplicate_call_id");
     const tool = this.allTools().find((t) => t.name === call.tool);
     const base = { sessionId, turnId, stepId };
     const fail = (code: string, message: string, hint?: string): "done" => {
@@ -1053,7 +1094,46 @@ export class Agent {
       return "done";
     };
 
-    if (!tool) return fail("unknown_tool", `no tool named ${call.tool}`, `Available tools: ${this.allTools().map((t) => t.name).join(", ")}`);
+    if (!tool) return fail("unknown_tool", "tool is not in the current catalog", "Refresh the tool catalog and request a valid tool.");
+    // Also reject malformed/duplicate calls recovered from older journals. Permissions are still checked below.
+    try {
+      if ((call as ToolCallRef & { partial?: boolean }).partial === true) throw new ProviderStreamError("incomplete_tool_calls");
+      if (historical.some((e) => e.data.toolCalls.some((c) => c.callId === call.callId) && (!toolTerminal(e.data.stopReason) || (e.data as { partial?: boolean }).partial === true))) throw new ProviderStreamError("incomplete_tool_calls");
+      validateProviderCalls([{ id: call.callId, name: toWire(call.tool), args: call.args }], this.toolSchemas());
+    } catch (e) {
+      if (e instanceof TurnError) throw e;
+      return fail("provider_protocol_error", e instanceof ProviderStreamError ? e.message : "Invalid recovered tool call");
+    }
+
+    // An approval/checkpoint is not a permanent permission grant. Recheck revocations at dispatch/recovery.
+    const currentAllow = this.allowedTools(sessionId);
+    if ((currentAllow && !currentAllow.includes(tool.name)) || !this.pluginVisible(sessionId, tool.name)) {
+      this.record({ ...base, type: "tool.call.denied", actor: SYSTEM, data: { callId: call.callId, by: SYSTEM, note: "tool is no longer available to this turn" } });
+      return "done";
+    }
+    let currentVerdict = evaluateTool(this.d.policy, tool.name, tool.sideEffects);
+    for (const touched of pathsTouched(tool.name, call.args)) {
+      const byPath = pathVerdict(this.d.policy, this.sessionWorkspace(sessionId), touched.access, touched.path);
+      if (byPath?.decision === "deny") currentVerdict = byPath;
+    }
+    if (currentVerdict.decision === "deny") {
+      this.record({ ...base, type: "tool.call.denied", actor: SYSTEM, data: { callId: call.callId, by: SYSTEM, note: `denied by policy ${currentVerdict.rule}` } });
+      return "done";
+    }
+
+    return undefined;
+  }
+
+  private async processCall(sessionId: string, turnId: string, stepId: string, call: ToolCallRef, status: CallStatus, signal: AbortSignal): Promise<"done" | "blocked"> {
+    signal.throwIfAborted();
+    const refused = this.refuseDispatch(sessionId, turnId, stepId, call);
+    if (refused) return refused;
+    const tool = this.allTools().find((t) => t.name === call.tool)!;
+    const base = { sessionId, turnId, stepId };
+    const fail = (code: string, message: string, hint?: string): "done" => {
+      this.record({ ...base, type: "tool.call.failed", actor: SYSTEM, data: strip({ callId: call.callId, code, message, hint, durationMs: 0 }) });
+      return "done";
+    };
 
     if (call.tool === "ask_human") {
       if (status.kind === "new") this.record({ ...base, type: "tool.call.started", actor: SYSTEM, data: { callId: call.callId, tool: call.tool, idempotencyKey: this.key(turnId, stepId, call.callId) } });
@@ -1180,6 +1260,9 @@ export class Agent {
   }
 
   private async execute(sessionId: string, turnId: string, stepId: string, call: ToolCallRef, tool: Tool, signal: AbortSignal, alreadyStarted = false): Promise<"done"> {
+    signal.throwIfAborted();
+    const refused = this.refuseDispatch(sessionId, turnId, stepId, call);
+    if (refused) return refused;
     // A running tool is not silence. The tool's own timeout is the hang limit.
     const beat = setInterval(() => this.running.get(turnId)?.pulseStall?.(), 15_000);
     try {

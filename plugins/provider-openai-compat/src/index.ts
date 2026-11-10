@@ -1,4 +1,4 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderChunk, type ProviderRequest, type TranscriptSegment, type TranscriptWord, openAIModelList } from "@sinty/sdk";
+import { definePlugin, parseSSE, ToolError, ProviderStreamError, StreamDiagnostics, parseProviderJSON, parseToolArguments, validateProviderCalls, MAX_TOOL_ARGUMENT_CHARS, type ChatMessage, type ProviderChunk, type ProviderRequest, type TranscriptSegment, type TranscriptWord, openAIModelList } from "@sinty/sdk";
 
 interface ToolCallAcc {
   id: string;
@@ -12,6 +12,10 @@ export default definePlugin({
     ctx.provider({
       protocol: "openai-compat",
       async *stream(req) {
+        req.signal.throwIfAborted();
+        if (req.endpoint.options?.n !== undefined && req.endpoint.options.n !== 1) throw new ProviderStreamError("multiple_choices");
+        const mode = req.endpoint.options?.toolCallNameMode ?? "delta";
+        if (mode !== "delta" && mode !== "metadata") throw new ProviderStreamError("invalid_name_mode");
         const baseUrl = (req.endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
         const res = await ctx.net.fetch(`${baseUrl}/chat/completions`, {
           method: "POST",
@@ -26,34 +30,73 @@ export default definePlugin({
         if (!res.ok || !res.body) throw await httpError(res);
 
         const calls = new Map<number, ToolCallAcc>();
-        let finish = "stop";
+        const ids = new Map<string, number>();
+        const diag = new StreamDiagnostics(req.endpoint.options?.streamDiagnostics === true);
+        let finish: string | undefined;
+        let terminal = false;
         let usage = { inputTokens: 0, outputTokens: 0 } as Extract<ProviderChunk, { type: "done" }>["usage"];
-
-        for await (const msg of parseSSE(res.body, req.signal)) {
-          if (msg.data === "[DONE]") break;
-          const chunk = JSON.parse(msg.data) as ChatChunk;
-          if (chunk.error) throw new ToolError("provider_error", chunk.error.message ?? "stream error");
-          if (chunk.usage) usage = usageOf(chunk.usage);
-          for (const choice of chunk.choices ?? []) {
-            const d = choice.delta ?? {};
-            const reasoning = d.reasoning_content ?? d.reasoning;
-            if (reasoning) yield { type: "reasoning", text: reasoning };
-            if (d.content) yield { type: "text", text: d.content };
-            for (const tc of d.tool_calls ?? []) {
-              const acc = calls.get(tc.index) ?? { id: "", name: "", args: "" };
-              if (tc.id) acc.id = tc.id;
-              if (tc.function?.name) acc.name += tc.function.name;
-              if (tc.function?.arguments) acc.args += tc.function.arguments;
-              calls.set(tc.index, acc);
+        try {
+          req.signal.throwIfAborted();
+          for await (const msg of parseSSE(res.body, req.signal)) {
+            req.signal.throwIfAborted(); diag.frame();
+            if (msg.data === "[DONE]") { terminal = true; diag.end(); break; }
+            const chunk = parseProviderJSON(msg.data) as ChatChunk;
+            if (!chunk || typeof chunk !== "object") throw diag.error("invalid_frame");
+            if (chunk.error) throw new ToolError("provider_error", "upstream_stream_error");
+            if (chunk.usage) usage = usageOf(chunk.usage);
+            if (chunk.choices !== undefined && !Array.isArray(chunk.choices)) throw diag.error("invalid_choices");
+            if ((chunk.choices?.length ?? 0) > 1) throw diag.error("multiple_choices");
+            for (const choice of chunk.choices ?? []) {
+              if (choice.index !== undefined && choice.index !== 0) throw diag.error("multiple_choices");
+              const d = choice.delta ?? {};
+              if (finish && (d.content || d.reasoning_content || d.reasoning || d.tool_calls?.length || choice.finish_reason)) throw diag.error("data_after_finish");
+              const reasoning = d.reasoning_content ?? d.reasoning;
+              if (reasoning) yield { type: "reasoning", text: reasoning };
+              if (d.content) yield { type: "text", text: d.content };
+              const frameIndices = new Set<number>();
+              for (const tc of d.tool_calls ?? []) {
+                if (!Number.isSafeInteger(tc.index) || tc.index < 0 || tc.index > 127 || frameIndices.has(tc.index)) throw diag.error("invalid_tool_index");
+                frameIndices.add(tc.index);
+                if (tc.id !== undefined && (typeof tc.id !== "string" || !tc.id || tc.id.length > 256)) throw diag.error("invalid_identity");
+                if (tc.type !== undefined && tc.type !== "function") throw diag.error("unsupported_tool_type");
+                const acc = calls.get(tc.index) ?? { id: "", name: "", args: "" };
+                if (tc.id) {
+                  if (acc.id && acc.id !== tc.id) throw diag.error("conflicting_call_id");
+                  if (ids.has(tc.id) && ids.get(tc.id) !== tc.index) throw diag.error("duplicate_call_id");
+                  ids.set(tc.id, tc.index); acc.id = tc.id;
+                }
+                const name = tc.function?.name;
+                let repeated = false;
+                if (name !== undefined) {
+                  if (typeof name !== "string") throw diag.error("invalid_name");
+                  if (mode === "metadata") {
+                    if (acc.name && name && acc.name !== name) throw diag.error("conflicting_name_metadata");
+                    repeated = Boolean(name && acc.name === name);
+                    if (name) acc.name = name;
+                  } else acc.name += name;
+                }
+                if (tc.function?.arguments !== undefined) {
+                  if (typeof tc.function.arguments !== "string") throw diag.error("invalid_arguments_delta");
+                  acc.args += tc.function.arguments;
+                }
+                diag.call(tc.index, acc.id, acc.name, acc.args, repeated);
+                if (acc.name.length > 256 || acc.args.length > MAX_TOOL_ARGUMENT_CHARS) throw diag.error("call_limit");
+                calls.set(tc.index, acc);
+              }
+              if (choice.finish_reason) finish = choice.finish_reason;
             }
-            if (choice.finish_reason) finish = choice.finish_reason;
           }
+          req.signal.throwIfAborted();
+          if (!terminal || !finish) throw diag.error("missing_terminal");
+          if (calls.size && finish !== "tool_calls") throw diag.error("incomplete_tool_calls");
+          const complete = [...calls.entries()].sort(([a], [b]) => a - b).map(([, acc]) => ({ id: acc.id, name: acc.name, args: parseToolArguments(acc.args) }));
+          validateProviderCalls(complete, req.tools);
+          for (const call of complete) yield { type: "tool_call", ...call };
+          yield { type: "done", stopReason: finish, usage };
+        } catch (e) {
+          if (e instanceof ProviderStreamError) throw diag.error(e.message.replace("Invalid provider stream: ", ""));
+          throw e;
         }
-
-        for (const acc of [...calls.entries()].sort(([a], [b]) => a - b).map(([, v]) => v)) {
-          yield { type: "tool_call", id: acc.id, name: acc.name, args: parseArgs(acc.args) };
-        }
-        yield { type: "done", stopReason: finish, usage };
       },
       async listModels(endpoint) {
         const baseUrl = (endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
@@ -172,7 +215,7 @@ export function segmentsOf(body: object): TranscriptSegment[] | undefined {
 }
 
 export function buildBody(req: ProviderRequest): Record<string, unknown> {
-  const { promptCacheKey, ...options } = req.endpoint.options ?? {};
+  const { promptCacheKey, toolCallNameMode: _nameMode, streamDiagnostics: _diagnostics, ...options } = req.endpoint.options ?? {};
   const baseUrl = req.endpoint.baseUrl ?? "https://api.openai.com/v1";
   const sendKey = promptCacheKey === true || (promptCacheKey === undefined && /^https:\/\/api\.openai\.com(\/|$)/.test(baseUrl));
   const omni = /omni/i.test(req.model);
@@ -240,14 +283,6 @@ export function usageOf(u: NonNullable<ChatChunk["usage"]>): Extract<ProviderChu
   };
 }
 
-function parseArgs(raw: string): unknown {
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return { __invalid_json: raw };
-  }
-}
 
 async function httpError(res: Response): Promise<ToolError> {
   const text = await res.text().catch(() => "");
@@ -262,12 +297,13 @@ export interface ChatChunk {
   error?: { message?: string };
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
   choices?: {
+    index?: number;
     finish_reason?: string | null;
     delta?: {
       content?: string | null;
       reasoning_content?: string | null;
       reasoning?: string | null;
-      tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[];
+      tool_calls?: { index: number; type?: string; id?: string; function?: { name?: string; arguments?: string } }[];
     };
   }[];
 }

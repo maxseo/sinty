@@ -85,7 +85,8 @@ test("supervisor: an empty final answer is sent back to the model once", async (
 
 test("supervisor: a fixed failure becomes an incident that is offered in later sessions", async () => {
   const { home, cleanup } = tempHome();
-  const script = [{ toolCalls: [{ name: "echo__say", args: {} }] }, { toolCalls: [{ name: "echo__say", args: { text: "hi" } }] }, { text: "done" }];
+  // Use a JSON-Schema-valid value rejected by the fixture's runtime-only refinement.
+  const script = [{ toolCalls: [{ name: "echo__say", args: { text: "fixture-runtime-invalid" } }] }, { toolCalls: [{ name: "echo__say", args: { text: "hi" } }] }, { text: "done" }];
   const sinty = await boot(home, script, { policy: allowAll, plugins: PLUGINS });
   try {
     const s1 = sinty.agent.createSession();

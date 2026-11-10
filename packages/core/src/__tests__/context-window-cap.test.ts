@@ -98,7 +98,7 @@ test("compaction cap: Settings section «Память и контекст» edit
 function bigToolScript(turns: number): Record<string, unknown> {
   const script: Record<string, unknown> = {};
   const lines = Array.from({ length: 40 }, (_, i) => `line ${i}: ${"tool output ".repeat(12)}`).join("\n");
-  for (let i = 0; i < turns; i++) script[`question ${i}: ${"padding ".repeat(30)}`] = [{ toolCalls: [{ name: "echo.say", args: { text: lines } }] }, { text: `answer ${i}` }];
+  for (let i = 0; i < turns; i++) script[`question ${i}: ${"padding ".repeat(30)}`] = [{ toolCalls: [{ name: "echo__say", args: { text: lines } }] }, { text: `answer ${i}` }];
   return script;
 }
 

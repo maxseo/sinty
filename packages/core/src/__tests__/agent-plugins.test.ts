@@ -81,15 +81,17 @@ test("agent plugins: an agent with an explicit (pre-tool-web) plugin list still 
   });
 });
 
-test("agent plugins: an agent that excludes tool-web has no web tools, and a web call is denied", async () => {
+test("agent plugins: an agent that excludes tool-web has no web tools, and a web call is rejected before executable events", async () => {
   await withSinty({ "find eyu2": [{ toolCalls: [WEB] }, { text: "done" }] }, async (sinty, home) => {
     const agent = saveAgent(sinty.paths, { name: "Offline", plugins: LEGACY_LIST, excludedPlugins: ["tool-web"] });
     const s = chatWith(sinty, agent.id);
     sinty.agent.send(s, "find eyu2", { agentId: agent.id });
     await sinty.agent.idle();
     assert.ok(!requests(home)[0]!.tools.some((t) => t.startsWith("web__")));
-    const denied = sinty.journal.events(s).find((e) => e.type === "tool.call.denied");
-    assert.equal((denied?.data as { note?: string } | undefined)?.note, "this plugin is not on this agent");
+    const events = sinty.journal.events(s);
+    const failed = events.find((e) => e.type === "turn.failed");
+    assert.equal((failed?.data as { code?: string } | undefined)?.code, "provider_protocol_error");
+    assert.ok(!events.some((e) => e.type === "model.response" || e.type === "tool.call.requested" || e.type === "tool.call.started"));
   });
 });
 

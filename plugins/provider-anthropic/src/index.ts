@@ -1,4 +1,4 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderRequest, type ProviderUsage, type ModelInfo } from "@sinty/sdk";
+import { definePlugin, parseSSE, ToolError, ProviderStreamError, StreamDiagnostics, parseProviderJSON, parseToolArguments, validateProviderCalls, MAX_TOOL_ARGUMENT_CHARS, type ProviderToolCall, type ChatMessage, type ProviderRequest, type ProviderUsage, type ModelInfo } from "@sinty/sdk";
 
 const VERSION = "2023-06-01";
 
@@ -21,6 +21,7 @@ export default definePlugin({
     ctx.provider({
       protocol: "anthropic",
       async *stream(req) {
+        req.signal.throwIfAborted();
         const baseUrl = (req.endpoint.baseUrl ?? "https://api.anthropic.com").replace(/\/+$/, "");
         const res = await ctx.net.fetch(`${baseUrl}/v1/messages`, {
           method: "POST",
@@ -35,45 +36,77 @@ export default definePlugin({
         });
         if (!res.ok || !res.body) throw await httpError(res);
 
-        const tools = new Map<number, { id: string; name: string; json: string }>();
-        let start: StartUsage = {};
-        let outputTokens = 0;
-        let stopReason = "end_turn";
-
-        for await (const msg of parseSSE(res.body, req.signal)) {
-          const ev = JSON.parse(msg.data) as StreamEvent;
-          switch (ev.type) {
-            case "message_start":
-              start = ev.message?.usage ?? {};
-              break;
-            case "content_block_start":
-              if (ev.content_block?.type === "tool_use") tools.set(ev.index ?? 0, { id: ev.content_block.id ?? "", name: ev.content_block.name ?? "", json: "" });
-              break;
-            case "content_block_delta":
-              if (ev.delta?.type === "text_delta" && ev.delta.text) yield { type: "text", text: ev.delta.text };
-              else if (ev.delta?.type === "thinking_delta" && ev.delta.thinking) yield { type: "reasoning", text: ev.delta.thinking };
-              else if (ev.delta?.type === "input_json_delta") {
-                const t = tools.get(ev.index ?? 0);
-                if (t) t.json += ev.delta.partial_json ?? "";
+        const tools = new Map<number, { id: string; name: string; json: string; initial: unknown }>();
+        const active = new Set<number>(), seen = new Set<number>();
+        const complete: ProviderToolCall[] = [];
+        const diag = new StreamDiagnostics(req.endpoint.options?.streamDiagnostics === true);
+        let start: StartUsage = {}, outputTokens = 0;
+        let stopReason: string | undefined, started = false, terminal = false;
+        try {
+          req.signal.throwIfAborted();
+          for await (const msg of parseSSE(res.body, req.signal)) {
+            req.signal.throwIfAborted(); diag.frame();
+            const ev = parseProviderJSON(msg.data) as StreamEvent;
+            if (!ev || typeof ev.type !== "string") throw diag.error("invalid_frame");
+            if (terminal && ev.type !== "ping") throw diag.error("data_after_terminal");
+            const index = ev.index;
+            if (ev.type.startsWith("content_block_") && (!Number.isSafeInteger(index) || index! < 0 || index! > 127)) throw diag.error("invalid_tool_index");
+            switch (ev.type) {
+              case "message_start":
+                if (started) throw diag.error("duplicate_message_start");
+                started = true; start = ev.message?.usage ?? {}; break;
+              case "content_block_start": {
+                if (!started || stopReason || seen.has(index!)) throw diag.error("conflicting_block");
+                active.add(index!); seen.add(index!);
+                if (ev.content_block?.type === "tool_use") tools.set(index!, { id: ev.content_block.id ?? "", name: ev.content_block.name ?? "", json: "", initial: ev.content_block.input ?? {} });
+                break;
               }
-              break;
-            case "content_block_stop": {
-              const t = tools.get(ev.index ?? 0);
-              if (t) {
-                yield { type: "tool_call", id: t.id, name: t.name, args: parseArgs(t.json) };
-                tools.delete(ev.index ?? 0);
+              case "content_block_delta": {
+                if (!active.has(index!)) throw diag.error("unknown_block");
+                if (tools.has(index!) && ev.delta?.type !== "input_json_delta") throw diag.error("conflicting_block_type");
+                if (ev.delta?.type === "text_delta" && ev.delta.text) yield { type: "text", text: ev.delta.text };
+                else if (ev.delta?.type === "thinking_delta" && ev.delta.thinking) yield { type: "reasoning", text: ev.delta.thinking };
+                else if (ev.delta?.type === "input_json_delta") {
+                  const t = tools.get(index!);
+                  if (!t || typeof ev.delta.partial_json !== "string") throw diag.error("invalid_arguments_delta");
+                  if (JSON.stringify(t.initial) !== "{}") throw diag.error("conflicting_argument_snapshot");
+                  t.json += ev.delta.partial_json;
+                  diag.call(index!, t.id, t.name, t.json);
+                  if (t.json.length > MAX_TOOL_ARGUMENT_CHARS) throw diag.error("argument_limit");
+                }
+                break;
               }
-              break;
+              case "content_block_stop": {
+                if (!active.delete(index!)) throw diag.error("unknown_block");
+                const t = tools.get(index!);
+                if (t) { complete.push({ id: t.id, name: t.name, args: t.json ? parseToolArguments(t.json) : t.initial }); tools.delete(index!); }
+                break;
+              }
+              case "message_delta":
+                if (!started || active.size || stopReason) throw diag.error("invalid_message_delta");
+                if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+                if (ev.usage?.output_tokens !== undefined) outputTokens = ev.usage.output_tokens;
+                break;
+              case "message_stop":
+                if (!started || !stopReason || active.size) throw diag.error("missing_terminal");
+                terminal = true; diag.end(); break;
+              case "error": {
+                const known = ["authentication_error", "permission_error", "rate_limit_error", "invalid_request_error", "overloaded_error", "api_error"];
+                const code = typeof ev.error?.type === "string" && known.includes(ev.error.type) ? ev.error.type : "provider_error";
+                throw new ToolError(code, "upstream_stream_error", { retryable: code === "overloaded_error" });
+              }
             }
-            case "message_delta":
-              if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
-              if (ev.usage?.output_tokens !== undefined) outputTokens = ev.usage.output_tokens;
-              break;
-            case "error":
-              throw new ToolError(ev.error?.type ?? "provider_error", ev.error?.message ?? "stream error", { retryable: ev.error?.type === "overloaded_error" });
           }
+          req.signal.throwIfAborted();
+          if (!terminal || !stopReason) throw diag.error("missing_terminal");
+          if (complete.length && stopReason !== "tool_use") throw diag.error("incomplete_tool_calls");
+          validateProviderCalls(complete, req.tools);
+          for (const call of complete) yield { type: "tool_call", ...call };
+          yield { type: "done", stopReason, usage: usageOf(start, outputTokens) };
+        } catch (e) {
+          if (e instanceof ProviderStreamError) throw diag.error(e.message.replace("Invalid provider stream: ", ""));
+          throw e;
         }
-        yield { type: "done", stopReason, usage: usageOf(start, outputTokens) };
       },
       /** GET /v1/models: Anthropic reports `max_input_tokens` (the context window) and `max_tokens` per model. */
       async listModels(endpoint) {
@@ -115,7 +148,7 @@ export function anthropicModels(body: unknown): ModelInfo[] {
  * one-hour cache (billed higher on writes) instead of the default five minutes.
  */
 export function buildBody(req: ProviderRequest): Record<string, unknown> {
-  const { promptCache, cacheTtl, ...options } = req.endpoint.options ?? {};
+  const { promptCache, cacheTtl, streamDiagnostics: _diagnostics, toolCallNameMode: _nameMode, ...options } = req.endpoint.options ?? {};
   const cc: CacheControl | undefined = promptCache === false ? undefined : cacheTtl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
   const lead = req.messages.findIndex((m) => m.role !== "system");
   const head = lead < 0 ? req.messages : req.messages.slice(0, lead);
@@ -186,14 +219,6 @@ export function usageOf(u: StartUsage, outputTokens: number): ProviderUsage {
   };
 }
 
-function parseArgs(raw: string): unknown {
-  if (!raw.trim()) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return { __invalid_json: raw };
-  }
-}
 
 async function httpError(res: Response): Promise<ToolError> {
   const text = await res.text().catch(() => "");
@@ -207,7 +232,7 @@ interface StreamEvent {
   type: string;
   index?: number;
   message?: { usage?: StartUsage };
-  content_block?: { type: string; id?: string; name?: string };
+  content_block?: { type: string; id?: string; name?: string; input?: unknown };
   delta?: { type?: string; text?: string; thinking?: string; partial_json?: string; stop_reason?: string };
   usage?: { output_tokens?: number };
   error?: { type?: string; message?: string };

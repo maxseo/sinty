@@ -164,6 +164,10 @@ export interface ProviderUsage {
   cacheWriteTokens?: number;
 }
 
+/** tool_call is complete but provisional until one terminal done and normal iterator completion.
+ * Consumers MUST buffer and validate the whole batch; EOF/abort/error is not success.
+ * Tool IDs are nonempty and unique per turn; names exactly match advertised ToolSchema names.
+ */
 export type ProviderChunk =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
