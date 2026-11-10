@@ -213,3 +213,5 @@ docs/           architecture, specs, integrations, roadmap
 ## License
 
 [MIT](LICENSE)
+
+OpenAI-compatible name assembly can be enabled once per provider: `providers.runninghub.options.toolCallNameMode: catalog-compatible`. It covers **all current and future model IDs** on that endpoint: genuine name fragments and repeated complete-name metadata, constrained by the exact advertised catalog, with isolated call identities. Ambiguous catalog-prefix interpretations stop safely with a visible local adapter error and reported usage retained; no tool runs or automatic transport fallback. Other providers keep the default delta contract. No per-model exceptions. See [the contract](docs/spec/protocol.md#openai-compatible-tool-name-contract).
