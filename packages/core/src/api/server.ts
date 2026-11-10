@@ -9,6 +9,7 @@ import { streamSSE } from "hono/streaming";
 import { scrubText } from "@sinty/supervisor";
 import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
+import { generationControls, modelProfilesSchema, validateProfile } from "../model-profile.js";
 import { BLOB_MAX_BYTES, blobTooBigMessage, saveBlob, saveBlobStream } from "../blobs.js";
 import { AccountError, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
 import { accessRegistry, registryIds, routeRight, sectionResource, tabResource, type AccessGroup, type RegistryPlugin } from "../access-registry.js";
@@ -520,6 +521,7 @@ export function createApp(sinty: Sinty): Hono {
         baseUrl: p.baseUrl ?? "",
         hasKey: Boolean(p.apiKey && sinty.secrets.resolve(p.apiKey)),
       })),
+      generation: { maxOutputTokens: sinty.config.models.maxOutputTokens, providers: Object.fromEntries(Object.entries(sinty.config.providers).map(([id, provider]) => [id, generationControls(provider)])) },
       // Named routes (models.routes) + service.model for Settings → Models.
       routes: { ...(sinty.config.models.routes ?? {}) },
       namedRouteKeys: [...NAMED_MODEL_ROUTES],
@@ -603,6 +605,14 @@ export function createApp(sinty: Sinty): Hono {
   app.post("/v1/roster/agents", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Partial<AgentRecord>;
     try {
+      if (body.modelProfiles !== undefined) {
+        const profiles = modelProfilesSchema.parse(body.modelProfiles);
+        for (const [route, profile] of Object.entries(profiles)) {
+          const provider = sinty.config.providers[route.slice(0, route.indexOf("/"))];
+          if (!provider) throw new Error("Profile provider is not configured");
+          validateProfile(profile, provider, sinty.config.models.maxOutputTokens);
+        }
+      }
       return c.json(saveAgent(sinty.paths, { ...body, name: body.name ?? "" }), 201);
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
@@ -612,6 +622,14 @@ export function createApp(sinty: Sinty): Hono {
   app.put("/v1/roster/agents/:id", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Partial<AgentRecord>;
     try {
+      if (body.modelProfiles !== undefined) {
+        const profiles = modelProfilesSchema.parse(body.modelProfiles);
+        for (const [route, profile] of Object.entries(profiles)) {
+          const provider = sinty.config.providers[route.slice(0, route.indexOf("/"))];
+          if (!provider) throw new Error("Profile provider is not configured");
+          validateProfile(profile, provider, sinty.config.models.maxOutputTokens);
+        }
+      }
       return c.json(saveAgent(sinty.paths, { ...body, id: c.req.param("id"), name: body.name ?? "" }));
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));

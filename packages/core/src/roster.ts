@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SintyPaths } from "./paths.js";
+import { modelProfilesSchema, type ModelProfiles } from "./model-profile.js";
 
 export interface AgentRecord {
   id: string;
@@ -15,6 +16,8 @@ export interface AgentRecord {
   persona: string;
   /** Empty means the installation default model. */
   model: string;
+  /** Optional overrides keyed by the full provider/model route. Never inherited by side calls. */
+  modelProfiles?: ModelProfiles;
   /** Empty means the installation fallback list. */
   fallback: string;
   serviceModel: string;
@@ -92,6 +95,7 @@ export function listAgents(paths: SintyPaths): AgentRecord[] {
 
 export function saveAgent(paths: SintyPaths, input: Partial<AgentRecord> & { name: string }): AgentRecord {
   const roster = loadRoster(paths);
+  if (input.modelProfiles !== undefined) modelProfilesSchema.parse(input.modelProfiles);
   const name = input.name.trim();
   if (!name) throw new Error("agent name is empty");
   if ((input.avatar ?? "").length > 300_000) throw new Error("avatar is larger than 200kb");
@@ -207,6 +211,7 @@ function fillAgent(raw: Partial<AgentRecord>): AgentRecord {
     avatar: raw.avatar ?? "",
     persona: raw.persona ?? "",
     model: (raw.model ?? "").trim(),
+    ...(raw.modelProfiles !== undefined ? { modelProfiles: modelProfilesSchema.safeParse(raw.modelProfiles).data ?? {} } : {}),
     fallback: (raw.fallback ?? "").trim(),
     serviceModel: (raw.serviceModel ?? "").trim(),
     compress: raw.compress ?? "",
