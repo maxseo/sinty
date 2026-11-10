@@ -106,7 +106,7 @@ test("static UI is served only from non-editable plugins, with a CSP", async () 
 });
 
 test("pending approvals and the supervisor panel are visible through the API", async () => {
-  await withApp([{ toolCalls: [{ name: "side.effect", args: { line: "x" } }] }, { text: "done" }], ["test-tools"], async ({ sinty, app, auth }) => {
+  await withApp([{ toolCalls: [{ name: "side__effect", args: { line: "x" } }] }, { text: "done" }], ["test-tools"], async ({ sinty, app, auth }) => {
     const s = sinty.agent.createSession({ title: "p" });
     sinty.agent.send(s.id, "go");
     const pending = await until(async () => ((await (await app.request("/v1/pending", { headers: auth })).json()) as { pending: { approvals: { tool: string; callId: string }[] }[] }).pending[0], "a pending approval");
@@ -212,7 +212,7 @@ test("provider-openai-responses: streams text and tool calls from the Responses 
           ]
         : [
             { type: "response.reasoning_summary_text.delta", delta: "thinking" },
-            { type: "response.output_item.done", item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "echo__say", arguments: '{"text":"ping"}' } },
+            { type: "response.output_item.done", output_index: 0, item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "echo__say", arguments: '{"text":"ping"}' } },
             { type: "response.completed", response: { usage: { input_tokens: 10, output_tokens: 3, input_tokens_details: { cached_tokens: 2 } } } },
           ];
       res.writeHead(200, { "content-type": "text/event-stream" });

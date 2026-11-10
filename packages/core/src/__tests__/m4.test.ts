@@ -99,7 +99,7 @@ test("a2a message/send and syntet.whoami", async () => {
     assert.equal(sent.result.status.state, "completed");
     assert.equal(sent.result.artifacts[0]?.parts[0]?.text, "a2a answer");
     await ctx.cleanup();
-    const tool = await up([{ toolCalls: [{ name: "syntet.whoami", args: {} }] }, { text: "seen" }], ["syntet"], { syntet: { baseUrl: url } }, { SINTY_SECRET_SYNTET_TOKEN: "site" });
+    const tool = await up([{ toolCalls: [{ name: "syntet__whoami", args: {} }] }, { text: "seen" }], ["syntet"], { syntet: { baseUrl: url } }, { SINTY_SECRET_SYNTET_TOKEN: "site" });
     try {
       const s = tool.sinty.agent.createSession({ title: "tools" });
       tool.sinty.agent.send(s.id, "who");
@@ -116,7 +116,7 @@ test("a2a message/send and syntet.whoami", async () => {
 
 test("delegate runs only a configured program", async () => {
   const ctx = await up(
-    [{ toolCalls: [{ name: "delegate.run", args: { program: "echo", prompt: "delegated" } }] }, { text: "done" }],
+    [{ toolCalls: [{ name: "delegate__run", args: { program: "echo", prompt: "delegated" } }] }, { text: "done" }],
     ["delegate"],
     { delegate: { commands: { echo: [process.execPath, "-e", "process.stdout.write(String(process.argv.at(-1) ?? ''))"] }, timeoutMs: 15000 } },
     {},

@@ -9,7 +9,8 @@ export default definePlugin({
     ctx.tool({
       name: "echo.say",
       description: "echo",
-      input: z.object({ text: z.string() }),
+      // A JS refinement is intentionally not in JSON Schema: runtime Zod checks must still run.
+      input: z.object({ text: z.string().refine((v) => v !== "fixture-runtime-invalid", "fixture runtime refinement") }),
       sideEffects: "none",
       idempotent: true,
       async run({ text }) {

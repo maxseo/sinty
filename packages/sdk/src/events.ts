@@ -1,3 +1,5 @@
+import type { StreamDiagnostic } from "./provider-stream.js";
+
 /** Frozen in M6. New fields may be added; renaming or removing a field needs a new major version. */
 export const PROTOCOL_VERSION = "sinty/1.0" as const;
 
@@ -60,6 +62,8 @@ export interface EventDataMap {
   /** `estTokens`: the core's chars/4 estimate of this prompt (messages + tool schemas), compared with usage.inputTokens. */
   /** `trimmedForWindow`: a fallback route with a smaller window got this request with old tool results cut. */
   "model.request": { route: string; provider: string; model: string; messagesHash: string; estTokens?: number; trimmedForWindow?: boolean };
+  /** Opt-in protocol-failure metadata only, correlated with model.request by stepId and attempt. */
+  "model.stream_error": { attempt: number; code: "provider_protocol_error"; diagnostics?: StreamDiagnostic };
   "model.delta": { text?: string; reasoning?: string };
   "model.response": { text?: string; toolCalls: ToolCallRef[]; stopReason: string; usage: Usage };
   /**

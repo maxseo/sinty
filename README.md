@@ -213,3 +213,7 @@ docs/           architecture, specs, integrations, roadmap
 ## License
 
 [MIT](LICENSE)
+
+### Provider stream safety
+
+Tool calls are accepted only after a valid complete stream, unique identities, JSON-object/schema validation and an exact advertised catalog match. Truncated/conflicting/unknown calls fail closed before executable journal events. Compatible gateways with repeated complete name metadata can explicitly use `options.toolCallNameMode: metadata`; the default remains real deltas. Opt-in `options.streamDiagnostics: true` records bounded metadata only, never raw SSE or private content. No existing configuration is changed. See [the contract and regression commands](docs/spec/provider-stream.md).

@@ -35,7 +35,7 @@ Every journal entry and every streamed event uses one envelope:
 | Session | `session.created`, `session.updated`, `session.archived` |
 | Turn | `turn.started`, `turn.completed`, `turn.failed`, `turn.interrupted`, `turn.blocked`, `turn.resumed` |
 | Messages | `message.user`, `message.agent`, `message.channel`, `chat.media` (a generated picture, video or audio file; the chat draws it, the model does not read it) |
-| Model | `model.request`, `model.delta` *(stream only, not journaled)*, `model.response`, `model.fallback` |
+| Model | `model.request`, `model.delta` *(stream only, not journaled)*, `model.response`, `model.fallback`, `model.stream_error` *(opt-in metadata only)* |
 | Tools | `tool.call.requested`, `tool.call.approval_requested`, `tool.call.approved`, `tool.call.denied`, `tool.call.started`, `tool.call.progress` *(stream only)*, `tool.call.completed`, `tool.call.failed` |
 | Supervisor | `supervisor.notice`, `supervisor.escalated`, `supervisor.incident_resolved` |
 | Agent state | `agent.state` with `idle | working | blocked | done | error` |
@@ -158,3 +158,7 @@ Plugin surfaces (enable the plugin in `config.yaml`):
 ## Idempotent message delivery
 
 `POST /messages` accepts `Idempotency-Key`. A repeated key returns the original `turnId` without starting a second turn. Channels (Telegram webhooks, n8n-compatible webhooks) use this to survive retries.
+
+## Provider stream acceptance
+
+See [provider-stream.md](provider-stream.md) for terminal semantics, provisional calls, exact advertised catalog/JSON schema validation, identity uniqueness, explicit metadata-name compatibility mode and safe opt-in `model.stream_error` diagnostics. EOF/abort/errors never accept executable partial calls.

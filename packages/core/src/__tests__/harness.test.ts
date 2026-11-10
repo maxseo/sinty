@@ -65,7 +65,7 @@ test("a child turn cannot use tools outside its list", async () => {
   const sinty = await boot(
     home,
     [
-      { toolCalls: [{ name: "agent.task", args: { task: "look", tools: ["memory.recall"] } }] },
+      { toolCalls: [{ name: "agent__task", args: { task: "look", tools: ["memory.recall"] } }] },
       { text: "parent done" },
     ],
     { policy: allowAll },
