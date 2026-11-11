@@ -90,6 +90,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Optional plugin `local-models` (Settings → Модели → Локальные модели): import or register GGUF files, run one managed llama-server on the Sinty machine, and bind a stable catalog route. Not default-on. Official llama.cpp download is deferred; point the UI at an existing `llama-server` binary.
 - Browser first-run: on a fresh install the app origin shows an email+password form that creates the single native superadmin (GET/POST /v1/auth/setup, Accounts.setup). Setup then returns 409 and ordinary login is used. Concurrent requests create at most one admin. Other unauthenticated APIs stay closed.
 - The composer has hold-to-record voice input. When the browser exposes Speech Recognition, the transcript is inserted into the draft; otherwise the button only shows a recording state and a hint.
 - Settings → **Расход** (`usage`, on by default) shows requests, tokens, and charts for model calls. Switch by time, task, or call. A dollar figure appears only when the provider stored `costUsd`.
