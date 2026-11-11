@@ -1,0 +1,18 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "local-models",
+  "version": "0.1.0",
+  "description": "Settings → Модели → Локальные: импорт GGUF и запуск одного управляемого llama-server на машине процесса Sinty.",
+  "kinds": ["ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$DATA"], "write": ["$DATA"] }
+  },
+  "ui": {
+    "tabs": [
+      { "id": "models", "title": "Локальные модели", "path": "/tab", "placement": "settings", "group": "models" }
+    ]
+  },
+  "editable": true
+}

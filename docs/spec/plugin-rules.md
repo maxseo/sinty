@@ -44,6 +44,7 @@ A plugin shows UI only through its manifest. The Web UI never hard-codes a plugi
 | Chat view | `ui.tabs[]` with `placement: "session"` | toggle in an open chat header, next to Чат / Журнал |
 | Project view | `ui.tabs[]` with `placement: "project"` (new) | tab inside a project; the page gets `projectId` |
 | Settings section | `settings` | Settings, under the core items |
+| Models sub-view | `ui.tabs` with `placement: "settings"` and `group: "models"` | Settings models sub-tab |
 
 Rules:
 

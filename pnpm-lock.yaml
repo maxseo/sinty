@@ -154,6 +154,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/local-models:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/mcp-catalog:
     dependencies:
       '@sinty/sdk':

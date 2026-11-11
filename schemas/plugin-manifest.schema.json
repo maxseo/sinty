@@ -109,6 +109,10 @@
                 "enum": ["sidebar", "session", "project", "settings"],
                 "default": "sidebar",
                 "description": "sidebar: a page in the left navigation; session: a view toggle in an open chat's header (next to Чат/Журнал), told the current sessionId by the bridge; project: a tab inside a project, told projectId; settings: the plugin's settings section, not the left navigation"
+              },
+              "group": {
+                "enum": ["models"],
+                "description": "Only with placement settings. models: show as a sub-view of Settings → Модели, not as a separate settings section"
               }
             }
           }

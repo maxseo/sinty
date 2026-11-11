@@ -118,6 +118,9 @@ literal value or `SINTY_SECRET_API_TOKEN` overrides it.
 | PUT | `/v1/plugins/:name/enabled` | strict `{ enabled: boolean }`; persist one switch and hot-start/stop; requires `nav:plugins:edit` |
 | DELETE | `/v1/plugins/:name` | uninstall only a managed home install, preserving user data/secrets/shared dependencies; requires existing plugin delete/edit permission |
 | GET | `/v1/models` | model catalog (`route`, `enabled`, `contextWindow { tokens, source, route? }` as compaction sees it) and providers (`hasKey`, never the key) |
+| POST | `/v1/models/bindings` | add or update one catalog route and its provider; other providers, fallback and named routes are left untouched (`settings:models` edit) |
+| DELETE | `/v1/models/bindings` | `{ route }`: remove only that catalog route; the provider stays |
+| POST | `/v1/plugin-data/:plugin/uploads` | stream a file into the plugin's `$DATA/.uploads` (no base64, no overwrite, cancellable); caller needs edit on that plugin's settings or models-group tab |
 | POST | `/v1/sessions` | create `{ title?, projectId?, metadata? }` |
 | GET | `/v1/sessions` | list with `activeTurn` |
 | GET | `/v1/sessions/:id` | session plus `pending` (approvals / ask_human / supervisor / budget) |

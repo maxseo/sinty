@@ -18,9 +18,11 @@ const uiTabSchema = z
       .optional(),
     builtin: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).optional(),
     placement: z.enum(["sidebar", "session", "project", "settings"]).optional(),
+    group: z.enum(["models"]).optional(),
   })
   .strict()
-  .refine((t) => (t.path === undefined) !== (t.builtin === undefined), { message: 'a tab needs exactly one of "path" and "builtin"' });
+  .refine((t) => (t.path === undefined) !== (t.builtin === undefined), { message: 'a tab needs exactly one of "path" and "builtin"' })
+  .refine((t) => t.group === undefined || t.placement === "settings", { message: 'ui.tabs group is only valid with placement "settings"' });
 
 const settingsFieldSchema = z
   .object({
