@@ -17,6 +17,9 @@ import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, NAMED_MODEL_ROUTES, saveModelCatalog, saveNamedRoutes, saveSettings } from "../config.js";
+import { bindModelCatalogRoute, unbindModelCatalogRoute } from "../model-bindings.js";
+import { savePluginUpload } from "../plugin-upload.js";
+import { pluginDataDir } from "../host/manifest.js";
 import { installMcpPlugin, setPluginEnabledInConfig, McpInstallError, type McpInstallInput } from "../mcp-install.js";
 import { installHomePlugin, removeHomePlugin, canRemoveHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
 import { discoverPlugins } from "../discover.js";
@@ -164,6 +167,8 @@ export function createApp(sinty: Sinty): Hono {
     { method: "GET", path: /^\/v1\/registry$/, need: { resource: "nav:plugins", action: "view" } },
     { method: "POST", path: /^\/v1\/models\/discover$/, need: { resource: "settings:models", action: "edit" } },
     { method: "PUT", path: /^\/v1\/models$/, need: { resource: "settings:models", action: "edit" } },
+    { method: "POST", path: /^\/v1\/models\/bindings$/, need: { resource: "settings:models", action: "edit" } },
+    { method: "DELETE", path: /^\/v1\/models\/bindings$/, need: { resource: "settings:models", action: "edit" } },
     { method: "POST", path: /^\/v1\/skills\/install$/, need: { resource: "ui:skills/settings", action: "add" } },
     { method: "POST", path: /^\/v1\/roster\/agents$/, need: { resource: "nav:agents", action: "add" } },
     { method: "PUT", path: /^\/v1\/roster\/agents\/[^/]+$/, need: { resource: "nav:agents", action: "edit" } },
@@ -503,7 +508,7 @@ export function createApp(sinty: Sinty): Hono {
             ? []
             : (p.loaded.manifest.ui?.tabs ?? [])
                 .filter((t) => allows(c, tabResource(p.name, t.id), "view"))
-                .map((t) => ({ id: t.id, title: t.title, ...(t.path ? { src: `/p/${p.name}${t.path}` } : {}), ...(t.builtin ? { builtin: t.builtin } : {}), placement: t.placement ?? "sidebar" })),
+                .map((t) => ({ id: t.id, title: t.title, ...(t.path ? { src: `/p/${p.name}${t.path}` } : {}), ...(t.builtin ? { builtin: t.builtin } : {}), placement: t.placement ?? "sidebar", ...(t.group ? { group: t.group } : {}) })),
         inspector: p.inspector,
         permissions: p.loaded.manifest.permissions,
         // Default-on plugins replace former core tools: every agent has them unless its card excludes them.
@@ -590,6 +595,72 @@ export function createApp(sinty: Sinty): Hono {
     return c.json({ ok: true, routes: next.models.routes ?? {}, serviceModel: next.service.model ?? "" });
   });
 
+  app.post("/v1/models/bindings", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { route?: string; provider?: { id?: string; protocol?: string; baseUrl?: string; apiKey?: string } };
+    const route = (body.route ?? "").trim();
+    const provider = body.provider;
+    if (!route || !provider || typeof provider.id !== "string" || typeof provider.baseUrl !== "string") {
+      throw new AgentError("bad_request", "нужны route и provider.id/baseUrl", 400);
+    }
+    try {
+      const result = bindModelCatalogRoute(sinty.paths, { route, provider: { id: provider.id, protocol: provider.protocol, baseUrl: provider.baseUrl, apiKey: provider.apiKey } }, sinty.config.providers);
+      if (provider.apiKey && provider.apiKey.trim()) sinty.secrets.set(provider.id.trim(), provider.apiKey.trim());
+      const next = loadConfig(sinty.paths);
+      sinty.config.providers = next.providers;
+      sinty.config.models = next.models;
+      sinty.windows.reset();
+      return c.json({ ok: true, ...result });
+    } catch (e) {
+      throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  app.delete("/v1/models/bindings", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { route?: string };
+    const route = (body.route ?? "").trim();
+    if (!route) throw new AgentError("bad_request", "нужен route", 400);
+    try {
+      const result = unbindModelCatalogRoute(sinty.paths, route);
+      const next = loadConfig(sinty.paths);
+      sinty.config.providers = next.providers;
+      sinty.config.models = next.models;
+      sinty.windows.reset();
+      return c.json({ ok: true, ...result });
+    } catch (e) {
+      throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  app.post("/v1/plugin-data/:plugin/uploads", async (c) => {
+    const name = c.req.param("plugin") ?? "";
+    const proc = sinty.host.plugins.get(name);
+    if (!proc || proc.disabled || proc.staticOnly) return c.json({ error: { code: "not_found", message: `no plugin ${name}` } }, 404);
+    const actor = actorOf(c);
+    const canEdit = (): boolean => {
+      if (!actor || actor.kind === "machine" || superadmin(c)) return true;
+      const tabs = proc.loaded.manifest.ui?.tabs ?? [];
+      if (tabs.some((t) => t.placement === "settings" && allows(c, tabResource(name, t.id), "edit"))) return true;
+      if (proc.loaded.manifest.settings && allows(c, `ui:${name}/settings`, "edit")) return true;
+      return false;
+    };
+    if (!canEdit()) return forbid(c);
+    const filename = c.req.query("filename") ?? c.req.header("x-sinty-filename") ?? "";
+    const announced = Number(c.req.header("content-length") ?? "");
+    const body = c.req.raw.body;
+    if (!body) throw new AgentError("bad_request", "файл пустой", 400);
+    try {
+      const saved = await savePluginUpload({
+        dataDir: pluginDataDir(sinty.paths, name),
+        body,
+        filename,
+        contentLength: Number.isFinite(announced) && announced > 0 ? announced : undefined,
+        signal: c.req.raw.signal,
+      });
+      return c.json(saved, 201);
+    } catch (e) {
+      throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
+    }
+  });
 
   app.post("/v1/skills/install", async (c) => {
     const body = (await c.req.json().catch(() => null)) as { path?: unknown; zipBase64?: unknown; command?: unknown; files?: { path?: unknown; dataBase64?: unknown }[] } | null;

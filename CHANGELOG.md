@@ -18,6 +18,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Optional plugin `local-models` (Settings → Модели → Локальные модели): import or register GGUF files, run one managed llama-server on the Sinty machine, and bind a stable catalog route. Not default-on. Official llama.cpp download is deferred; point the UI at an existing `llama-server` binary.
 - The composer has hold-to-record voice input. When the browser exposes Speech Recognition, the transcript is inserted into the draft; otherwise the button only shows a recording state and a hint.
 - Settings → **Расход** (`usage`, on by default) shows requests, tokens, and charts for model calls. Switch by time, task, or call. A dollar figure appears only when the provider stored `costUsd`.
 - `stt.transcribe` returns timed phrases. Each phrase has start and end in seconds, word times when the speech model sends them, and a speaker label when the model tells voices apart. The same JSON is written to `_out/stt`. `whisper-1` fills the word times. A model whose id contains `diarize` fills the speaker.

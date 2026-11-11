@@ -55,6 +55,11 @@ export interface UiTab {
    * Every tab is an access right `ui:<plugin>/<id>` (docs/spec/plugin-rules.md).
    */
   placement?: UiTabPlacement;
+  /**
+   * For `placement: "settings"` only. `models` shows the tab as a sub-view of Settings → Модели
+   * instead of a standalone plugin settings section.
+   */
+  group?: "models";
 }
 
 export type UiTabPlacement = "sidebar" | "session" | "project" | "settings";

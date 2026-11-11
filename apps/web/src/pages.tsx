@@ -7,6 +7,7 @@ import { StaffPage } from "./staff.js";
 import { SectionPane } from "./supervisor-ui.js";
 import { useAccess } from "./access.js";
 import { CSelect, Tog } from "./cselect.js";
+import { PluginTab, tabRight, type PluginTabInfo } from "./plugin-tab.js";
 
 export function Denied() {
   return <div class="empty"><p>Этот раздел закрыт для вашей роли.</p></div>;
@@ -190,6 +191,35 @@ function ProviderCard({ p, models, setProviders, setModels }: {
         </div>
       )}
       <div class="actions" style={{ marginTop: 10 }}><button type="button" class="btn sm" disabled={picked.length === 0} onClick={add}>Добавить выбранные</button></div>
+    </div>
+  );
+}
+
+
+function ModelsSection({ model, setModel, saveInstall }: { model: string; setModel: (v: string) => void; saveInstall: () => Promise<void> }) {
+  const { can } = useAccess();
+  const { data } = useLoad<{ plugins: { name: string; tabs?: (PluginTabInfo & { src?: string })[] }[] }>("/v1/plugins", []);
+  const tabs: PluginTabInfo[] = [];
+  for (const p of data?.plugins ?? []) {
+    for (const t of p.tabs ?? []) {
+      if (t.placement === "settings" && t.group === "models" && t.src && can(tabRight({ plugin: p.name, id: t.id }))) {
+        tabs.push({ plugin: p.name, id: t.id, title: t.title, src: t.src, placement: "settings", group: t.group });
+      }
+    }
+  }
+  const [sub, setSub] = useState("catalog");
+  const current = tabs.find((t) => `${t.plugin}/${t.id}` === sub);
+  return (
+    <div>
+      {tabs.length > 0 && (
+        <div class="seg models-subs" style={{ margin: "0 0 14px" }}>
+          <button type="button" class={sub === "catalog" ? "on" : ""} onClick={() => setSub("catalog")}>Каталог</button>
+          {tabs.map((t) => (
+            <button type="button" key={`${t.plugin}/${t.id}`} class={sub === `${t.plugin}/${t.id}` ? "on" : ""} onClick={() => setSub(`${t.plugin}/${t.id}`)}>{t.title}</button>
+          ))}
+        </div>
+      )}
+      {(!current || sub === "catalog") ? <ModelsPane model={model} setModel={setModel} saveInstall={saveInstall} /> : <div class="settings-sheet settings-ux"><PluginTab tab={current} /></div>}
     </div>
   );
 }
@@ -744,7 +774,7 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       {section === "staff" && can("nav:staff") && <StaffPage />}
       {section === "uikit" && can("settings:uikit") && <KitPage />}
       {section !== "general" && section !== "models" && section !== "plugins" && section !== "uikit" && section !== "staff" && can(settingsResource(section)) && <SectionPane key={section} id={section} />}
-      {section === "models" && can("settings:models") && <ModelsPane model={model} setModel={setModel} saveInstall={save} />}
+      {section === "models" && can("settings:models") && <ModelsSection model={model} setModel={setModel} saveInstall={save} />}
       {section === "plugins" && can("nav:plugins") && data && (
         <PluginsSettings
           enabled={enabled}
