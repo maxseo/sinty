@@ -7,8 +7,9 @@ import { serve, type ServerType } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { scrubText } from "@sinty/supervisor";
-import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
+import { PROTOCOL_VERSION, z, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
+import { generationControls, modelProfilesSchema, validateProfile } from "../model-profile.js";
 import { BLOB_MAX_BYTES, blobTooBigMessage, saveBlob, saveBlobStream } from "../blobs.js";
 import { AccountError, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
 import { accessRegistry, registryIds, routeRight, sectionResource, tabResource, type AccessGroup, type RegistryPlugin } from "../access-registry.js";
@@ -16,8 +17,8 @@ import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, NAMED_MODEL_ROUTES, saveModelCatalog, saveNamedRoutes, saveSettings } from "../config.js";
-import { installMcpPlugin, McpInstallError, type McpInstallInput } from "../mcp-install.js";
-import { installHomePlugin, removeHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
+import { installMcpPlugin, setPluginEnabledInConfig, McpInstallError, type McpInstallInput } from "../mcp-install.js";
+import { installHomePlugin, removeHomePlugin, canRemoveHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
 import { discoverPlugins } from "../discover.js";
 import { loadRegistry } from "../registry.js";
 import { openGenerationFile } from "../media-file.js";
@@ -391,7 +392,7 @@ export function createApp(sinty: Sinty): Hono {
       plugins: [...catalog.map((p) => ({
         ...p,
         enabled: enabled.has(p.name),
-        removable: existsSync(join(sinty.paths.plugins, p.name, "sinty.plugin.json")) && !existsSync(join(sinty.paths.bundledPlugins, p.name, "sinty.plugin.json")),
+        removable: canRemoveHomePlugin(sinty.paths, p.name),
       })), ...extra],
     });
   });
@@ -462,6 +463,26 @@ export function createApp(sinty: Sinty): Hono {
     }),
   );
 
+  /** Installed library is independent of the running-process registry. Never expose commands/env. */
+  app.get("/v1/plugins/installed", (c) => {
+    if (!allows(c, "nav:plugins", "view")) return forbid(c);
+    return c.json({ plugins: discoverPlugins(sinty.paths, sinty.config.plugins.searchPaths).flatMap((entry) => {
+      try {
+        const loaded = sinty.host.locate(entry.name);
+        const p = sinty.host.plugins.get(entry.name);
+        const enabled = sinty.config.plugins.enabled.includes(entry.name) && !sinty.config.plugins.disabled?.includes(entry.name);
+        const error = sinty.host.startErrors.get(entry.name) ?? (p?.disabled && enabled ? "Остановлен после повторных сбоев" : undefined);
+        return [{ ...entry, runtime: loaded.manifest.runtime,
+          location: loaded.bundled ? "bundled" : loaded.dir === join(sinty.paths.plugins, entry.name) ? "home" : "external",
+          removable: canRemoveHomePlugin(sinty.paths, entry.name),
+          enabled, disabled: !enabled, tools: p?.ready && !p.disabled ? p.tools.map((t) => t.name) : [],
+          status: !enabled ? "disabled" : error ? "failed" : p?.ready ? "running" : p ? "starting" : "stopped",
+          ...(error ? { error: sinty.secrets.redact(error) } : {}),
+        }];
+      } catch { return []; }
+    }) });
+  });
+
   app.get("/v1/plugins", (c) =>
     c.json({
       plugins: [...sinty.host.plugins.values()].map((p) => ({
@@ -520,6 +541,7 @@ export function createApp(sinty: Sinty): Hono {
         baseUrl: p.baseUrl ?? "",
         hasKey: Boolean(p.apiKey && sinty.secrets.resolve(p.apiKey)),
       })),
+      generation: { maxOutputTokens: sinty.config.models.maxOutputTokens, providers: Object.fromEntries(Object.entries(sinty.config.providers).map(([id, provider]) => [id, generationControls(provider)])) },
       // Named routes (models.routes) + service.model for Settings → Models.
       routes: { ...(sinty.config.models.routes ?? {}) },
       namedRouteKeys: [...NAMED_MODEL_ROUTES],
@@ -603,6 +625,14 @@ export function createApp(sinty: Sinty): Hono {
   app.post("/v1/roster/agents", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Partial<AgentRecord>;
     try {
+      if (body.modelProfiles !== undefined) {
+        const profiles = modelProfilesSchema.parse(body.modelProfiles);
+        for (const [route, profile] of Object.entries(profiles)) {
+          const provider = sinty.config.providers[route.slice(0, route.indexOf("/"))];
+          if (!provider) throw new Error("Profile provider is not configured");
+          validateProfile(profile, provider, sinty.config.models.maxOutputTokens);
+        }
+      }
       return c.json(saveAgent(sinty.paths, { ...body, name: body.name ?? "" }), 201);
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
@@ -612,6 +642,14 @@ export function createApp(sinty: Sinty): Hono {
   app.put("/v1/roster/agents/:id", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Partial<AgentRecord>;
     try {
+      if (body.modelProfiles !== undefined) {
+        const profiles = modelProfilesSchema.parse(body.modelProfiles);
+        for (const [route, profile] of Object.entries(profiles)) {
+          const provider = sinty.config.providers[route.slice(0, route.indexOf("/"))];
+          if (!provider) throw new Error("Profile provider is not configured");
+          validateProfile(profile, provider, sinty.config.models.maxOutputTokens);
+        }
+      }
       return c.json(saveAgent(sinty.paths, { ...body, id: c.req.param("id"), name: body.name ?? "" }));
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
@@ -654,7 +692,23 @@ export function createApp(sinty: Sinty): Hono {
   });
 
 
-  /** Deletes a home plugin: folder, data directory, saved settings, and roster references. Bundled plugins stay. */
+  app.put("/v1/plugins/:name/enabled", async (c) => {
+    if (!allows(c, "nav:plugins", "edit")) return forbid(c);
+    const request = z.object({ name: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/), body: z.object({ enabled: z.boolean() }).strict() })
+      .safeParse({ body: await c.req.json().catch(() => null), name: c.req.param("name") });
+    if (!request.success) throw new AgentError("bad_request", "name and boolean enabled required");
+    const { name, body: { enabled } } = request.data;
+    try { sinty.host.locate(name); } catch { throw new AgentError("not_found", "Plugin not installed", 404); }
+    // Keep the UI available. Other bundled plugins, including default-on ones, may be disabled.
+    if (name === "ui-web" && !enabled) throw new AgentError("bad_request", "Web UI cannot disable itself");
+    setPluginEnabledInConfig(sinty.paths, name, enabled);
+    sinty.config.plugins = loadConfig(sinty.paths).plugins;
+    const error = enabled ? await sinty.host.reload(name) : (await sinty.host.unload(name), undefined);
+    sinty.supervisor?.setTools(sinty.agent.supervisedTools());
+    return c.json({ ok: true, enabled, ...(error ? { startError: sinty.secrets.redact(error) } : {}) });
+  });
+
+  /** Deletes managed plugin code/settings/roster references. User data and secrets stay. */
   app.delete("/v1/plugins/:name", async (c) => {
     if (!allows(c, "nav:plugins", "delete") && !allows(c, "nav:plugins", "edit")) return forbid(c);
     try {

@@ -326,6 +326,8 @@ async function readSecretFromStdin(name: string): Promise<string> {
 
 function version(): number {
   const integrity = readIntegrity(resolvePaths(values.home).install);
+  const release = JSON.parse(readFileSync(join(resolvePaths(values.home).install, "release.json"), "utf8")) as { version: string };
+  console.log(`sinty ${release.version}`);
   console.log(`protocol ${PROTOCOL_VERSION}`);
   console.log(integrity ? `sinty install, ${Object.keys(integrity.files).length} hashed files` : "sinty (source tree, no integrity.json)");
   return 0;

@@ -148,3 +148,10 @@ MCP servers (only): create a new home plugin with core tool `mcp.install` or `PO
 New node plugins: core tool `plugin.create` (default **allow**: it only stages and tests) writes a new plugin into staging under the narrower rules of [plugin-rules.md](plugin-rules.md) section 9; `plugin.apply_patch` for it always asks a human, then installs, enables and starts it.
 
 Not yet: a policy mode that applies patches automatically when tests pass.
+
+### Installed MCP lifecycle
+
+Settings → MCP always lists installed stdio/HTTP manifests, not only successful running processes.
+The library API reports `enabled`, `status` (disabled/stopped/starting/running/failed), `tools`, optional redacted `error`, `location` and `removable`. Commands, env values and secrets are not included.
+A per-plugin persisted switch updates only that plugin in enabled/disabled lists. Disabled plugins are not spawned at startup or reloaded by patches, have no readiness wait, and expose no tools. Disabling cancels pending crash restarts and stops initialization too. Failed initial starts are stopped and retained as an error, not an unowned restart loop.
+Uninstall requires a confirmation in the UI. It stops the process, removes the managed home installation, saved settings, inspect-list and roster references. `data/<plugin>` and secrets remain; data erasure is not implicit. Bundled, search-path/external, redirected/symlink/junction installs and ambiguous duplicate installations are not recursively deleted. Shared dependencies outside the plugin's own directory are untouched.

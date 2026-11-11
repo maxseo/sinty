@@ -1962,11 +1962,8 @@ button.icon:hover:not(:disabled) {
 .cselect-btn .chev { width: 16px; height: 16px; opacity: .55; flex-shrink: 0; transition: transform .15s; }
 .cselect.open .cselect-btn .chev { transform: rotate(180deg); }
 .cselect-menu {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 20;
+  position: fixed;
+  z-index: 100;
   background: var(--menu, var(--panel));
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -2156,3 +2153,33 @@ button.btn.primary { background: var(--accent); color: #111; border-color: trans
   .set-row .ctl { max-width: none; width: 100%; justify-content: flex-start; }
   .set-row .ctl .cselect { width: 100%; }
 }
+
+/* MCP lifecycle controls use existing theme tokens and stay compact in narrow tiles. */
+.settings-ux .mcp-controls { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; gap: 8px; }
+.settings-ux .mcp-error { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 11px; margin-top: 4px; }
+
+/* Shared portal menu: independent of card overflow and labels; root theme tokens apply. */
+.cselect-btn { height: 40px; min-height: 40px; }
+.cselect-btn .chev { width: 16px; height: 16px; min-width: 16px; max-width: 16px; flex: 0 0 16px; }
+.cselect-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cselect-menu { box-sizing: border-box; overscroll-behavior: contain; overflow-x: hidden; color: var(--text); font-family: inherit; }
+.cselect-opt { display: block; min-height: 36px; }
+.cselect-opt.active { outline: 1px solid var(--accent); outline-offset: -1px; background: var(--hover); }
+.cselect-empty { padding: 10px; color: var(--muted); font-size: 13px; }
+
+.cselect-options { display: grid; gap: 2px; }
+.cselect-search { position: sticky; top: 0; z-index: 1; width: 100%; min-height: 40px; height: 40px; background: var(--menu); }
+.cselect-btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.cselect-val.multi-val { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; flex: 1; }
+.cselect-chip { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--accent-soft); padding: 2px 6px; font-size: 11px; line-height: 18px; }
+.cselect-chip-remove { display: inline-grid; place-items: center; flex: 0 0 16px; min-width: 16px; width: 16px; height: 16px; min-height: 16px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; box-shadow: none; line-height: 1; }
+
+/* Approved Skills card: same sheet/cards/controls as the existing settings language. */
+.skills-pane .skills-limit { width: 100%; }
+.skills-pane .skills-grid { margin-top: 12px; }
+.skills-pane .skill-card { min-height: 64px; height: auto; font-weight: 400; text-align: left; box-shadow: none; }
+.skills-pane .skills-add .actions { margin-top: 10px; }
+.skills-pane .cmd-line { display: flex; align-items: center; gap: 8px; }
+.skills-pane .cmd-line input { flex: 1; min-width: 0; }
+.skills-pane .field input:not([type="file"]), .skills-pane .cmd-line input { height: 40px; min-height: 40px; }
+.skills-pane .grid-2 { align-items: start; }

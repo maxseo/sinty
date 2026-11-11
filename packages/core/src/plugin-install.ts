@@ -1,13 +1,12 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, lstatSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import type { SintyConfig } from "./config.js";
+import { loadConfig, type SintyConfig } from "./config.js";
 import type { PluginHost } from "./host/host.js";
 import { parseManifest } from "./host/manifest.js";
 import { markAgentMade } from "./agent-plugins.js";
-import { enablePluginInConfig, forgetPluginInConfig } from "./mcp-install.js";
-import { pluginDataDir } from "./host/manifest.js";
+import { enablePluginInConfig, forgetPluginInConfig, setPluginEnabledInConfig } from "./mcp-install.js";
 import { isInside, type SintyPaths } from "./paths.js";
 import { dropPluginFromRoster } from "./roster.js";
 
@@ -162,6 +161,7 @@ async function finishInstall(
   if (enable) {
     enablePluginInConfig(paths, name);
     if (!config.plugins.enabled.includes(name)) config.plugins.enabled = [...config.plugins.enabled, name];
+    config.plugins.disabled = (config.plugins.disabled ?? []).filter((n) => n !== name);
     startError = await host.reload(name);
     started = !startError && Boolean(host.plugins.get(name));
   }
@@ -186,8 +186,8 @@ async function finishInstall(
 }
 
 /**
- * Removes a home plugin from the library. The process stops, the folder and its data directory go away,
- * and config.yaml drops the plugin's settings. A bundled plugin stays: it can only be turned off.
+ * Removes a managed home plugin from the library. The process stops and only its install folder goes away,
+ * and config.yaml drops the plugin's settings. User data/secrets/shared dependencies stay. Bundled plugins can only be turned off.
  */
 export async function removeHomePlugin(paths: SintyPaths, host: PluginHost, name: string): Promise<void> {
   const id = name.trim();
@@ -195,22 +195,50 @@ export async function removeHomePlugin(paths: SintyPaths, host: PluginHost, name
   if (existsSync(join(paths.bundledPlugins, id, "sinty.plugin.json"))) {
     throw new PluginInstallError("bundled", `плагин ${id} встроен в установку`, "Его можно выключить. Из библиотеки убираются только добавленные плагины.");
   }
-  const homeDir = join(paths.plugins, id);
-  if (!existsSync(join(homeDir, "sinty.plugin.json"))) {
-    throw new PluginInstallError("not_found", `плагина ${id} нет в библиотеке`);
-  }
-  assertSafeHomeDir(paths, homeDir, id);
-  const dataDir = pluginDataDir(paths, id);
-  const dataResolved = resolve(dataDir);
-  if (existsSync(dataDir) && (!isInside(dataResolved, paths.data) || dataResolved === resolve(paths.data))) {
-    throw new PluginInstallError("bad_name", "отказ стереть данные вне папки плагина");
-  }
-  await host.unload(id);
+  const homeDir = removableHomeDir(paths, id);
+  setPluginEnabledInConfig(paths, id, false);
+  await host.disable(id);
+  removableHomeDir(paths, id); // Recheck after waiting for the process to exit.
   forgetPluginInConfig(paths, id);
   dropPluginFromRoster(paths, id);
   markAgentMade(paths, id, false);
-  if (existsSync(dataDir)) rmSync(dataResolved, { recursive: true, force: true });
   rmSync(resolve(homeDir), { recursive: true, force: true });
+}
+
+/** Library/UI hint; backend repeats all checks immediately before removal. */
+export function canRemoveHomePlugin(paths: SintyPaths, name: string): boolean {
+  try { removableHomeDir(paths, name); return true; } catch { return false; }
+}
+
+function removableHomeDir(paths: SintyPaths, name: string): string {
+  if (!PLUGIN_NAME.test(name)) throw new PluginInstallError("bad_name", "invalid plugin name");
+  if (existsSync(join(paths.bundledPlugins, name, "sinty.plugin.json"))) {
+    throw new PluginInstallError("bundled", "Встроенный плагин можно только выключить");
+  }
+  const dir = join(paths.plugins, name);
+  const manifest = join(dir, "sinty.plugin.json");
+  if (!existsSync(manifest)) throw new PluginInstallError("not_found", "Плагин не установлен в управляемой библиотеке");
+  const root = resolve(paths.plugins);
+  // Refuse junctions/symlinks and redirected parents; never delete external/shared installs.
+  if (lstatSync(root).isSymbolicLink() || lstatSync(dir).isSymbolicLink() || lstatSync(manifest).isSymbolicLink()
+    || realpathSync(root) !== join(realpathSync(paths.home), "plugins")
+    || realpathSync(dir) !== join(realpathSync(root), name)) {
+    throw new PluginInstallError("unsafe_path", "Отказ удалить плагин по ссылке или вне управляемой папки");
+  }
+  const parsed = parseManifest(JSON.parse(readFileSync(manifest, "utf8")));
+  if (parsed.name !== name) throw new PluginInstallError("bad_name", "Имя плагина не совпадает с папкой");
+  // Otherwise discovery would expose a second install with the same name after removal.
+  for (const search of hostSearchPaths(paths)) {
+    const other = resolve(paths.home, search, name);
+    if (resolve(other) !== resolve(dir) && existsSync(join(other, "sinty.plugin.json"))) {
+      throw new PluginInstallError("external", "Есть другая установка с тем же именем в searchPaths; она не удаляется автоматически");
+    }
+  }
+  return dir;
+}
+
+function hostSearchPaths(paths: SintyPaths): string[] {
+  return loadConfig(paths).plugins.searchPaths;
 }
 
 function resolvePath(paths: SintyPaths, raw: string): string {

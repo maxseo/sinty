@@ -1,0 +1,49 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "rhany",
+  "version": "0.1.8",
+  "description": "Direct RunningHub standard-model calls by raw endpoint. Prefer payload.imageUrls HTTPS refs; files only under $DATA/$PLUGIN.",
+  "kinds": [
+    "tool"
+  ],
+  "runtime": "node",
+  "entry": "src/index.ts",
+  "permissions": {
+    "fs": {
+      "read": [
+        "$DATA",
+        "$PLUGIN"
+      ],
+      "write": [
+        "$DATA"
+      ]
+    },
+    "net": [
+      "www.runninghub.ai",
+      "www.runninghub.cn",
+      "*.runninghub.ai",
+      "*.runninghub.cn",
+      "*.myqcloud.com",
+      "*.volces.com",
+      "*.tos-cn-beijing.volces.com",
+      "*.aliyuncs.com",
+      "*.tos-ap-southeast-1.volces.com",
+      "ark-acg-ap-southeast-1.tos-ap-southeast-1.volces.com"
+    ],
+    "secrets": [
+      "runninghub"
+    ]
+  },
+  "config": {
+    "baseUrl": "https://www.runninghub.ai/openapi/v2"
+  },
+  "tools": [
+    {
+      "name": "rhany.run",
+      "description": "Submit a RunningHub model by raw endpoint (e.g. dola-Seedream-5.0-pro/image-to-image). Prefer payload.imageUrls as HTTPS links (runninghub.cn/view or prior download_url). resolution must be 1k or 2k when the model requires it. files paths are only under $DATA or the plugin folder — not project _inbox. On SUCCESS, always web.fetch_file urls[0] into the project; result URLs expire ~24h.",
+      "sideEffects": "external",
+      "idempotent": false
+    }
+  ],
+  "editable": true
+}

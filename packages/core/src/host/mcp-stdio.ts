@@ -12,7 +12,7 @@ interface Rpc {
 }
 
 /** Talks to one MCP server over stdio (Content-Length frames) and registers its tools. */
-export async function connectMcp(init: InitMessage, register: (tool: ToolDefinition) => void): Promise<() => void> {
+export async function connectMcp(init: InitMessage, register: (tool: ToolDefinition) => void, onClose?: (close: () => void) => void): Promise<() => void> {
   const command = init.manifest.command;
   if (!command?.length) throw new Error("mcp-stdio plugin needs command");
   // Optional env from plugins.config.<name>.env: values are secret:// refs resolved via init.secrets.
@@ -76,33 +76,43 @@ export async function connectMcp(init: InitMessage, register: (tool: ToolDefinit
     });
   };
   const close = (): void => {
+    for (const waiter of pending.values()) waiter.reject(new Error("mcp connection closed"));
+    pending.clear();
     if (child.exitCode === null) child.kill();
   };
+  // Make cancellation available before initialize/tools-list complete.
+  onClose?.(close);
+  child.on("error", (error) => {
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  });
   child.on("exit", () => {
     for (const waiter of pending.values()) waiter.reject(new Error("mcp server exited"));
     pending.clear();
   });
 
-  await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "sinty", version: "1.0" } });
-  const note = Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
-  child.stdin.write(`Content-Length: ${note.length}\r\n\r\n`);
-  child.stdin.write(note);
-  const listed = (await rpc("tools/list", {})) as { tools?: { name: string; description?: string; inputSchema?: Record<string, unknown> }[] };
-  for (const tool of listed.tools ?? []) {
-    const name = `${init.manifest.name}.${tool.name}`;
-    register({
-      name,
-      description: tool.description ?? tool.name,
-      input: z.record(z.string(), z.unknown()),
-      sideEffects: "external",
-      idempotent: false,
-      async run(args) {
-        const result = (await rpc("tools/call", { name: tool.name, arguments: args ?? {} })) as { isError?: boolean; content?: { type?: string; text?: string }[] };
-        const text = (result.content ?? []).map((c) => c.text ?? "").join("\n");
-        if (result.isError) throw new Error(text || "mcp tool failed");
-        return { content: text || result };
-      },
-    });
-  }
-  return close;
+  try {
+    await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "sinty", version: "1.0" } });
+    const note = Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+    child.stdin.write(`Content-Length: ${note.length}\r\n\r\n`);
+    child.stdin.write(note);
+    const listed = (await rpc("tools/list", {})) as { tools?: { name: string; description?: string; inputSchema?: Record<string, unknown> }[] };
+    for (const tool of listed.tools ?? []) {
+      const name = `${init.manifest.name}.${tool.name}`;
+      register({
+        name,
+        description: tool.description ?? tool.name,
+        input: z.record(z.string(), z.unknown()),
+        sideEffects: "external",
+        idempotent: false,
+        async run(args) {
+          const result = (await rpc("tools/call", { name: tool.name, arguments: args ?? {} })) as { isError?: boolean; content?: { type?: string; text?: string }[] };
+          const text = (result.content ?? []).map((c) => c.text ?? "").join("\n");
+          if (result.isError) throw new Error(text || "mcp tool failed");
+          return { content: text || result };
+        },
+      });
+    }
+    return close;
+  } catch (error) { close(); throw error; }
 }

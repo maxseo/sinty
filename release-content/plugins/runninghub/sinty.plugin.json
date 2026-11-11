@@ -1,0 +1,41 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "runninghub",
+  "version": "0.1.0",
+  "description": "RunningHub standard models: search the public registry, then upload, submit and poll. Text models stay on the Models settings card.",
+  "kinds": ["tool", "ui"],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "fs": { "read": ["$DATA", "$WORKSPACE"], "write": ["$DATA", "$WORKSPACE"] },
+    "net": ["$PUBLIC"],
+    "secrets": ["runninghub"]
+  },
+  "config": {
+    "baseUrl": "https://www.runninghub.ai/openapi/v2",
+    "registryUrl": "https://raw.githubusercontent.com/HM-RunningHub/ComfyUI_RH_OpenAPI/main/developer-kit/model-registry.public.json"
+  },
+  "settings": {
+    "title": "RunningHub",
+    "description": "Каталог картинок, видео, звука и 3D. Текстовые модели и ключ — на плашке runninghub в разделе Модели.",
+    "fields": [
+      {
+        "key": "baseUrl",
+        "label": "Адрес API моделей",
+        "type": "text",
+        "help": "По умолчанию https://www.runninghub.ai/openapi/v2. Для syntet.ru сюда позже ставится адрес прокси."
+      }
+    ]
+  },
+  "tools": [
+    { "name": "runninghub.search", "description": "Search the RunningHub standard-model registry by words and output type (image, video, audio, 3d).", "sideEffects": "read", "idempotent": true },
+    { "name": "runninghub.schema", "description": "Return one RunningHub model: endpoint, output type and parameter schema. Do not invent fields.", "sideEffects": "read", "idempotent": true },
+    { "name": "runninghub.run", "description": "Upload local project files, submit a RunningHub standard model and wait for the file. Uses the runninghub API key from Settings → Models.", "sideEffects": "external", "idempotent": false }
+  ],
+  "ui": {
+    "tabs": [
+      { "id": "catalog", "title": "RunningHub", "path": "/tab/catalog", "placement": "settings" }
+    ]
+  },
+  "editable": true
+}

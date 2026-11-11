@@ -175,6 +175,7 @@ export async function installMcpPlugin(paths: SintyPaths, config: SintyConfig, h
 
   enablePluginInConfig(paths, name);
   if (!config.plugins.enabled.includes(name)) config.plugins.enabled = [...config.plugins.enabled, name];
+  config.plugins.disabled = (config.plugins.disabled ?? []).filter((n) => n !== name);
 
   const startError = await host.reload(name);
   const proc = host.plugins.get(name);
@@ -347,24 +348,32 @@ export function forgetPluginInConfig(paths: SintyPaths, name: string): void {
     if (disabled.length) doc.setIn(["plugins", "disabled"], disabled);
     else doc.deleteIn(["plugins", "disabled"]);
   }
+  if (doc.hasIn(["plugins", "inspect"])) doc.setIn(["plugins", "inspect"], readList(["plugins", "inspect"]).filter((n) => n !== name));
   if (doc.hasIn(["plugins", "config", name])) doc.deleteIn(["plugins", "config", name]);
   writeFileSync(paths.config, String(doc));
 }
 
-/** Appends `name` to config.yaml plugins.enabled without touching models/secrets. */
-export function enablePluginInConfig(paths: SintyPaths, name: string): void {
+/** Changes one plugin's persisted switch without changing models, other switches or secrets. */
+export function setPluginEnabledInConfig(paths: SintyPaths, name: string, enabled: boolean): void {
+  if (!PLUGIN_NAME.test(name)) throw new McpInstallError("bad_name", "invalid plugin name");
   const doc = parseDocument(existsSync(paths.config) ? readFileSync(paths.config, "utf8") : "");
-  const node = doc.getIn(["plugins", "enabled"]);
-  const list: string[] =
-    node && typeof (node as { toJSON?: () => unknown }).toJSON === "function"
-      ? (((node as { toJSON: () => unknown }).toJSON() as unknown[]) ?? []).filter((x): x is string => typeof x === "string")
-      : Array.isArray(node)
-        ? (node as string[])
-        : [];
-  if (!list.includes(name)) {
-    doc.setIn(["plugins", "enabled"], [...list, name]);
-    writeFileSync(paths.config, String(doc));
-  }
+  const list = (key: string): string[] => {
+    const raw = doc.getIn(["plugins", key], true) as { toJSON?: () => unknown } | undefined;
+    const value = raw?.toJSON?.();
+    return Array.isArray(value) ? value.filter((n): n is string => typeof n === "string") : [];
+  };
+  const on = list("enabled").filter((n) => enabled || n !== name);
+  const off = list("disabled").filter((n) => n !== name);
+  if (enabled && !on.includes(name)) on.push(name);
+  if (!enabled) off.push(name);
+  doc.setIn(["plugins", "enabled"], on);
+  doc.setIn(["plugins", "disabled"], off);
+  writeFileSync(paths.config, String(doc));
+}
+
+/** Explicit installation also clears an earlier persisted off switch. */
+export function enablePluginInConfig(paths: SintyPaths, name: string): void {
+  setPluginEnabledInConfig(paths, name, true);
 }
 
 function writePluginConfigEnv(paths: SintyPaths, name: string, envMap: Record<string, string>): void {

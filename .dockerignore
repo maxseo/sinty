@@ -1,0 +1,19 @@
+**/node_modules
+**/.git
+**/build
+**/dist
+**/.env
+**/.env.local
+**/.env.production
+**/accounts.db*
+**/secrets.json
+**/secret.key
+**/journal.db*
+**/memory.db*
+**/test-results
+**/playwright-report
+**/.cache
+# Imported dist/public are explicitly part of the release snapshot.
+!release-content/plugins/**/dist
+!release-content/plugins/**/dist/**
+!release-content/orphans/**

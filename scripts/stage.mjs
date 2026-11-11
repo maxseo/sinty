@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 
 const root = join(import.meta.dirname, "..");
 const stage = join(root, "build", "stage");
+const release = JSON.parse(readFileSync(join(root, "release.json"), "utf8"));
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
@@ -24,14 +25,16 @@ function statExists(p) {
 
 for (const name of ["sdk", "core", "supervisor", "cli"]) copyDist(join(root, "packages", name), join(stage, "packages", name));
 const shellBox = join(root, "packages", "core", "sandbox", "ShellBox.exe");
-if (statExists(shellBox)) {
+if (process.platform === "win32" && statExists(shellBox)) {
   mkdirSync(join(stage, "packages", "core", "dist", "sandbox"), { recursive: true });
   cpSync(shellBox, join(stage, "packages", "core", "dist", "sandbox", "ShellBox.exe"));
 }
 for (const name of readdirSync(join(root, "plugins"))) {
-  if (name === "example-echo") continue;
+  if (!statSync(join(root, "plugins", name)).isDirectory()) continue;
   copyDist(join(root, "plugins", name), join(stage, "plugins", name));
 }
+cpSync(join(root, "release.json"), join(stage, "release.json"));
+cpSync(join(root, "skills"), join(stage, "skills"), { recursive: true });
 cpSync(join(root, "schemas"), join(stage, "schemas"), { recursive: true });
 if (statExists(join(root, "registry"))) cpSync(join(root, "registry"), join(stage, "registry"), { recursive: true });
 if (statExists(join(root, "site"))) cpSync(join(root, "site"), join(stage, "site"), { recursive: true });
@@ -62,9 +65,9 @@ for (const dir of [join(stage, "packages"), join(stage, "plugins")]) {
     deps[pkg.name] = "file:" + relative(stage, join(dir, name)).split("\\").join("/");
   }
 }
-writeFileSync(join(stage, "package.json"), JSON.stringify({ name: "sinty-install", private: true, type: "module", dependencies: deps }, null, 2));
+writeFileSync(join(stage, "package.json"), JSON.stringify({ name: "sinty-install", version: release.version, private: true, type: "module", dependencies: deps }, null, 2));
 
-const install = spawnSync("npm", ["install", "--omit=dev", "--no-package-lock"], { cwd: stage, stdio: "inherit", shell: true, env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1" } });
+const install = spawnSync("npm", ["install", "--omit=dev", "--no-package-lock", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: stage, stdio: "inherit", shell: true, env: { ...process.env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1" } });
 if (install.status !== 0) process.exit(install.status ?? 1);
 
 const files = {};

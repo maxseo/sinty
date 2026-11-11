@@ -309,6 +309,7 @@ export function saveSettings(
   const disabledNode = doc.getIn(["plugins", "disabled"]);
   const wasDisabled = disabledNode && typeof (disabledNode as { toJSON?: () => unknown }).toJSON === "function" ? ((disabledNode as { toJSON: () => unknown }).toJSON() as unknown[]) : [];
   const disabled = new Set((Array.isArray(wasDisabled) ? wasDisabled : []).filter((n): n is string => typeof n === "string"));
+  for (const name of enabled) disabled.delete(name);
   for (const name of DEFAULT_ON_PLUGINS) {
     if (enabled.includes(name)) disabled.delete(name);
     else disabled.add(name);

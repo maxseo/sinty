@@ -23,3 +23,11 @@ secret.key
 *.sqlite
 .DS_Store
 Thumbs.db
+
+# Explicit, credential-free local release content snapshot
+!release-content/
+!release-content/**
+release-content/**/node_modules/
+
+# Explicit non-secret Docker deployment placeholders
+!deploy/.env.example

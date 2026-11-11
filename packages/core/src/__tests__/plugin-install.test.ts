@@ -159,7 +159,7 @@ test("home plugin: disable keeps data, delete removes the stub and its settings"
     const removed = await app.request("/v1/plugins/stub-keep", { method: "DELETE", headers: auth });
     assert.equal(removed.status, 200);
     assert.equal(existsSync(join(home, "plugins", "stub-keep")), false);
-    assert.equal(existsSync(join(home, "data", "stub-keep")), false);
+    assert.equal(readFileSync(join(home, "data", "stub-keep", "keep.txt"), "utf8"), "still here");
     assert.doesNotMatch(readFileSync(sinty.paths.config, "utf8"), /keep-me/);
     assert.equal(sinty.host.toolOwner("stub-keep.ping"), undefined);
     assert.deepEqual(listAgents(sinty.paths)[0]?.plugins, []);

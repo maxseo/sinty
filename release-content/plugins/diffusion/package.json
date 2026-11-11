@@ -1,0 +1,18 @@
+{
+  "name": "@sinty/plugin-diffusion",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@babel/core": "^7.26.10",
+    "@babel/preset-typescript": "^7.26.0",
+    "@sinty/sdk": "workspace:*",
+    "babel-preset-solid": "^1.9.16",
+    "esbuild": "^0.28.2"
+  }
+}

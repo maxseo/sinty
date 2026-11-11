@@ -173,3 +173,7 @@ hot start and canary. Code: `packages/core/src/agent-plugins.ts`, `patches.ts` (
 
 To give such a plugin more than this table, a human edits its folder by hand or installs it from a path; the agent
 cannot.
+
+### Narrow dynamic tool metadata capability
+
+`tab/1` additionally supports `op: "dynamic-tools.catalog"` ONLY for plugin `dynamic-tools`, tab `settings`. The parent `init` supplies that iframe instance's `catalogNonce`; requests echo it as `nonce`. The bridge verifies exact source Window, sandbox origin `null`, plugin/tab and nonce, and rejects endpoint/method/body/query/project/agent/session fields. It uses only the parent's ordinary authenticated GET `/v1/agent` and GET `/v1/plugins`, forwarding `{ tools: [{name,description,plugin}], registryOnly: true }` after field stripping and size bounds. No auth, cookie, schema, config, provider details, history or execution capability is transferred. This does not authorize a plugin or agent to call any tool. Runtime discovery remains scoped to the provider request's permitted true schemas. Other plugins have no new API reachability; generic same-plugin `get`/`post` remains unchanged.

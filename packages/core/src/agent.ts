@@ -26,6 +26,7 @@ import { evaluateTool, pathsTouched, pathVerdict } from "./policy.js";
 import { detectPolicyTrustPhrase } from "./policy-trust.js";
 import { watchStall } from "./stall.js";
 import { generationMedia } from "./media-file.js";
+import { resolveModelProfile } from "./model-profile.js";
 import { agentHasPlugin, ensureProjectDirs, listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
 import type { SecretStore } from "./secrets.js";
 import type { SupervisorClient } from "./supervisor-client.js";
@@ -166,10 +167,9 @@ export class Agent {
    * request; when that is still too much, `ok: false`. A route whose window nobody knows (source "fallback") is never
    * skipped: 128000 is a guess there, so it only gets the trim.
    */
-  private fitWindow(sessionId: string, route: string, messages: ChatMessage[], tools: ToolSchema[], estTokens: number): { ok: true; messages: ChatMessage[]; estTokens: number } | { ok: false; window: number; need: number } {
+  private fitWindow(sessionId: string, route: string, messages: ChatMessage[], tools: ToolSchema[], estTokens: number, reserve = this.d.config.models.maxOutputTokens): { ok: true; messages: ChatMessage[]; estTokens: number } | { ok: false; window: number; need: number } {
     const w = this.windows.resolve(route);
     const ratio = this.tokenRatio(sessionId) ?? 1;
-    const reserve = this.d.config.models.maxOutputTokens;
     const fits = (est: number): boolean => Math.ceil(est * ratio) + reserve <= w.tokens;
     if (fits(estTokens)) return { ok: true, messages, estTokens };
     const cut = trimOldToolResults(messages, 2, 1);
@@ -977,11 +977,12 @@ export class Agent {
       const model = slash > 0 ? route.slice(slash + 1) : "";
       const prov = this.d.config.providers[providerId];
       const plugin = prov ? this.d.host.providerFor(prov.protocol) : undefined;
+      const generation = prov ? resolveModelProfile(prov, speaker?.modelProfiles, route, this.d.config.models.maxOutputTokens) : undefined;
       // A fallback route may have a smaller window than the primary model the prompt was built for: trim old tool
       // results for this request only, or skip the route. The primary request and the stored history are untouched.
       let request = { messages, estTokens, messagesHash, trimmed: false };
       if (i > 0 && prov && plugin && model) {
-        const fit = this.fitWindow(sessionId, route, messages, tools, estTokens);
+        const fit = this.fitWindow(sessionId, route, messages, tools, estTokens, generation!.maxOutputTokens);
         if (!fit.ok) {
           lastError = { code: "window_too_small", message: `route ${route}: the prompt (~${fit.need} tokens) does not fit its ${fit.window}-token context window, even with old tool results trimmed` };
           const next = routes[i + 1];
@@ -1003,14 +1004,15 @@ export class Agent {
           let usage: Usage = { provider: providerId, model, inputTokens: 0, outputTokens: 0 };
           const apiKey = this.d.secrets.resolve(prov.apiKey);
           if (prov.apiKey && !apiKey) throw new ProviderError({ code: "secret_missing", message: `${prov.apiKey} is not set`, hint: `sinty secret set ${prov.apiKey.replace("secret://", "")}` });
+          const settings = generation!;
           const stream = plugin.streamProvider(
             prov.protocol,
             {
-              endpoint: strip({ baseUrl: prov.baseUrl, apiKey, headers: prov.headers, options: prov.options }),
+              endpoint: strip({ baseUrl: prov.baseUrl, apiKey, headers: prov.headers, options: settings.options }),
               model,
               messages: request.messages,
               tools,
-              maxOutputTokens: this.d.config.models.maxOutputTokens,
+              maxOutputTokens: settings.maxOutputTokens,
               cacheKey: `sinty-${createHash("sha256").update(sessionId).digest("hex").slice(0, 24)}`,
             },
             signal,

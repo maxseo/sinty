@@ -118,6 +118,12 @@ importers:
         specifier: ^0.28.2
         version: 0.28.2
 
+  plugins/dynamic-tools:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/example-echo:
     dependencies:
       '@sinty/sdk':

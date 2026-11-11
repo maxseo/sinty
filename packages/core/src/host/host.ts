@@ -110,6 +110,9 @@ export class PluginProcess {
   private crashes: number[] = [];
   private stopping = false;
   private restarting: Promise<void> | undefined;
+  private restartTimer: ReturnType<typeof setTimeout> | undefined;
+  private finishRestart: (() => void) | undefined;
+  ready = false;
   autoRestart = true;
   disabled = false;
   tools: ToolInfo[] = [];
@@ -145,10 +148,12 @@ export class PluginProcess {
   }
 
   async start(): Promise<void> {
+    if (this.stopping || this.disabled) throw new Error(`plugin ${this.name} is stopped`);
     const m = this.loaded.manifest;
     if (!m.entry && m.kinds.every((k) => k === "ui")) {
       if (!m.ui?.static) throw new Error(`plugin ${m.name}: a ui plugin without entry needs "ui": { "static": "<folder>" }`);
       this.staticOnly = true;
+      this.ready = true;
       this.events.loaded(this.name, m.version);
       return;
     }
@@ -247,6 +252,8 @@ export class PluginProcess {
       paths: { workspace: this.paths.workspace, skills: this.paths.skills, plugin: this.loaded.dir, data: pluginDataDir(this.paths, m.name) },
     });
     await ready;
+    if (this.stopping) throw new Error(`plugin ${this.name} stopped during start`);
+    this.ready = true;
     this.events.loaded(this.name, m.version);
   }
 
@@ -325,7 +332,7 @@ export class PluginProcess {
   async stopAndWait(): Promise<void> {
     const c = this.child;
     if (!c || c.exitCode !== null) {
-      this.stopping = true;
+      this.stop();
       return;
     }
     const exited = new Promise<void>((r) => c.once("exit", () => r()));
@@ -335,6 +342,13 @@ export class PluginProcess {
 
   stop(): void {
     this.stopping = true;
+    this.disabled = true;
+    this.ready = false;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = undefined;
+    this.finishRestart?.();
+    this.finishRestart = undefined;
+    this.restarting = undefined;
     if (this.child && this.child.exitCode === null) {
       this.send({ t: "shutdown" });
       const c = this.child;
@@ -755,6 +769,7 @@ export class PluginProcess {
   }
 
   private onExit(code: number | null): void {
+    this.ready = false;
     const crash: WireError = { code: "plugin_crashed", message: `plugin ${this.name} exited with code ${code}`, hint: "The plugin process restarts automatically; retry once." };
     for (const p of [...this.pending.values()]) p.onCrash(crash);
     this.pending.clear();
@@ -774,12 +789,17 @@ export class PluginProcess {
     }
     const delay = Math.min(30_000, 500 * 2 ** (this.crashes.length - 1));
     const restarting: Promise<void> = new Promise<void>((resolveRestart) => {
-      setTimeout(() => {
-        if (this.stopping) return resolveRestart();
+      this.finishRestart = resolveRestart;
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = undefined;
+        if (this.stopping || this.disabled || !this.autoRestart) return resolveRestart();
         this.start()
           .catch((e: unknown) => this.events.log(this.name, "error", `restart failed: ${e instanceof Error ? e.message : String(e)}`))
           .finally(() => {
-            if (this.restarting === restarting) this.restarting = undefined;
+            if (this.restarting === restarting) {
+              this.restarting = undefined;
+              this.finishRestart = undefined;
+            }
             resolveRestart();
           });
       }, delay).unref();
@@ -831,6 +851,9 @@ export class ProviderError extends Error {
 
 export class PluginHost {
   readonly plugins = new Map<string, PluginProcess>();
+  readonly startErrors = new Map<string, string>();
+  private readonly generations = new Map<string, number>();
+  private stopped = false;
 
   constructor(
     private readonly paths: SintyPaths,
@@ -841,17 +864,12 @@ export class PluginHost {
   ) {}
 
   async start(): Promise<{ failed: { plugin: string; error: string }[] }> {
+    this.stopped = false;
     const failed: { plugin: string; error: string }[] = [];
     await Promise.all(
-      this.config.plugins.enabled.map(async (name) => {
-        try {
-          const loaded = findPlugin(this.paths, name, this.config.plugins.searchPaths);
-          const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events);
-          await proc.start();
-          this.plugins.set(name, proc);
-        } catch (e) {
-          failed.push({ plugin: name, error: e instanceof Error ? e.message : String(e) });
-        }
+      this.config.plugins.enabled.filter((name) => !this.config.plugins.disabled?.includes(name)).map(async (name) => {
+        const error = await this.reload(name);
+        if (error) failed.push({ plugin: name, error });
       }),
     );
     // Plugins start in parallel and finish in any order. Keep the map in plugins.enabled order so tools, contexts,
@@ -886,11 +904,21 @@ export class PluginHost {
   }
 
   stop(): void {
+    this.stopped = true;
     for (const p of this.plugins.values()) p.stop();
+  }
+
+  /** In-memory off switch before uninstall: also blocks concurrent queued patch reloads. */
+  async disable(name: string): Promise<void> {
+    this.config.plugins.enabled = this.config.plugins.enabled.filter((n) => n !== name);
+    this.config.plugins.disabled = [...new Set([...(this.config.plugins.disabled ?? []), name])];
+    await this.unload(name);
   }
 
   /** Stops a plugin and forgets it until the next reload. Windows cannot delete the folder of a running process. */
   async unload(name: string): Promise<void> {
+    this.generations.set(name, (this.generations.get(name) ?? 0) + 1);
+    this.startErrors.delete(name);
     const old = this.plugins.get(name);
     this.plugins.delete(name);
     if (old) await old.stopAndWait();
@@ -898,17 +926,30 @@ export class PluginHost {
 
   /** Restarts a plugin from disk (after a patch or rollback). Returns the error if the new version does not start. */
   async reload(name: string): Promise<string | undefined> {
-    await this.unload(name);
+    const unloading = this.unload(name);
+    const generation = this.generations.get(name);
+    await unloading;
+    if (this.stopped || this.generations.get(name) !== generation) return undefined;
+    this.startErrors.delete(name);
+    // A pending patch/restart must never resurrect an explicitly disabled plugin.
+    if (!this.config.plugins.enabled.includes(name) || this.config.plugins.disabled?.includes(name)) return undefined;
+    let proc: PluginProcess | undefined;
     try {
       const loaded = findPlugin(this.paths, name, this.config.plugins.searchPaths);
-      const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events);
-      await proc.start();
+      proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events);
+      // Register before awaiting readiness: disable/uninstall must be able to stop a starting process.
       this.plugins.set(name, proc);
+      await proc.start();
+      if (this.plugins.get(name) !== proc) return undefined;
       this.reorder();
       return undefined;
     } catch (e) {
+      if (proc) await proc.stopAndWait(); // failed starts must not leave an orphan restart loop
+      if (proc && this.plugins.get(name) !== proc) return undefined;
       this.plugins.delete(name);
-      return e instanceof Error ? e.message : String(e);
+      const error = e instanceof Error ? e.message : String(e);
+      this.startErrors.set(name, error);
+      return error;
     }
   }
 
@@ -916,8 +957,8 @@ export class PluginHost {
   async startDetached(loaded: LoadedManifest): Promise<PluginProcess> {
     const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, { ...this.events, loaded: () => undefined, crashed: () => undefined });
     proc.autoRestart = false;
-    await proc.start();
-    return proc;
+    try { await proc.start(); return proc; }
+    catch (error) { await proc.stopAndWait(); throw error; }
   }
 
   locate(name: string): LoadedManifest {

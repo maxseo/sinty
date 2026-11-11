@@ -1,0 +1,47 @@
+name: sinty
+services:
+  sinty:
+    platform: linux/amd64
+    image: ${SINTY_IMAGE:-sinty:0.5.1}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-local-unpublished}
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 90s
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    pids_limit: 256
+    environment:
+      SINTY_PUBLIC_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN}
+    expose: ["3180"]
+    volumes:
+      - sinty_home:/var/lib/sinty
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m
+    networks: [app]
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d}
+    restart: unless-stopped
+    depends_on:
+      sinty:
+        condition: service_healthy
+    environment:
+      ROOT_DOMAIN: ${ROOT_DOMAIN:?set ROOT_DOMAIN}
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [app]
+networks:
+  app:
+volumes:
+  sinty_home:
+  caddy_data:
+  caddy_config:

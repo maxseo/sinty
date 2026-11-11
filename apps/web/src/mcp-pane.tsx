@@ -13,6 +13,10 @@ interface PluginRow {
   runtime?: string;
   forAll?: boolean;
   defaultOn?: boolean;
+  enabled: boolean;
+  removable: boolean;
+  status: string;
+  error?: string;
 }
 
 interface InstallResult {
@@ -57,29 +61,23 @@ export function McpPane() {
   const [tab, setTab] = useState<"list" | "catalog" | "add">("list");
   const [plugins, setPlugins] = useState<PluginRow[]>([]);
   const [enabled, setEnabled] = useState<string[]>([]);
-  const [showDisabled, setShowDisabled] = useState(true);
+  const [drop, setDrop] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<AddDraft | null>(null);
 
   const load = async (): Promise<void> => {
-    const [plist, settings, sections] = await Promise.all([
-      api<{ plugins: PluginRow[] }>("/v1/plugins"),
-      api<{ plugins: { name: string; enabled: boolean }[] }>("/v1/settings"),
-      api<{ sections: { id: string; values: Record<string, unknown> }[] }>("/v1/settings/sections"),
-    ]);
+    const plist = await api<{ plugins: PluginRow[] }>("/v1/plugins/installed");
     setPlugins(plist.plugins);
-    setEnabled(settings.plugins.filter((p) => p.enabled).map((p) => p.name));
-    const v = sections.sections.find((s) => s.id === "plugin.mcp-catalog")?.values.showDisabled;
-    setShowDisabled(v !== false);
+    setEnabled(plist.plugins.filter((p) => p.enabled).map((p) => p.name));
   };
 
   useEffect(() => {
     void load().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  const rows = plugins.filter(isMcp).filter((p) => showDisabled || enabled.includes(p.name));
+  const rows = plugins.filter(isMcp);
   const installed = new Set(plugins.filter(isMcp).map((p) => p.name));
 
   const setOn = async (name: string, on: boolean): Promise<void> => {
@@ -87,22 +85,26 @@ export function McpPane() {
     setNotice("");
     setBusy(true);
     try {
-      const cur = await api<{ model: string; plugins: { name: string; enabled: boolean }[] }>("/v1/settings");
-      const enabledNow = on
-        ? [...new Set([...cur.plugins.filter((p) => p.enabled).map((p) => p.name), name])]
-        : cur.plugins.filter((p) => p.enabled && p.name !== name).map((p) => p.name);
-      await api("/v1/settings", { method: "PUT", body: { model: cur.model, fallback: [], enabled: enabledNow } });
-      setNotice(
-        on
-          ? "Включён в config.yaml. Подхватится после перезапуска sinty web."
-          : "Выключен в config.yaml. Действует после перезапуска sinty web.",
-      );
+      const result = await api<{ startError?: string }>(`/v1/plugins/${encodeURIComponent(name)}/enabled`, { method: "PUT", body: { enabled: on } });
+      if (result.startError) setError(result.startError);
+      else setNotice(on ? "Включён и запущен без перезапуска Sinty." : "Выключен: процесс остановлен, инструменты отключены.");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const remove = async (name: string): Promise<void> => {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api(`/v1/plugins/${encodeURIComponent(name)}`, { method: "DELETE" });
+      setDrop(null);
+      setNotice("Плагин удалён из библиотеки и автозапуска. Пользовательские данные и секреты сохранены.");
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   };
 
   const useCurated = (c: CuratedMcp): void => {
@@ -129,38 +131,35 @@ export function McpPane() {
       {notice && <p class="note">{notice}</p>}
       {tab === "list" ? (
         <>
-          <label class="check" style={{ marginBottom: 12 }}>
-            <input
-              type="checkbox"
-              checked={showDisabled}
-              disabled={busy}
-              onChange={(e) => {
-                const next = e.currentTarget.checked;
-                setShowDisabled(next);
-                void api("/v1/settings/sections/plugin.mcp-catalog", {
-                  method: "PUT",
-                  body: { values: { showDisabled: next } },
-                }).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
-              }}
-            />
-            <span>Показывать выключенные</span>
-          </label>
+          <p class="note">Все установленные MCP, включая выключенные. Встроенные и внешние установки можно выключить; удаляются только безопасные установки из библиотеки.</p>
+          {drop && <div class="overlay" onClick={() => { if (!busy) setDrop(null); }}>
+            <div class="dialog" onClick={(e) => e.stopPropagation()}>
+              <h3>Удалить {drop}?</h3>
+              <p>Процесс будет остановлен, файлы установки, настройки и связи с агентами удалены. Пользовательские данные, секреты и общие зависимости сохранятся.</p>
+              <footer class="dialog-actions">
+                <button type="button" class="secondary" disabled={busy} onClick={() => setDrop(null)}>Отмена</button>
+                <button type="button" class="danger" disabled={busy} onClick={() => void remove(drop)}>Удалить</button>
+              </footer>
+            </div>
+          </div>}
           <div class="plugin-grid">
             {rows.map((p) => {
               const on = enabled.includes(p.name);
-              const status = !on
-                ? "выключен"
-                : p.tools.length > 0
-                  ? `запущен · ${p.tools.length} тул.`
-                  : "включён · нет тулов / ошибка старта";
+              const status = !on ? "выключен" : p.status === "running" ? `запущен · ${p.tools.length} тул.`
+                : p.status === "starting" ? "запускается" : p.status === "failed" ? "ошибка запуска" : "включён · остановлен";
               return (
                 <div key={p.name} class={on ? "plugin-tile on" : "plugin-tile"}>
                   <div class="plugin-av">{p.name.slice(0, 1)}</div>
                   <div class="plugin-txt">
                     <b>{p.name}</b>
                     <span>{p.runtime} · {p.location} · {status}{p.description ? ` · ${p.description}` : ""}</span>
+                    {!p.removable && <span>{p.location === "bundled" ? "встроенный" : "внешняя / защищённая установка"}</span>}
+                    {p.error && <small class="error mcp-error">{p.error}</small>}
                   </div>
-                  <Tog on={on} disabled={busy || p.defaultOn} onClick={() => void setOn(p.name, !on)} label={on ? "выключить" : "включить"} />
+                  <div class="mcp-controls">
+                  <Tog on={on} disabled={busy} onClick={() => void setOn(p.name, !on)} label={on ? "выключить" : "включить"} />
+                  {p.removable && <button type="button" class="btn sm danger" disabled={busy} onClick={() => setDrop(p.name)}>Удалить</button>}
+                  </div>
                 </div>
               );
             })}

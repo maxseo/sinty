@@ -1,0 +1,1 @@
+try { const r=await fetch('http://127.0.0.1:3180/v1/health',{signal:AbortSignal.timeout(4000)}); const b=await r.json(); if(!r.ok||b.ok!==true||b.protocol!=='sinty/1.0')process.exitCode=1; } catch { process.exitCode=1; }

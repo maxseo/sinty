@@ -1,0 +1,17 @@
+{
+  "extends": "../../apps/web/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "preact": [
+        "../../apps/web/node_modules/preact"
+      ],
+      "preact/*": [
+        "../../apps/web/node_modules/preact/*"
+      ]
+    }
+  },
+  "include": [
+    "ui/**/*.tsx"
+  ]
+}

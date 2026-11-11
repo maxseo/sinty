@@ -1,3 +1,4 @@
+import { ModelSettings, type ModelProfiles } from "./model-settings.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
 import { go, href } from "./route.js";
@@ -75,7 +76,7 @@ function useEnabledModels(): string[] {
   return (data?.models ?? []).filter((m) => m.enabled).map((m) => m.route);
 }
 
-function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean; variant?: "native" | "cselect" }) {
+export function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean; variant?: "native" | "cselect" }) {
   const routes = useEnabledModels();
   const shown = value.includes("/") ? value : "";
   const selected = routes.includes(shown) ? shown : "";
@@ -83,7 +84,7 @@ function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: s
     return (
       <label class="field">
         {label}
-        <CSelect value={selected} onChange={onChange} options={routes.map((r) => ({ value: r, label: r }))} emptyLabel={allowEmpty ? "модель установки" : undefined} />
+        <CSelect label={label} value={selected} onChange={onChange} options={routes.map((r) => ({ value: r, label: r }))} emptyLabel={allowEmpty ? "модель установки" : undefined} />
       </label>
     );
   }
@@ -626,7 +627,7 @@ function PluginsSettings({
           <div class="overlay" onClick={() => { if (!busy) setDrop(null); }}>
             <div class="dialog" onClick={(e) => e.stopPropagation()}>
               <h3>Удалить {drop}?</h3>
-              <p>Плагин будет стёрт из библиотеки. Его настройки и данные удалятся безвозвратно. Выключение этого не делает: при выключении всё сохраняется.</p>
+              <p>Файлы установки, настройки и связи с агентами будут удалены. Пользовательские данные и секреты сохранятся. Выключение только останавливает плагин и сохраняет установку.</p>
               <footer class="dialog-actions">
                 <button type="button" class="secondary" disabled={busy} onClick={() => setDrop(null)}>Отмена</button>
                 <button type="button" class="danger" disabled={busy} onClick={() => void remove(drop)}>Удалить</button>
@@ -773,6 +774,7 @@ interface AgentRecord {
   avatar: string;
   persona: string;
   model: string;
+  modelProfiles?: ModelProfiles;
   fallback: string;
   serviceModel: string;
   compress: string;
@@ -967,7 +969,9 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
               <details class="acc" open>
                 <summary>Модели</summary>
                 <div class="body">
-                  <ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                  <div class="model-with-settings"><ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                    <ModelSettings key={draft.id || "new"} route={draft.model || installModel} profiles={draft.modelProfiles ?? {}} onChange={(modelProfiles) => patch({ modelProfiles })} />
+                  </div>
                   <FallbackPick value={draft.fallback || draft.model || installModel} onChange={(fallback) => patch({ fallback })} />
                 </div>
               </details>

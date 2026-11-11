@@ -51,6 +51,7 @@ let modelSeq = 0;
 const netWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
 let netSeq = 0;
 let closeMcp: (() => void) | undefined;
+process.once("disconnect", () => { closeMcp?.(); process.exit(0); });
 
 function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
   const id = ++agentSeq;
@@ -281,7 +282,7 @@ async function init(msg: InitMessage): Promise<void> {
   };
 
   if (msg.manifest.runtime === "mcp-stdio") {
-    closeMcp = await connectMcp(msg, (def) => tools.set(def.name, def as unknown as ToolDefinition));
+    closeMcp = await connectMcp(msg, (def) => tools.set(def.name, def as unknown as ToolDefinition), (close) => { closeMcp = close; });
   } else if (msg.manifest.runtime === "http") {
     closeMcp = await connectMcpHttp(msg, (def) => tools.set(def.name, def as unknown as ToolDefinition));
   } else {
