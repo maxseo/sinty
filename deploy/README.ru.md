@@ -18,18 +18,37 @@ docker compose --env-file deploy/.env -f deploy/compose.yml build --build-arg SO
 ```
 Сборка устанавливает Linux-зависимости по pnpm-lock и lockfile импортированного Diffusion compiler, `--ignore-scripts`; не переносит Windows node_modules/ShellBox.exe. Образ Node24 Debian; Linux ARM и Alpine/musl для харнеса не проверены. Базовые Node и Caddy закреплены tag+digest, проверенными через публичный registry; это не аудит их уязвимостей. Для production запишите также digest итогового image. Имя `sinty:0.5.1` не означает, что образ уже опубликован.
 
-## Первый запуск — сначала НЕ публичная инициализация
-```
-docker compose --env-file deploy/.env -f deploy/compose.yml run --rm --no-deps --entrypoint node sinty /opt/sinty/deploy/bootstrap.mjs
-```
-Интерактивно создать первого администратора; пароль не выводится, не передаётся в argv/env. Bootstrap вызывает существующие initHome/Accounts.setup, копирует 20 bundled навыков без перезаписи конфликтов, не стартует плагины, агента или provider calls. Созданные ключи остаются ТОЛЬКО в новом persistent volume. Затем:
+## Первый запуск — форма в браузере на адресе приложения
+
+Это штатный путь, не плагин: те же `GET`/`POST /v1/auth/setup` и `Accounts.setup` в ядре. Контейнер сам инициализирует пустой home (`initHome`, без печати machine token) и начинает слушать, даже если сотрудников ещё нет. После того как DNS указывает на сервер и открыты только 80/443:
+
 ```
 docker compose --env-file deploy/.env -f deploy/compose.yml up -d
 docker compose --env-file deploy/.env -f deploy/compose.yml ps
 ```
-Вход: `https://app.<домен>/` (штатный redirect `/ui/ui-web/`). Caddy получает HTTPS после правильного DNS/firewall. Прямой 3180 наружу не публикуется. Нет пароля по умолчанию. Контейнер без администратора не начинает слушать; public POST `/v1/auth/setup` дополнительно запрещён. Секретный machine token CLI `web` не печатается Docker-entrypoint в логи.
 
-ВАЖНО: наличие локального Windows-аккаунта не переносит его БД на VPS автоматически. Distribution намеренно НЕ содержит accounts.db или ключей. Для сохранения именно прежнего логина нужен отдельно согласованный приватный перенос/миграция account-state; не кладите его в Git/образ/Release. Альтернатива — создать облачный staff-логин через текущий setup; на сайте и поддомене после этого будет один и тот же вход.
+Откройте `https://app.<домен>/` (штатный redirect `/ui/ui-web/`). Первый посетитель видит форму email+пароль и создаёт единственного суперадмина. После этого setup отвечает 409, показывается обычный вход, повторно форма не открывается (в том числе после перезапуска). Нет пароля по умолчанию. Другие неавторизованные API по-прежнему закрыты. Прямой 3180 наружу не публикуется. Секретный machine token CLI `web` не печатается Docker-entrypoint в логи.
+
+Риск принят сознательно: первый, кто откроет адрес, пока setup ещё открыт, может занять место администратора. Отдельный одноразовый токен, IP-фильтр и пароль в терминале для этого пути не используются. `Accounts.setup` сериализуется транзакцией `BEGIN IMMEDIATE`, поэтому при гонке создаётся не больше одного суперадмина. Если в volume уже есть пользователи, форма не показывается и существующие учётки не повышаются.
+
+Необязательная альтернатива для закрытой/офлайн инициализации (TTY, пароль не в argv/env) по-прежнему доступна до первого пользователя:
+
+```
+docker compose --env-file deploy/.env -f deploy/compose.yml run --rm --no-deps --entrypoint node sinty /opt/sinty/deploy/bootstrap.mjs
+```
+
+Она вызывает те же `initHome`/`Accounts.setup`, копирует bundled навыки без перезаписи конфликтов и не стартует плагины, агента или provider calls. После появления хотя бы одного пользователя и `bootstrap.mjs`, и браузерная форма отказываются создавать второго.
+
+ВАЖНО: наличие локального Windows-аккаунта не переносит его БД на VPS автоматически. Distribution намеренно НЕ содержит accounts.db или ключей. Для сохранения именно прежнего логина нужен отдельно согласованный приватный перенос/миграция account-state; не кладите его в Git/образ/Release.
+
+## Caddy и корневой домен
+
+Образец `deploy/Caddyfile` обслуживает два имени из `.env`:
+
+- `APP_DOMAIN` (обычно `app.<зона>`) — харнес, вход и first-run. Его Caddy должен публиковать.
+- `ROOT_DOMAIN` — только заглушка «место для будущего сайта» со ссылкой на приложение, не сам staff-харнес и не отдельная регистрация.
+
+Если корневой домен должен остаться свободным (другой сайт, другой процесс на 80/443), удалите блок `{$ROOT_DOMAIN}` из Caddyfile и не указывайте это имя в DNS на этот стек. Не публикуйте apex этим compose, если он вам не нужен. Cross-origin запросы к API/UI по-прежнему отвечают 403, если `Origin` не равен `https://{$APP_DOMAIN}`.
 
 ## Данные, плагины и инструменты
 UID/GID1000; whole `SINTY_HOME=/var/lib/sinty` — persistent named volume `sinty_sinty_home`, включая config, encrypted secrets+key, accounts, roster, projects/workspace, plugin data, навыки и память. App code immutable `/opt/sinty`, rootfs read-only, `/tmp` tmpfs. Docker-managed том получает начального владельца из образа; для собственного bind mount заранее выставить UID1000, не включать root/privileged ради прав.

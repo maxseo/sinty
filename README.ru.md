@@ -116,6 +116,7 @@ models:
 
 ## Документация
 
+- [Docker / staff-сервер: первый вход в браузере](deploy/README.ru.md)
 - [Архитектура](docs/architecture.md)
 - Спецификации: [события и API](docs/spec/protocol.md) · [журнал и восстановление](docs/spec/journal.md) · [манифест плагина и конвейер патчей](docs/spec/plugin-manifest.md) · [политики](docs/spec/policy.md) · [супервизор](docs/spec/supervisor.md)
 - [Интеграции](docs/integrations.md)

@@ -18,6 +18,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Browser first-run: on a fresh Docker/staff install the app origin shows an email+password form that creates the single native superadmin (GET/POST /v1/auth/setup, Accounts.setup). Setup then returns 409 and ordinary login is used. Concurrent requests create at most one admin. Other unauthenticated APIs stay closed. Optional TTY deploy/bootstrap.mjs remains for private setup. See deploy/README.ru.md.
 - The composer has hold-to-record voice input. When the browser exposes Speech Recognition, the transcript is inserted into the draft; otherwise the button only shows a recording state and a hint.
 - Settings → **Расход** (`usage`, on by default) shows requests, tokens, and charts for model calls. Switch by time, task, or call. A dollar figure appears only when the provider stored `costUsd`.
 - `stt.transcribe` returns timed phrases. Each phrase has start and end in seconds, word times when the speech model sends them, and a speaker label when the model tells voices apart. The same JSON is written to `_out/stt`. `whisper-1` fills the word times. A model whose id contains `diarize` fills the speaker.
