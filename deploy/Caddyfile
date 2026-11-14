@@ -8,12 +8,8 @@ HTML 200
 {$APP_DOMAIN} {
     header Referrer-Policy "no-referrer"
     header X-Content-Type-Options "nosniff"
-    # No public first-admin takeover. Bootstrap is an interactive, offline container command.
-    @publicSetup {
-        method POST
-        path /v1/auth/setup
-    }
-    respond @publicSetup "Bootstrap is local-only" 403
+    # Browser first-run: POST /v1/auth/setup is allowed until one superadmin exists; core then returns 409.
+    # If ROOT_DOMAIN should stay unbound by this Caddy, drop the site block above (see deploy/README.ru.md).
     @crossOrigin {
         path /v1/* /p/* /ui/*
         header Origin *

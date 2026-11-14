@@ -122,6 +122,19 @@ export function createApp(sinty: Sinty): Hono {
   type ActorAuth = { kind: "machine" } | { kind: "user"; user: AccountUser };
   const actors = new WeakMap<Context, ActorAuth>();
   const OPEN_AUTH = new Set(["/v1/auth/login", "/v1/auth/forgot", "/v1/auth/reset", "/v1/auth/setup"]);
+  /** Browser CSRF: if the client sent Origin and SINTY_PUBLIC_ORIGIN is set, they must match. Non-browser (no Origin) is allowed. */
+  const publicOrigin = (): string | undefined => {
+    const raw = process.env.SINTY_PUBLIC_ORIGIN;
+    if (!raw) return undefined;
+    try { return new URL(raw).origin; } catch { return undefined; }
+  };
+  const originAllowed = (c: Context): boolean => {
+    const expected = publicOrigin();
+    if (!expected) return true;
+    const origin = c.req.header("origin");
+    if (!origin) return true;
+    return origin === expected;
+  };
   const actorOf = (c: Context): ActorAuth | undefined => actors.get(c);
   /** A project box counts only while the role still sees «Проекты» in the panel. */
   const allows = (c: Context, resource: string, action: AccessAction): boolean => {
@@ -177,7 +190,12 @@ export function createApp(sinty: Sinty): Hono {
 
   app.use("/v1/*", async (c, next) => {
     if (c.req.path === "/v1/health") return next();
-    if (OPEN_AUTH.has(c.req.path)) return next();
+    if (OPEN_AUTH.has(c.req.path)) {
+      if (c.req.method !== "GET" && c.req.method !== "HEAD" && !originAllowed(c)) {
+        return c.json({ error: { code: "origin_not_allowed", message: "Origin not allowed" } }, 403);
+      }
+      return next();
+    }
     const t = given(c);
     if (valid(t)) {
       actors.set(c, { kind: "machine" });

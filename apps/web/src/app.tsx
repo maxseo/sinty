@@ -24,14 +24,57 @@ export function App() {
   return <Shell />;
 }
 
+function FirstRun({ onDone }: { onDone: () => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [again, setAgain] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [error, setError] = useState("");
+  const submit = async (e: Event): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    if (password !== again) {
+      setError("Пароли не совпадают.");
+      return;
+    }
+    try {
+      const r = await api<{ token: string }>("/v1/auth/setup", { body: { email, password, firstName, lastName } });
+      userSession.set(r.token);
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+  return (
+    <form class="login" onSubmit={submit}>
+      <h1>Sinty</h1>
+      <p class="muted">Первый человек на этой установке становится суперадмином. После этого регистрация закрывается.</p>
+      <input autoFocus placeholder="Имя" value={firstName} onInput={(e) => setFirstName(e.currentTarget.value)} />
+      <input placeholder="Фамилия" value={lastName} onInput={(e) => setLastName(e.currentTarget.value)} />
+      <input type="email" placeholder="Почта" value={email} onInput={(e) => setEmail(e.currentTarget.value)} required />
+      <input type="password" placeholder="Пароль (от 8 символов)" value={password} onInput={(e) => setPassword(e.currentTarget.value)} />
+      <input type="password" placeholder="Повторите пароль" value={again} onInput={(e) => setAgain(e.currentTarget.value)} />
+      <button type="submit" disabled={!email.trim() || password.length < 8 || password !== again}>Создать суперадмина</button>
+      {error && <p class="error">{error}</p>}
+    </form>
+  );
+}
+
 function Login({ onDone }: { onDone: () => void }) {
   const reset = /^#\/reset\/([^&]+)/.exec(location.hash);
+  const [needed, setNeeded] = useState<boolean | null>(null);
+  useEffect(() => {
+    void api<{ needed: boolean }>("/v1/auth/setup").then((r) => setNeeded(r.needed)).catch(() => setNeeded(false));
+  }, []);
   const [mode, setMode] = useState<"email" | "token" | "forgot" | "reset">(reset ? "reset" : "email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  if (needed === null) return <form class="login"><h1>Sinty</h1></form>;
+  if (needed) return <FirstRun onDone={onDone} />;
   const submitEmail = async (e: Event): Promise<void> => {
     e.preventDefault();
     setError("");
