@@ -1,10 +1,15 @@
+import { sentAttachments, type SentAttachment } from "./sent-attachment-ref.js";
+import { SentAttachmentView } from "./sent-attachments.js";
+import { chatDrafts, clipboardImages, ImagePreviews } from "./composer-state.js";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribe, token, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
-import { IconArrowUp, IconMic, IconPlus, IconWave } from "./icons.js";
+import { IconArrowUp, IconMic, IconPlus, IconWave, IconPanelRight } from "./icons.js";
+import { PreviewDock, keepPreview, keptPreview, previewFromResult, type BrowserTab, type PanePreview } from "./preview-dock.js";
 import { Markdown } from "./markdown.js";
 import { MediaStrip } from "./media.js";
 import { mergeMedia, splitMedia, type MediaRef } from "./media-ref.js";
 import { PluginTab, tabViewKey, type PluginTabInfo } from "./plugin-tab.js";
+import { href } from "./route.js";
 import { waitNote } from "./wait-note.js";
 import { SupervisorView } from "./supervisor-ui.js";
 
@@ -117,7 +122,7 @@ interface ToolCall {
 }
 
 type Item =
-  | { kind: "user"; key: string; text: string; ts: string; files: string[] }
+  | { kind: "user"; key: string; text: string; ts: string; files: SentAttachment[] }
   | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string; media: MediaRef[] }
   | { kind: "tool"; key: string; call: ToolCall }
   | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
@@ -137,7 +142,7 @@ function mediaOf(value: unknown): MediaRef[] {
 
 const REFRESH_ON = new Set(["turn.started", "turn.blocked", "turn.resumed", "turn.completed", "turn.failed", "turn.interrupted", "tool.call.approval_requested", "tool.call.approved", "tool.call.denied", "session.updated", "session.policy_grant", "task.completed", "task.progress"]);
 
-function build(events: SintyEvent[]): Item[] {
+function build(events: SintyEvent[], sessionId: string): Item[] {
   const items: Item[] = [];
   let pending: MediaRef[] = [];
   const flush = (): void => {
@@ -154,7 +159,7 @@ function build(events: SintyEvent[]): Item[] {
         break;
       case "message.user":
         flush();
-        items.push({ kind: "user", key, text: d.text, ts: e.ts, files: (d.attachments ?? []).map((a: { name?: string }) => a.name || "файл") });
+        items.push({ kind: "user", key, text: d.text, ts: e.ts, files: sentAttachments(sessionId, e.seq, d.attachments) });
         break;
       case "message.agent":
         if (d.text || pending.length) items.push({ kind: "agent", key, text: d.text ?? "", ts: e.ts, name: d.agentName, media: pending });
@@ -277,9 +282,12 @@ function show(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
-export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_TABS, studio = false, studioTab = null, onStudio }: { sessionId: string; title?: string; projectName?: string; onChange: () => void; tabs?: PluginTabInfo[]; studio?: boolean; studioTab?: PluginTabInfo | null; onStudio?: (open: boolean) => void }) {
+export function Chat({ sessionId, draftOwner = "", title = "", projectName, onChange, tabs = NO_TABS, studio = false, studioTab = null, onStudio }: { sessionId: string; draftOwner?: string; title?: string; projectName?: string; onChange: () => void; tabs?: PluginTabInfo[]; studio?: boolean; studioTab?: PluginTabInfo | null; onStudio?: (open: boolean) => void }) {
   const [events, setEvents] = useState<SintyEvent[]>(() => transcriptCache.get(sessionId) ?? []);
-  const [draft, setDraft] = useState("");
+  useMemo(() => chatDrafts.selectOwner(draftOwner), [draftOwner]);
+  const [draft, setDraftState] = useState(() => chatDrafts.read(draftOwner, sessionId).text);
+  useEffect(() => chatDrafts.subscribe(() => setDraftState(chatDrafts.read(draftOwner, sessionId).text)), [draftOwner, sessionId]);
+  const setDraft = (next: string | ((old: string) => string)): void => { const value = typeof next === "function" ? next(chatDrafts.read(draftOwner, sessionId).text) : next; chatDrafts.write(draftOwner, sessionId, value); setDraftState(value); };
   const [streaming, setStreaming] = useState("");
   const [info, setInfo] = useState<SessionInfo & { pending: Pending | null; childPending?: Pending[]; childBusy?: number }>();
   const [childPending, setChildPending] = useState<Pending[]>([]);
@@ -311,6 +319,26 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
   const pendingSend = useRef<{ key: string; fingerprint: string } | null>(null);
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
   const [replyAgent, setReplyAgent] = useState("");
+  const [browserAvailable, setBrowserAvailable] = useState(false);
+  const [browsers, setBrowsers] = useState<BrowserTab[]>(() => keptPreview().tabs);
+  const [dockActive, setDockActive] = useState(() => keptPreview().active);
+  const [dockOpen, setDockOpen] = useState(() => localStorage.getItem("sinty.dock") !== "0");
+  const remember = (tabs: BrowserTab[], active: string): void => keepPreview(tabs, active);
+  const openPreview = (row: PanePreview): void => {
+    const id = row.url ? `url:${row.url}` : row.path ? `path:${row.path}` : `tab:${Date.now()}`;
+    const next = browsers.some((t) => t.id === id)
+      ? browsers.map((t) => (t.id === id ? { ...t, ...row, id, kind: "browser" as const, sessionId } : t))
+      : [...browsers, { ...row, id, kind: "browser" as const, sessionId }];
+    setBrowsers(next);
+    setDockActive(id);
+    remember(next, id);
+    setDockOpen(true);
+    localStorage.setItem("sinty.dock", "1");
+  };
+  const openPreviewRef = useRef(openPreview);
+  openPreviewRef.current = openPreview;
+  const addBrowser = (): void => openPreview({ title: "Браузер" });
+  useEffect(() => { let live = true; void api<{ready:boolean}>("/v1/browser-pilot").then(result => { if(live) setBrowserAvailable(result.ready); }).catch(() => {}); return () => { live = false; }; }, []);
   const bottom = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -327,7 +355,7 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
     if (!info) return;
     const projectId = info.projectId;
     const picked = Array.isArray(info.metadata?.agentIds) ? (info.metadata.agentIds as unknown[]).filter((id): id is string => typeof id === "string") : [];
-    if (!projectId && picked.length === 0) {
+    if (!projectId && picked.length === 0 && !browserAvailable) {
       setMembers([]);
       setMembersKnown(true);
       return;
@@ -337,7 +365,7 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
       projectId ? api<{ projects: { id: string; leadId: string; agentIds: string[] }[] }>("/v1/roster/projects") : Promise.resolve({ projects: [] as { id: string; leadId: string; agentIds: string[] }[] }),
     ]).then(([a, p]) => {
       const project = p.projects.find((x) => x.id === projectId);
-      const ids = picked.length ? picked : project?.agentIds ?? [];
+      const ids = picked.length ? picked : project?.agentIds.length ? project.agentIds : browserAvailable ? a.agents.map(agent => agent.id) : [];
       const list = a.agents.filter((agent) => ids.includes(agent.id));
       const lead = project?.leadId && list.some((m) => m.id === project.leadId) ? project.leadId : "";
       setMembers(list);
@@ -347,7 +375,7 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
       setMembers([]);
       setMembersKnown(false);
     });
-  }, [info?.projectId, info?.metadata]);
+  }, [info?.projectId, info?.metadata, browserAvailable]);
 
   useEffect(() => {
     void loadInfo().catch((e: unknown) => setError(String(e)));
@@ -370,6 +398,10 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
         return;
       }
       if (e.type === "tool.call.progress") return;
+      if (e.type === "tool.call.completed") {
+        const preview = previewFromResult((e.data as { result?: unknown }).result);
+        if (preview) openPreviewRef.current(preview);
+      }
       if (e.seq !== undefined) {
         if (e.seq <= seen) return;
         seen = e.seq;
@@ -432,7 +464,7 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
     );
   }, [sessionId]);
 
-  const items = useMemo(() => build(events), [events]);
+  const items = useMemo(() => build(events, sessionId), [events, sessionId]);
   const presence = useMemo(() => liveTurn(events), [events]);
   const liveText = streaming || presence?.text || "";
   const toolLine = presence?.tool ?? "";
@@ -450,7 +482,9 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
   const canStop = running || info?.activeTurn?.status === "blocked" || (info?.childBusy ?? 0) > 0;
   const policyTrust = info?.metadata?.policyTrust === true;
 
-  const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number }[]>([]);
+  const [files, setFiles] = useState<{ name: string; blob: string; mime: string; bytes: number; preview?: string }[]>([]);
+  const previews = useMemo(() => new ImagePreviews(), []);
+  useEffect(() => () => previews.close(), [previews]);
   const [uploading, setUploading] = useState("");
   const [uploadsLeft, setUploadsLeft] = useState(0);
   const uploadsRef = useRef(0);
@@ -464,11 +498,10 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
   const spokenRef = useRef("");
   const holdingRef = useRef(false);
 
-  const addFiles = async (list: FileList | null): Promise<void> => {
-    if (!list?.length) return;
+  const addFiles = async (list: Iterable<File> | null): Promise<void> => {
+    if (!list) return;
     setError("");
-    const room = 8 - files.length - uploadsRef.current;
-    const queued = [...list].slice(0, Math.max(0, room)).filter((file) => {
+    const queued = [...list].filter((file) => {
       if (file.size <= 8 * 1024 * 1024 * 1024) return true;
       setError(`${file.name}: файл больше 8 ГБ`);
       return false;
@@ -486,7 +519,9 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
         });
         const body = (await res.json().catch(() => ({}))) as { error?: { message?: string }; blob?: string; mime?: string; bytes?: number; name?: string };
         if (!res.ok || !body.blob) throw new Error(body.error?.message || `загрузка не прошла (${res.status})`);
-        setFiles((cur) => [...cur, { name: body.name || file.name, blob: body.blob!, mime: body.mime || file.type || "application/octet-stream", bytes: body.bytes ?? file.size }]);
+        if (previews.disposed) continue;
+        const preview = previews.create(file);
+        setFiles((cur) => [...cur, { ...(preview ? { preview } : {}), name: body.name || file.name, blob: body.blob!, mime: body.mime || file.type || "application/octet-stream", bytes: body.bytes ?? file.size }]);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -499,8 +534,11 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
 
   const send = async (e?: Event): Promise<void> => {
     e?.preventDefault();
+    const sentDraft = chatDrafts.read(draftOwner, sessionId);
+    const sentFiles = files;
     const text = draft.trim();
     if (uploadsRef.current > 0 || (!text && files.length === 0) || sendGuard.current) return;
+    if (browserAvailable && (!membersKnown || !replyAgent)) { setError("Дождитесь загрузки списка и выберите агента в чате."); return; }
     sendGuard.current = true;
     setSending(true);
     setError("");
@@ -517,8 +555,9 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
         headers: { "idempotency-key": key },
       });
       pendingSend.current = null;
-      setDraft("");
-      setFiles([]);
+      chatDrafts.sent(draftOwner, sessionId, sentDraft.revision);
+      for (const f of sentFiles) previews.release(f.preview);
+      setFiles(cur => cur.filter(f => !sentFiles.includes(f)));
       await loadInfo();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -678,14 +717,41 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
               ? "Ход занят. Сообщение уже в очереди."
               : "Сообщение агенту… (Enter — отправить, Shift+Enter — перенос)";
 
+  const showVideo = Boolean(studio && studioTab && info?.projectId);
+  const showDock = showVideo || browsers.length > 0;
+  const closeDock = (id: string): void => {
+    if (id === "video") {
+      onStudio?.(false);
+      const fallback = browsers[0]?.id;
+      if (fallback) setDockActive(fallback);
+      return;
+    }
+    const next = browsers.filter((t) => t.id !== id);
+    const active = dockActive === id ? (showVideo ? "video" : next.at(-1)?.id ?? "") : dockActive;
+    setBrowsers(next);
+    setDockActive(active);
+    remember(next, active);
+  };
+  const navigateDock = (id: string, target: string): void => {
+    const url = /^https?:\/\//i.test(target) ? target : undefined;
+    let title = "Браузер";
+    if (url) { try { title = new URL(url).hostname; } catch { title = url; } }
+    else title = target.split(/[/\\]/).pop() || target;
+    const next = browsers.map((t) => (t.id === id ? { id: t.id, kind: "browser" as const, title, sessionId, ...(url ? { url } : { path: target, mime: "media" }) } : t));
+    setBrowsers(next);
+    remember(next, dockActive);
+  };
+  const collapseDock = (): void => { setDockOpen(false); localStorage.setItem("sinty.dock", "0"); };
+
   return (
-    <>
+    <div class={`work${showDock ? " studio" : ""}${showDock && !dockOpen ? " dock-closed" : ""}`}>
     <section class="chat">
       <header class="bar">
         <div class="bar-crumb">
           {projectName && <span class="bar-proj">{projectName}</span>}
           {projectName && <span class="bar-sep">/</span>}
           <h2>{info?.title || title || "Чат"}</h2>
+          {browserAvailable && <a class="agent-pill" href={href({ page: "browser-pilot" })}>Браузер · пауза / управление</a>}
           {members.length > 0 && (
             <label class="agent-pill">
               <span class="agent-pill-av">{(members.find((m) => m.id === replyAgent)?.name ?? members[0]?.name ?? "?").slice(0, 1)}</span>
@@ -698,8 +764,11 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
           )}
           <span class={`status ${info?.activeTurn?.status ?? "idle"}`}>{running ? "работает" : info?.activeTurn?.status === "blocked" ? "ждёт" : "свободен"}</span>
         </div>
+        <button type="button" class={`studio-toggle${browsers.some((t) => t.id === dockActive) && dockOpen ? " on" : ""}`} title="Браузер в правой панели" onClick={addBrowser}>
+          Браузер
+        </button>
         {studioTab && info?.projectId && (
-          <button type="button" class={`studio-toggle${studio ? " on" : ""}`} title="Редактор рядом с чатом" onClick={() => onStudio?.(!studio)}>
+          <button type="button" class={`studio-toggle${studio ? " on" : ""}`} title="Редактор рядом с чатом" onClick={() => { const next = !studio; onStudio?.(next); if (next) { setDockOpen(true); setDockActive("video"); localStorage.setItem("sinty.dock", "1"); } }}>
             Видео
           </button>
         )}
@@ -753,9 +822,7 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
                   <div key={it.key} class="msg user">
                     {it.files.length > 0 && (
                       <div class="files">
-                        {it.files.map((name) => (
-                          <span>{name}</span>
-                        ))}
+                        {it.files.map((file, index) => <SentAttachmentView key={file.previewPath ?? index} file={file} />)}
                       </div>
                     )}
                     {it.text}
@@ -858,8 +925,10 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
             <div class="composer-atts">
               {files.map((f) => (
                 <span class="composer-att" title={f.name}>
+                  {!f.preview && <span aria-hidden="true">📎</span>}
+                  {f.preview && <img src={f.preview} alt={`Вложение: ${f.name}`} width="64" height="64" style="object-fit:cover;border-radius:6px" />}
                   {f.name}
-                  <button type="button" onClick={() => setFiles(files.filter((x) => x !== f))}>×</button>
+                  <button type="button" aria-label={`Удалить ${f.name}`} onClick={() => { previews.release(f.preview); setFiles(cur => cur.filter(x => x !== f)); }}>×</button>
                 </span>
               ))}
               {uploading && <span class="composer-att">Загрузка {uploading}…</span>}
@@ -872,6 +941,7 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
               placeholder={placeholder}
               rows={1}
               onInput={(e) => setDraft(e.currentTarget.value)}
+              onPaste={(e) => { const images = clipboardImages(e.clipboardData); if (!images.length) return; if (!e.clipboardData?.getData("text/plain")) e.preventDefault(); void addFiles(images); }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
                   e.preventDefault();
@@ -928,12 +998,24 @@ export function Chat({ sessionId, title = "", projectName, onChange, tabs = NO_T
       </form>
       {error && <p class="error">{error}</p>}
     </section>
-    {studio && studioTab && info?.projectId && (
-      <div class="studio-pane">
-        <PluginTab key={info.projectId} tab={studioTab} projectId={info.projectId} />
-      </div>
+    {showDock && dockOpen && (
+      <PreviewDock
+        tabs={browsers}
+        active={showVideo && dockActive === "video" ? "video" : browsers.some((t) => t.id === dockActive) ? dockActive : showVideo ? "video" : browsers[0]?.id ?? ""}
+        sessionId={sessionId}
+        {...(info?.projectId ? { projectId: info.projectId } : {})}
+        studioTab={showVideo ? studioTab : null}
+        onActive={(id) => { setDockActive(id); remember(browsers, id); }}
+        onClose={closeDock}
+        onAdd={addBrowser}
+        onNavigate={navigateDock}
+        onCollapse={collapseDock}
+      />
     )}
-    </>
+    {showDock && !dockOpen && (
+      <button type="button" class="icon peek-right" title="Открыть правую панель" onClick={() => { setDockOpen(true); localStorage.setItem("sinty.dock", "1"); }}><IconPanelRight /></button>
+    )}
+    </div>
   );
 }
 

@@ -56,6 +56,8 @@ export interface WireError {
 }
 
 export interface CallCtx {
+  /** Core scheduler-only identity, never populated from model/session metadata. */
+  execution?: import("../browser-pilot.js").BrowserExecution;
   sessionId: string;
   turnId: string;
   callId: string;
@@ -108,11 +110,15 @@ export type ToChild =
   | { t: "context.snapshot"; snapshot: ContextSnapshot }
   | { t: "net.result"; id: number; ok: true; value: NetPublicResult }
   | { t: "net.result"; id: number; ok: false; error: WireError }
+  | {t:"lifecycle";id:number;phase:"pause"|"resume"}
   | { t: "shutdown" };
 
 export type FromChild =
+  | {t:"lifecycle.done";id:number;ok:true;value:null}
+  | {t:"lifecycle.done";id:number;ok:false;error:WireError}
   | {
       t: "ready";
+      lifecycle?:boolean;
       tools: ToolInfo[];
       providers: string[];
       contexts: { name: string; order: number }[];

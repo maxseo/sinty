@@ -29,6 +29,7 @@ const send = (msg: FromChild): void => {
   process.send?.(msg);
 };
 
+let lifecycleHooks:{pause():Promise<void>|void;resume():Promise<void>|void}|undefined;
 const tools = new Map<string, ToolDefinition>();
 const providers = new Map<string, ProviderDefinition>();
 const contexts = new Map<string, { fn: ContextContributor; order: number }>();
@@ -51,6 +52,7 @@ let modelSeq = 0;
 const netWaiters = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
 let netSeq = 0;
 let closeMcp: (() => void) | undefined;
+process.once("disconnect", () => { closeMcp?.(); process.exit(0); });
 
 function agentCall<T>(op: AgentOp, ...args: unknown[]): Promise<T> {
   const id = ++agentSeq;
@@ -210,7 +212,8 @@ async function init(msg: InitMessage): Promise<void> {
     (m: string, data?: unknown): void =>
       send({ t: "log", level, msg: m, ...(data === undefined ? {} : { data }) });
 
-  const ctx: PluginContext = {
+  const ctx: PluginContext & {lifecycle(hooks:NonNullable<typeof lifecycleHooks>):void} = {
+    lifecycle(hooks){if(lifecycleHooks)throw Error("duplicate_lifecycle");lifecycleHooks=hooks},
     name: msg.manifest.name,
     config: Object.freeze({ ...msg.config }),
     paths: Object.freeze({ ...msg.paths }),
@@ -281,7 +284,7 @@ async function init(msg: InitMessage): Promise<void> {
   };
 
   if (msg.manifest.runtime === "mcp-stdio") {
-    closeMcp = await connectMcp(msg, (def) => tools.set(def.name, def as unknown as ToolDefinition));
+    closeMcp = await connectMcp(msg, (def) => tools.set(def.name, def as unknown as ToolDefinition), (close) => { closeMcp = close; });
   } else if (msg.manifest.runtime === "http") {
     closeMcp = await connectMcpHttp(msg, (def) => tools.set(def.name, def as unknown as ToolDefinition));
   } else {
@@ -307,6 +310,7 @@ async function init(msg: InitMessage): Promise<void> {
 
   send({
     t: "ready",
+    lifecycle:!!lifecycleHooks,
     tools: toolInfos,
     providers: [...providers.keys()],
     embedders: [...providers.values()].filter((p) => typeof p.embed === "function").map((p) => p.protocol),
@@ -526,6 +530,8 @@ process.on("message", (raw: ToChild) => {
     case "agent.end":
       agentStreams.get(raw.id)?.end(raw.error);
       break;
+    case "lifecycle":
+      void Promise.resolve().then(()=>{if(!lifecycleHooks)throw Error("lifecycle_not_registered");return lifecycleHooks[raw.phase]();}).then(()=>send({t:"lifecycle.done",id:raw.id,ok:true,value:null}),e=>send({t:"lifecycle.done",id:raw.id,ok:false,error:toWire(e)}));break;
     case "shutdown":
       closeMcp?.();
       process.exit(0);

@@ -1,13 +1,15 @@
+import {PluginMaintenanceGate} from "../plugin-maintenance.js";
 import { fork, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentScope, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent, SystemSectionInput, TranscriptSegment } from "@sinty/sdk";
+import type { AgentScope, BlobRef, ChatMessage, ContextInput, ContextSnapshot, EventType, LiveEvent, PluginManifest, ProviderChunk, RecoverOutcome, SintyEvent, SystemSectionInput, TranscriptSegment } from "@sinty/sdk";
 import type { SintyConfig, SintyPolicy } from "../config.js";
 import type { SintyPaths } from "../paths.js";
 import type { SecretStore } from "../secrets.js";
 import { agentManifestViolations, agentRuntimeViolations } from "../agent-plugins.js";
+import { persistMcpImages } from "../mcp-images.js";
 import { CORE_TOOL_NAMES, reservedToolOwner } from "../coretools.js";
 import { checkPublicUrl, NetGuardError, parseAllowPrivate, publicFetch, startGuardProxy, type GuardOptions, type GuardProxy } from "../netguard.js";
 import { findPlugin, pluginDataDir, resolveFsGrants, type LoadedManifest } from "./manifest.js";
@@ -31,7 +33,7 @@ const AGENT_OP_SCOPE: Record<AgentOp | "stream", AgentScope> = {
 const NO_BODY_STATUS = new Set([101, 204, 205, 304]);
 const HOP_HEADERS = new Set(["authorization", "cookie", "connection", "keep-alive", "transfer-encoding", "host"]);
 
-export type ToolOutcome = { ok: true; content: unknown } | { ok: false; error: WireError };
+export type ToolOutcome = { ok: true; content: unknown; blobs?: BlobRef[] } | { ok: false; error: WireError };
 
 /** What plugins with `permissions.agent` may do; implemented by the core. */
 export interface AgentBridge {
@@ -110,6 +112,10 @@ export class PluginProcess {
   private crashes: number[] = [];
   private stopping = false;
   private restarting: Promise<void> | undefined;
+  private restartTimer: ReturnType<typeof setTimeout> | undefined;
+  private finishRestart: (() => void) | undefined;
+  lifecycleReady=false;
+  ready = false;
   autoRestart = true;
   disabled = false;
   tools: ToolInfo[] = [];
@@ -138,17 +144,23 @@ export class PluginProcess {
     private readonly policy: SintyPolicy,
     private readonly secrets: SecretStore,
     private readonly events: HostEvents,
+    private readonly maintenanceCheck: ()=>boolean = ()=>false,
   ) {}
+  private backgroundCalls=0;
+  get inFlight():number{return this.pending.size+this.streams.size+this.backgroundCalls}
+  private assertAvailable():void{if(this.maintenanceCheck())throw Object.assign(new Error("Plugin update in progress; retry shortly"),{code:"plugin_maintenance"})}
 
   get name(): string {
     return this.loaded.manifest.name;
   }
 
   async start(): Promise<void> {
+    if (this.stopping || this.disabled) throw new Error(`plugin ${this.name} is stopped`);
     const m = this.loaded.manifest;
     if (!m.entry && m.kinds.every((k) => k === "ui")) {
       if (!m.ui?.static) throw new Error(`plugin ${m.name}: a ui plugin without entry needs "ui": { "static": "<folder>" }`);
       this.staticOnly = true;
+      this.ready = true;
       this.events.loaded(this.name, m.version);
       return;
     }
@@ -172,6 +184,7 @@ export class PluginProcess {
       const timer = setTimeout(() => reject(new Error(`plugin ${this.name}: no ready within ${READY_TIMEOUT_MS} ms`)), READY_TIMEOUT_MS);
       const onMsg = (msg: FromChild): void => {
         if (msg.t === "ready") {
+      this.lifecycleReady=!!msg.lifecycle;
           clearTimeout(timer);
           child.off("message", onMsg);
           const reserved = msg.tools.filter((t) => CORE_TOOL_NAMES.has(t.name)).map((t) => t.name);
@@ -247,6 +260,8 @@ export class PluginProcess {
       paths: { workspace: this.paths.workspace, skills: this.paths.skills, plugin: this.loaded.dir, data: pluginDataDir(this.paths, m.name) },
     });
     await ready;
+    if (this.stopping) throw new Error(`plugin ${this.name} stopped during start`);
+    this.ready = true;
     this.events.loaded(this.name, m.version);
   }
 
@@ -325,7 +340,7 @@ export class PluginProcess {
   async stopAndWait(): Promise<void> {
     const c = this.child;
     if (!c || c.exitCode !== null) {
-      this.stopping = true;
+      this.stop();
       return;
     }
     const exited = new Promise<void>((r) => c.once("exit", () => r()));
@@ -334,7 +349,15 @@ export class PluginProcess {
   }
 
   stop(): void {
+    if(this.stopping)return;
     this.stopping = true;
+    this.disabled = true;
+    this.ready = false;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = undefined;
+    this.finishRestart?.();
+    this.finishRestart = undefined;
+    this.restarting = undefined;
     if (this.child && this.child.exitCode === null) {
       this.send({ t: "shutdown" });
       const c = this.child;
@@ -372,6 +395,7 @@ export class PluginProcess {
 
   async callTool(name: string, args: unknown, ctx: CallCtx, opts: { timeoutMs?: number | undefined; signal?: AbortSignal | undefined; onProgress?: ((p: { message?: string; ratio?: number }) => void) | undefined }): Promise<ToolOutcome> {
     await this.whenRunning();
+    this.assertAvailable();
     const id = ++this.nextId;
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
     return new Promise<ToolOutcome>((resolveOutcome) => {
@@ -396,7 +420,17 @@ export class PluginProcess {
       this.pending.set(id, {
         onMessage: (msg) => {
           if (msg.t === "tool.progress") opts.onProgress?.({ ...(msg.message ? { message: msg.message } : {}), ...(msg.ratio !== undefined ? { ratio: msg.ratio } : {}) });
-          else if (msg.t === "tool.result") finish(msg.ok ? { ok: true, content: msg.content } : { ok: false, error: msg.error });
+          else if (msg.t === "tool.result") {
+            if (!msg.ok) finish({ ok: false, error: msg.error });
+            else {
+              try {
+                const result = this.loaded.manifest.runtime === "mcp-stdio" ? persistMcpImages(this.paths.data, msg.content) : { content: msg.content };
+                finish({ ok: true, ...result });
+              } catch (error) {
+                finish({ ok: false, error: { code: "invalid_mcp_image", message: error instanceof Error ? error.message : "MCP image could not be stored" } });
+              }
+            }
+          }
         },
         onCrash: (error) => finish({ ok: false, error }),
       });
@@ -406,6 +440,7 @@ export class PluginProcess {
 
   async recover(name: string, ctx: CallCtx): Promise<RecoverOutcome> {
     await this.whenRunning();
+    this.assertAvailable();
     const id = ++this.nextId;
     return new Promise((resolveOutcome) => {
       const timer = setTimeout(() => finish({ status: "unknown" }), 15_000);
@@ -424,6 +459,7 @@ export class PluginProcess {
 
   async *streamProvider(protocol: string, req: ProviderWireRequest, signal: AbortSignal): AsyncGenerator<ProviderChunk> {
     await this.whenRunning();
+    this.assertAvailable();
     const id = ++this.nextId;
     const queue: (ProviderChunk | { end: true } | { error: WireError })[] = [];
     let wake: (() => void) | undefined;
@@ -503,9 +539,12 @@ export class PluginProcess {
     );
   }
 
+  lifecycle(phase:"pause"|"resume"):Promise<null>{return this.request(id=>({t:"lifecycle",id,phase}),m=>m.t==="lifecycle.done"?m:undefined,5000,"plugin "+phase)}
+
   /** One request, one answer, with a timeout; rejects with a ProviderError carrying the wire error. */
   private async request<T>(build: (id: number) => ToChild, match: (msg: FromChild) => ({ ok: true; value: unknown } | { ok: false; error: WireError }) | undefined, timeoutMs: number, what: string, signal?: AbortSignal): Promise<T> {
     await this.whenRunning();
+    this.assertAvailable();
     const id = ++this.nextId;
     return new Promise<T>((resolveValue, reject) => {
       let done = false;
@@ -544,9 +583,10 @@ export class PluginProcess {
       this.send({ t: "models.result", id, ok: false, error: { code: "models_unavailable", message: "this core has no model gateway" } });
       return;
     }
+    this.backgroundCalls++;
     models(this.name, this.loaded.manifest.permissions.models, op, req && typeof req === "object" ? req : {})
       .then((value) => this.send({ t: "models.result", id, ok: true, value }))
-      .catch((e: unknown) => this.send({ t: "models.result", id, ok: false, error: wireOf(e) }));
+      .catch((e: unknown) => this.send({ t: "models.result", id, ok: false, error: wireOf(e) })).finally(()=>{this.backgroundCalls--});
   }
 
   /** What the guard allows for this plugin: config.yaml `plugins.config.<name>.allowPrivate`, never the manifest default. */
@@ -556,10 +596,11 @@ export class PluginProcess {
 
   private onNetPublic(msg: { id: number; op: "fetch"; url: string; init: NetPublicInit } | { id: number; op: "proxy" } | { id: number; op: "check"; url: string }): void {
     const reply = (p: Promise<unknown>): void => {
+      this.backgroundCalls++;
       p.then((value) => this.send({ t: "net.result", id: msg.id, ok: true, value: value as never })).catch((e: unknown) => {
         const error: WireError = e instanceof NetGuardError ? { code: e.code, message: e.message, ...(e.hint ? { hint: e.hint } : {}) } : wireOf(e);
         this.send({ t: "net.result", id: msg.id, ok: false, error });
-      });
+      }).finally(()=>{this.backgroundCalls--});
     };
     const perms = this.loaded.manifest.permissions;
     if (!(perms.net ?? []).includes(PUBLIC_NET)) {
@@ -593,8 +634,10 @@ export class PluginProcess {
   /** Forwards an HTTP request to one of the plugin's routes; the response body streams back chunk by chunk. */
   async handleHttp(route: number, params: Record<string, string>, req: Request, relativeUrl: string): Promise<Response> {
     await this.whenRunning();
+    this.assertAvailable();
     const id = ++this.nextId;
     const body = req.method === "GET" || req.method === "HEAD" ? null : new Uint8Array(await req.arrayBuffer());
+    this.assertAvailable();
     const headers = [...req.headers.entries()].filter(([k]) => !HOP_HEADERS.has(k.toLowerCase()));
     return new Promise<Response>((resolveResponse) => {
       let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -665,10 +708,11 @@ export class PluginProcess {
       this.send({ t: "agent.result", id, ok: false, error: { code: "agent_denied", message: `plugin ${this.name} lacks permissions.agent "${AGENT_OP_SCOPE[op]}" for ${op}` } });
       return;
     }
+    this.backgroundCalls++;
     bridge
       .call(this.name, op, Array.isArray(args) ? args : [])
       .then((value) => this.send({ t: "agent.result", id, ok: true, value }))
-      .catch((e: unknown) => this.send({ t: "agent.result", id, ok: false, error: wireOf(e) }));
+      .catch((e: unknown) => this.send({ t: "agent.result", id, ok: false, error: wireOf(e) })).finally(()=>{this.backgroundCalls--});
   }
 
   private onAgentStream(id: number, sessionId: string, afterSeq: number): void {
@@ -686,6 +730,7 @@ export class PluginProcess {
 
   async runContext(name: string, input: ContextInput): Promise<ChatMessage[]> {
     await this.whenRunning();
+    this.assertAvailable();
     const id = ++this.nextId;
     return new Promise((resolveMessages, reject) => {
       const timer = setTimeout(() => finish(new Error(`context ${name} timed out`)), 30_000);
@@ -709,6 +754,7 @@ export class PluginProcess {
   /** Renders one ctx.systemSection block. Short timeout: it sits in front of every model step. */
   async runSection(name: string, input: SystemSectionInput, timeoutMs = 5_000): Promise<string | null> {
     await this.whenRunning();
+    this.assertAvailable();
     const id = ++this.nextId;
     return new Promise((resolveText, reject) => {
       const timer = setTimeout(() => finish(new Error(`section ${name} timed out`)), timeoutMs);
@@ -731,7 +777,7 @@ export class PluginProcess {
 
   private send(msg: ToChild): boolean {
     if (!this.child?.connected) return false;
-    this.child.send(msg);
+    try{this.child.send(msg,(error)=>{if(error&&!this.stopping)this.events.log(this.name,"warn","Plugin IPC unavailable")})}catch{return false}
     return true;
   }
 
@@ -755,6 +801,7 @@ export class PluginProcess {
   }
 
   private onExit(code: number | null): void {
+    this.ready = false;
     const crash: WireError = { code: "plugin_crashed", message: `plugin ${this.name} exited with code ${code}`, hint: "The plugin process restarts automatically; retry once." };
     for (const p of [...this.pending.values()]) p.onCrash(crash);
     this.pending.clear();
@@ -774,12 +821,17 @@ export class PluginProcess {
     }
     const delay = Math.min(30_000, 500 * 2 ** (this.crashes.length - 1));
     const restarting: Promise<void> = new Promise<void>((resolveRestart) => {
-      setTimeout(() => {
-        if (this.stopping) return resolveRestart();
+      this.finishRestart = resolveRestart;
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = undefined;
+        if (this.stopping || this.disabled || !this.autoRestart) return resolveRestart();
         this.start()
           .catch((e: unknown) => this.events.log(this.name, "error", `restart failed: ${e instanceof Error ? e.message : String(e)}`))
           .finally(() => {
-            if (this.restarting === restarting) this.restarting = undefined;
+            if (this.restarting === restarting) {
+              this.restarting = undefined;
+              this.finishRestart = undefined;
+            }
             resolveRestart();
           });
       }, delay).unref();
@@ -830,7 +882,13 @@ export class ProviderError extends Error {
 }
 
 export class PluginHost {
+  private readonly maintenance = new PluginMaintenanceGate();
+  readonly recoveryBlocked=new Map<string,string>();
+  async beginUpdate(name:string,timeoutMs=10000){if(this.recoveryBlocked.has(name))throw Object.assign(Error("Plugin update recovery requires review"),{code:"plugin_recovery_required"});return this.maintenance.acquire(name,()=>this.plugins.get(name)?.inFlight??0,timeoutMs)}
   readonly plugins = new Map<string, PluginProcess>();
+  readonly startErrors = new Map<string, string>();
+  private readonly generations = new Map<string, number>();
+  private stopped = false;
 
   constructor(
     private readonly paths: SintyPaths,
@@ -841,17 +899,12 @@ export class PluginHost {
   ) {}
 
   async start(): Promise<{ failed: { plugin: string; error: string }[] }> {
+    this.stopped = false;
     const failed: { plugin: string; error: string }[] = [];
     await Promise.all(
-      this.config.plugins.enabled.map(async (name) => {
-        try {
-          const loaded = findPlugin(this.paths, name, this.config.plugins.searchPaths);
-          const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events);
-          await proc.start();
-          this.plugins.set(name, proc);
-        } catch (e) {
-          failed.push({ plugin: name, error: e instanceof Error ? e.message : String(e) });
-        }
+      this.config.plugins.enabled.filter((name) => !this.config.plugins.disabled?.includes(name)).map(async (name) => {
+        const error = await this.reload(name);
+        if (error) failed.push({ plugin: name, error });
       }),
     );
     // Plugins start in parallel and finish in any order. Keep the map in plugins.enabled order so tools, contexts,
@@ -886,29 +939,57 @@ export class PluginHost {
   }
 
   stop(): void {
+    this.stopped = true;
     for (const p of this.plugins.values()) p.stop();
   }
 
+  /** In-memory off switch before uninstall: also blocks concurrent queued patch reloads. */
+  async disable(name: string): Promise<void> {
+    if(this.maintenance.blocked(name))throw Object.assign(Error("Plugin update in progress"),{code:"plugin_maintenance"});
+    this.config.plugins.enabled = this.config.plugins.enabled.filter((n) => n !== name);
+    this.config.plugins.disabled = [...new Set([...(this.config.plugins.disabled ?? []), name])];
+    await this.unload(name);
+  }
+
   /** Stops a plugin and forgets it until the next reload. Windows cannot delete the folder of a running process. */
-  async unload(name: string): Promise<void> {
+  async unload(name: string, token?:symbol): Promise<void> {
+    if(this.maintenance.blocked(name,token))throw Object.assign(Error("Plugin update in progress"),{code:"plugin_maintenance"});
+    this.generations.set(name, (this.generations.get(name) ?? 0) + 1);
+    this.startErrors.delete(name);
     const old = this.plugins.get(name);
     this.plugins.delete(name);
     if (old) await old.stopAndWait();
   }
 
   /** Restarts a plugin from disk (after a patch or rollback). Returns the error if the new version does not start. */
-  async reload(name: string): Promise<string | undefined> {
-    await this.unload(name);
+  async reload(name: string, token?:symbol): Promise<string | undefined> {
+    if(this.recoveryBlocked.has(name))return "Update recovery requires review: "+this.recoveryBlocked.get(name);
+    if(this.maintenance.blocked(name,token))return "plugin_maintenance";
+    const unloading = this.unload(name,token);
+    const generation = this.generations.get(name);
+    await unloading;
+    if(this.maintenance.blocked(name,token))return "plugin_maintenance";
+    if (this.stopped || this.generations.get(name) !== generation) return undefined;
+    this.startErrors.delete(name);
+    // A pending patch/restart must never resurrect an explicitly disabled plugin.
+    if (!this.config.plugins.enabled.includes(name) || this.config.plugins.disabled?.includes(name)) return undefined;
+    let proc: PluginProcess | undefined;
     try {
       const loaded = findPlugin(this.paths, name, this.config.plugins.searchPaths);
-      const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events);
-      await proc.start();
+      proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, this.events,()=>this.maintenance.blocked(name));
+      // Register before awaiting readiness: disable/uninstall must be able to stop a starting process.
       this.plugins.set(name, proc);
+      await proc.start();
+      if (this.plugins.get(name) !== proc) return undefined;
       this.reorder();
       return undefined;
     } catch (e) {
+      if (proc) await proc.stopAndWait(); // failed starts must not leave an orphan restart loop
+      if (proc && this.plugins.get(name) !== proc) return undefined;
       this.plugins.delete(name);
-      return e instanceof Error ? e.message : String(e);
+      const error = e instanceof Error ? e.message : String(e);
+      this.startErrors.set(name, error);
+      return error;
     }
   }
 
@@ -916,8 +997,8 @@ export class PluginHost {
   async startDetached(loaded: LoadedManifest): Promise<PluginProcess> {
     const proc = new PluginProcess(loaded, this.paths, this.config, this.policy, this.secrets, { ...this.events, loaded: () => undefined, crashed: () => undefined });
     proc.autoRestart = false;
-    await proc.start();
-    return proc;
+    try { await proc.start(); return proc; }
+    catch (error) { await proc.stopAndWait(); throw error; }
   }
 
   locate(name: string): LoadedManifest {

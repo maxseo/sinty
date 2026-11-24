@@ -101,6 +101,10 @@ function toInputItems(m: ChatMessage): Record<string, unknown>[] {
     for (const c of m.toolCalls ?? []) items.push({ type: "function_call", call_id: c.id, name: c.name, arguments: JSON.stringify(c.args ?? {}) });
     return items;
   }
+  if (m.role === "user" && m.images?.length) return [{ role: "user", content: [
+    { type: "input_text", text: m.content },
+    ...m.images.map((image) => ({ type: "input_image", image_url: `data:${image.mime};base64,${image.data}` })),
+  ] }];
   return [{ role: m.role === "system" ? "developer" : m.role, content: m.content }];
 }
 

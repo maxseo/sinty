@@ -15,6 +15,10 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  apps/distribution-center: {}
+
+  apps/managed-updater: {}
+
   apps/web:
     dependencies:
       marked:
@@ -118,6 +122,12 @@ importers:
         specifier: ^0.28.2
         version: 0.28.2
 
+  plugins/dynamic-tools:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/example-echo:
     dependencies:
       '@sinty/sdk':
@@ -160,11 +170,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/memory-v1:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/otel:
     dependencies:
       '@sinty/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+
+  plugins/plugin-catalog: {}
 
   plugins/provider-anthropic:
     dependencies:
@@ -249,6 +267,15 @@ importers:
       '@sinty/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+
+  plugins/tool-browser:
+    dependencies:
+      '@sinty/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      playwright:
+        specifier: ^1.64.1
+        version: 1.64.1
 
   plugins/tool-fs:
     dependencies:

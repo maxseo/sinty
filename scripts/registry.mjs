@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
 
 const root = join(import.meta.dirname, "..");
 const plugins = [];
@@ -13,6 +13,9 @@ for (const name of readdirSync(join(root, "plugins")).sort()) {
     /* not a plugin folder */
   }
 }
-mkdirSync(join(root, "registry"), { recursive: true });
-writeFileSync(join(root, "registry", "plugins.json"), JSON.stringify({ protocol: "sinty/1.0", plugins }, null, 2) + "\n");
-console.log(`registry: ${plugins.length} plugins`);
+const outFlag = process.argv.indexOf("--out");
+if(outFlag>=0&&!process.argv[outFlag+1])throw Error("--out requires a destination file");
+const output = outFlag>=0 ? resolve(process.argv[outFlag+1]) : join(root,"registry","plugins.json");
+mkdirSync(dirname(output), { recursive: true });
+writeFileSync(output, JSON.stringify({protocol:"sinty/1.0",plugins},null,2)+"\n");
+console.log(JSON.stringify({plugins:plugins.length,output}));

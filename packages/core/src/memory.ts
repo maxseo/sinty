@@ -571,8 +571,19 @@ export function ftsStem(word: string): string {
   return chars.length > 5 ? chars.slice(0, Math.max(4, chars.length - 3)).join("") : word;
 }
 
-export function estimateTokens(messages: ChatMessage[]): number {
-  return Math.ceil(JSON.stringify(messages).length / 4);
+/** Provider-independent conservative reservation, not image billing/tokenization.
+ * Image processors vary by model/resolution; reserve 32k/image rather than treating transfer base64 as text.
+ * The existing usage-ratio feedback still applies. Text-only estimates are byte-for-byte unchanged.
+ */
+export const IMAGE_TOKEN_RESERVE = 32_768;
+export function estimateTokens(messages: ChatMessage[], overheadChars = 0): number {
+  let imageCount = 0;
+  const text = messages.map((message) => {
+    if (!message.images?.length) return message;
+    imageCount += message.images.length;
+    return { ...message, images: message.images.map(({ mime }) => ({ mime })) };
+  });
+  return Math.ceil((JSON.stringify(text).length + overheadChars) / 4) + imageCount * IMAGE_TOKEN_RESERVE;
 }
 
 /**

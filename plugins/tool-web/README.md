@@ -88,3 +88,15 @@ before a human applies it.
 | `actionTimeoutSeconds` | 8 | wait for a click target |
 | `screenshotDir` | `browser` | folder inside the workspace |
 | `allowPrivate` | empty | host[:port] list the core lets through |
+
+## Persistent browser pilot (staged, opt-in; existing stateless tools unchanged)
+
+`src/persistent.ts` exports `WebToolsPilotDriver`, an internal implementation of the existing core `BrowserPilotDriver` interface. It is NOT another plugin or a raw Playwright/CDP/desktop tool. The owner/agent/project identity and upload selection remain in the existing authenticated core BrowserPilot broker; profile names and native session IDs never come from model arguments. An embedding host can inject this adapter through `SintyOptions.browserPilotDriver` after acceptance; the running application has NOT been switched to it.
+
+The broker passes its trusted `fixture` and canonical project `workspace` into prepare. Same owner/agent/project maps to a stable dedicated profile and the session retains one headed Chromium context across calls. A fresh broker/context can reopen that profile after clean close; no personal browser profile is inspected or copied. File locks reject another process/adapter using the same profile. Unknown stale locks fail closed rather than killing other processes or deleting profile data. Lifetime is capped at 20 minutes; unknown close keeps locks quarantined.
+
+Pilot actions: prepare, fixed-fixture navigation, CSS-selector click/fill/select, bounded scroll, state + PNG, owner-selected workspace attachment, download into `_out/browser-pilot/<owned-session>`, close/cancel. PNG is returned as an inline image block <=4MB for the ALREADY STAGED core artifact/provider pipeline, not a base64 text result in the journal. This needs that pipeline when enabling the pilot; do not deploy this module alone and claim vision works.
+
+All browser traffic retains the core's authenticated guarded proxy, with only the exact local fixture port added for this lease (not global private-network access). Context routes allow only GET of the granted origin's fixed fixture/download paths, service workers are blocked and WebSockets are rejected before fixture navigation. This is not OS/network/container isolation; startup/background-browser traffic and a malicious same-user local process are not absolutely fenced by these controls. No raw JS/CDP, clipboard or desktop action is model-accessible. Generic click semantics cannot guarantee no external submission: this pilot is deliberately a synthetic non-submitting fixture; normal public web tools/policies remain unchanged.
+
+Owner pause marks an in-flight operation `pausing` until it returns, then `manual`; agent calls are blocked meanwhile. It is NOT an instant simultaneous handoff promise. Resume and release use the existing owner broker UI/API. Production UI/bootstrap activation is deferred until the one-click real browser acceptance succeeds. No general websites or accounts are admitted by this fixture-only adapter.

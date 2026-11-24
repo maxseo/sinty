@@ -148,3 +148,21 @@ MCP servers (only): create a new home plugin with core tool `mcp.install` or `PO
 New node plugins: core tool `plugin.create` (default **allow**: it only stages and tests) writes a new plugin into staging under the narrower rules of [plugin-rules.md](plugin-rules.md) section 9; `plugin.apply_patch` for it always asks a human, then installs, enables and starts it.
 
 Not yet: a policy mode that applies patches automatically when tests pass.
+
+### Installed MCP lifecycle
+
+Settings → MCP always lists installed stdio/HTTP manifests, not only successful running processes.
+The library API reports `enabled`, `status` (disabled/stopped/starting/running/failed), `tools`, optional redacted `error`, `location` and `removable`. Commands, env values and secrets are not included.
+A per-plugin persisted switch updates only that plugin in enabled/disabled lists. Disabled plugins are not spawned at startup or reloaded by patches, have no readiness wait, and expose no tools. Disabling cancels pending crash restarts and stops initialization too. Failed initial starts are stopped and retained as an error, not an unowned restart loop.
+Uninstall requires a confirmation in the UI. It stops the process, removes the managed home installation, saved settings, inspect-list and roster references. `data/<plugin>` and secrets remain; data erasure is not implicit. Bundled, search-path/external, redirected/symlink/junction installs and ambiguous duplicate installations are not recursively deleted. Shared dependencies outside the plugin's own directory are untouched.
+
+
+## Staged vNext package metadata / update foundation (not deployed)
+
+`categories?: ("system" | "functional" | "ui")[]` describes purpose; `kinds` still describes extension points, `permissions` is the only grant declaration. Omitted categories preserve legacy manifests (display can use inferredCategories). No category enables privileged access.
+
+`compatibility?: { core?, sdk?, protocol?, platforms?, architectures? }`: core/SDK use independent strict-SemVer comparator AND ranges, e.g. `>=0.5.1 <0.6.0` and `>=0.0.1 <0.1.0`. At most four comparators, no wildcard/caret/tilde/OR; prereleases require an explicit same-base prerelease comparator. `protocol` is exact; platforms win32/linux/darwin, architectures x64/arm64. Unsupported or unsatisfied declarations fail closed BEFORE old plugin unload. These are staged fields: deployed old0.5.1 parser cannot accept them until its update.
+
+`changelog?: "CHANGELOG.md"` is a bounded relative package file path, never URL/parent traversal; declared file must be included. Existing packages without metadata remain valid. New authoring requires purpose, versioned history, compatibility, minimal permissions and tests. Single developer command: `node scripts/plugin-version.mjs check`; `node scripts/plugin-version.mjs bump <name> <new-version> <change-note>` updates manifest/package/changelog together, never publishes. Manifest version is authoritative; SDK0.0.1 is NOT forcibly made0.5.1. Permission/surface changes follow the existing breaking-change rule above.
+
+Home path/npm updates now stage and validate, quiesce only selected plugin, retain previous directory under managed .rollback, activate/reload and atomically persist enablement only after readiness. Changed permissions require exact owner-reviewed old/new fingerprints; categories cannot suppress review. Failed validation does not interrupt old runtime; failed activation restores package and old runtime; failed restoration reports rollback_failed. Config/data/secrets are not package replacement targets. Bundled overwrite prohibition remains. Local path/npm packages are explicitly unsigned/unverified-publisher sources, not signed catalog installs. Materialized safe regular files only: links/hardlinks/PAX/GNU extended headers are rejected in this bounded first archive reader; no npm install-script fallback. Signed catalog primitives do NOT constitute a deployed catalog or download client.

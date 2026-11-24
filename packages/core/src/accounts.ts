@@ -117,6 +117,8 @@ export class Accounts {
 
   constructor(file: string) {
     this.db = new DatabaseSync(file);
+    // Set the wait before any other PRAGMA so a concurrent first-run open can proceed on Windows too.
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
@@ -223,21 +225,42 @@ export class Accounts {
     return Boolean(this.db.prepare("SELECT 1 FROM users LIMIT 1").get());
   }
 
-  /** First person on this install. Refused once anyone exists. */
+  /** First person on this install. Refused once anyone exists. Serialized across processes via BEGIN IMMEDIATE. */
   setup(input: { email: string; password: string; firstName?: string; lastName?: string }): { user: AccountUser; token: string } {
-    if (this.hasUsers()) throw new AccountError("already_setup", "Суперадмин уже создан.", 409);
-    const roleId = id("rol");
-    this.db.prepare("INSERT INTO roles (id, name, system) VALUES (?, ?, 1)").run(roleId, "Суперадмин");
-    const user = this.insertUser({
-      email: input.email,
-      password: input.password,
-      firstName: input.firstName ?? "",
-      lastName: input.lastName ?? "",
-      avatar: "",
-      roleId,
-      enabled: true,
-    });
-    return { user, token: this.openSession(user.id) };
+    const already = () => new AccountError("already_setup", "Суперадмин уже создан.", 409);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        this.db.exec("BEGIN IMMEDIATE");
+      } catch (e) {
+        if (this.hasUsers()) throw already();
+        if (attempt < 7) continue;
+        throw e;
+      }
+      try {
+        if (this.hasUsers()) throw already();
+        const roleId = id("rol");
+        this.db.prepare("INSERT INTO roles (id, name, system) VALUES (?, ?, 1)").run(roleId, "Суперадмин");
+        const user = this.insertUser({
+          email: input.email,
+          password: input.password,
+          firstName: input.firstName ?? "",
+          lastName: input.lastName ?? "",
+          avatar: "",
+          roleId,
+          enabled: true,
+        });
+        const token = this.openSession(user.id);
+        this.db.exec("COMMIT");
+        return { user, token };
+      } catch (e) {
+        try { this.db.exec("ROLLBACK"); } catch { /* no open transaction */ }
+        if (e instanceof AccountError) throw e;
+        if (this.hasUsers()) throw already();
+        if (attempt < 7) continue;
+        throw e;
+      }
+    }
+    throw already();
   }
 
   login(email: string, password: string): { user: AccountUser; token: string } {

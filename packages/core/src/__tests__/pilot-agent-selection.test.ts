@@ -1,0 +1,62 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import { browserPilotAgentIds } from "../browser-pilot.js";
+import { Sinty } from "../sinty.js";
+import { createApp } from "../api/server.js";
+import { saveAgent, saveProject, loadRoster } from "../roster.js";
+import { tempHome, testConfig } from "./helpers.js";
+
+test("pilot eligibility: empty projects use real owner-selected roster UUIDs; explicit membership remains restrictive", () => {
+  const agents = [{ id: "agent-a" }, { id: "agent-b" }];
+  assert.deepEqual(browserPilotAgentIds(agents, undefined), []);
+  assert.deepEqual(browserPilotAgentIds(agents, { agentIds: [] }), ["agent-a", "agent-b"]);
+  assert.deepEqual(browserPilotAgentIds(agents, { agentIds: ["agent-b"] }), ["agent-b"]);
+  assert.deepEqual(browserPilotAgentIds(agents, { agentIds: ["deleted-agent"] }), []);
+  assert.deepEqual(browserPilotAgentIds([], { agentIds: [] }), []);
+});
+
+test("owner API: three roster agents remain selectable in a project with empty agentIds without changing roster or granting everyone", async t => {
+  const { home } = tempHome();
+  const sinty = new Sinty({ home, config: testConfig([], {}, ["tool-web"]), browserPilotWebTools: true });
+  await sinty.start({ background: false });
+  t.after(async () => { await sinty.stop(); await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 }); });
+  const agents = ["Synthetic Sintia", "Synthetic Marina", "Synthetic Deploy"].map(name => saveAgent(sinty.paths, { name }));
+  const project = saveProject(sinty.paths, { name: "Synthetic Research" });
+  const assigned = saveProject(sinty.paths, { name: "Assigned", agentIds: [agents[0]!.id] });
+  const rosterBefore = readFileSync(join(sinty.paths.data, "roster.json"), "utf8");
+  const app = createApp(sinty), base = "http://127.0.0.1:3180/v1/browser-pilot";
+  const headers = { authorization: "Bearer " + sinty.secrets.get("api.token"), "content-type": "application/json" };
+  assert.equal((await app.request(base)).status, 401);
+  const response = await app.request(base, { headers }); assert.equal(response.status, 200);
+  const payload = await response.json() as any;
+  assert.equal(payload.agents.length, 3);
+  assert.deepEqual(payload.projects.find((p: any) => p.id === project.id).agentIds, []);
+  assert.deepEqual(payload.projects.find((p: any) => p.id === project.id).pilotAgentIds, agents.map(a => a.id));
+  assert.deepEqual(payload.projects.find((p: any) => p.id === assigned.id).pilotAgentIds, [agents[0]!.id]);
+  const grant = (projectId: string, agentId: string, extra = {}) => app.request(base, { method: "POST", headers, body: JSON.stringify({ projectId, agentId, ...extra }) });
+  assert.equal((await grant(project.id, "unknown-agent")).status, 400);
+  assert.equal((await grant("unknown-project", agents[1]!.id)).status, 400);
+  assert.equal((await grant(assigned.id, agents[1]!.id)).status, 400);
+  assert.equal((await grant(project.id, agents[1]!.id, { ownerId: "forged" })).status, 400);
+  const result = await grant(project.id, agents[1]!.id); assert.equal(result.status, 201);
+  const lease = await result.json() as any;
+  const execution = sinty.browserPilot.execution("local-machine-owner", lease.sessionId)!;
+  assert.equal(execution.agentId, agents[1]!.id);
+  assert.equal(execution.projectId, project.id);
+  assert.deepEqual(sinty.journal.getSession(lease.sessionId)?.metadata?.agentIds, [agents[1]!.id]);
+  assert.equal(sinty.browserPilot.list("local-machine-owner").length, 1);
+  assert.throws(() => sinty.browserPilot.execution("foreign-owner", lease.sessionId), /No browser lease/);
+  assert.equal(readFileSync(join(sinty.paths.data, "roster.json"), "utf8"), rosterBefore);
+  assert.deepEqual(loadRoster(sinty.paths).projects.find(p => p.id === project.id)?.agentIds, []);
+  // Observe trusted dispatch only. Never call a model or prepare a browser.
+  const dispatched: unknown[] = [];
+  sinty.agent.send = ((sessionId: string, text: string, opts: unknown) => { dispatched.push({ sessionId, text, opts }); return { turnId: "synthetic-turn" }; }) as typeof sinty.agent.send;
+  assert.deepEqual(sinty.agent.sendPilot("local-machine-owner", lease.sessionId, "synthetic task"), { turnId: "synthetic-turn" });
+  assert.equal((dispatched[0] as any).opts.agentId, agents[1]!.id);
+  saveProject(sinty.paths, { ...project, agentIds: [agents[0]!.id] });
+  assert.throws(() => sinty.agent.sendPilot("local-machine-owner", lease.sessionId, "must reject"), /Selected agent\/project\/workspace changed/);
+  assert.equal(dispatched.length, 1);
+});

@@ -1,3 +1,8 @@
+import {SystemUpdatesPane} from "./system-updates-pane.js";
+import {PluginTab,type PluginTabInfo} from "./plugin-tab.js";
+import {PluginRecoveryPane} from "./plugin-recovery-pane.js";
+import {PluginCatalogPane} from "./plugin-catalog-pane.js";
+import { ModelSettings, type ModelProfiles } from "./model-settings.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api, rotateToken, token } from "./api.js";
 import { go, href } from "./route.js";
@@ -28,6 +33,7 @@ function useLoad<T>(path: string, deps: unknown[]): { data: T | undefined; error
 }
 
 interface PluginInfo {
+  tabs?: Omit<PluginTabInfo,"plugin">[];
   name: string;
   version: string;
   description: string;
@@ -75,7 +81,7 @@ function useEnabledModels(): string[] {
   return (data?.models ?? []).filter((m) => m.enabled).map((m) => m.route);
 }
 
-function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean; variant?: "native" | "cselect" }) {
+export function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: string; value: string; onChange: (v: string) => void; allowEmpty?: boolean; variant?: "native" | "cselect" }) {
   const routes = useEnabledModels();
   const shown = value.includes("/") ? value : "";
   const selected = routes.includes(shown) ? shown : "";
@@ -83,7 +89,7 @@ function ModelSelect({ label, value, onChange, allowEmpty, variant }: { label: s
     return (
       <label class="field">
         {label}
-        <CSelect value={selected} onChange={onChange} options={routes.map((r) => ({ value: r, label: r }))} emptyLabel={allowEmpty ? "модель установки" : undefined} />
+        <CSelect label={label} value={selected} onChange={onChange} options={routes.map((r) => ({ value: r, label: r }))} emptyLabel={allowEmpty ? "модель установки" : undefined} />
       </label>
     );
   }
@@ -496,7 +502,8 @@ function PluginsSettings({
   onCatalogChange: () => void;
 }) {
   const { data, error, reload } = useLoad<{ plugins: PluginInfo[] }>("/v1/plugins", []);
-  const [tab, setTab] = useState<"list" | "add">("list");
+  const [tab, setTab] = useState<string>("list");
+  const history=useLoad<{catalogConfigured:boolean;entries:{id:string;name:string;phase:string;version?:string;previousVersion?:string;updated:string;trust?:string;reason?:string;changelog?:string}[];blocked:{name:string;reason:string}[]}>("/v1/plugins/history",[]);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -507,6 +514,8 @@ function PluginsSettings({
   const [drop, setDrop] = useState<string | null>(null);
   // Settings→Plugins must list the install catalog (incl. opt-in off plugins like scheduler)
   // and home installs. GET /v1/plugins only returns currently loaded plugins.enabled entries.
+  const extraPluginTabs=(data?.plugins??[]).flatMap(p=>(p.tabs??[]).filter(t=>t.placement==="plugins"&&!!t.src&&!t.builtin).map(t=>({...t,plugin:p.name})));
+  const extraTab=extraPluginTabs.find(t=>tab===`tab:${t.plugin}/${t.id}`);
   const loaded = new Map((data?.plugins ?? []).map((p) => [p.name, p]));
   const all: PluginInfo[] = catalog.map((c) => {
     const p = loaded.get(c.name);
@@ -619,6 +628,9 @@ function PluginsSettings({
         <div class="seg pills">
           <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Установленные</button>
           <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>Добавить</button>
+          {extraPluginTabs.map(t=><button type="button" key={t.plugin+"/"+t.id} class={tab===`tab:${t.plugin}/${t.id}`?"on":""} onClick={()=>setTab(`tab:${t.plugin}/${t.id}`)}>{t.title}</button>)}
+          {data?.plugins.some(p=>p.name==="plugin-catalog"&&p.tabs?.some(t=>t.placement==="plugins"&&t.builtin==="plugin-catalog"))&&<button type="button" class={tab==="catalog"?"on":""} onClick={()=>setTab("catalog")}>Каталог плагинов</button>}
+          <button type="button" class={tab === "history" ? "on" : ""} onClick={() => {history.reload();setTab("history")}}>История обновлений</button>
         </div>
         {(error || localError) && <p class="error">{error || localError}</p>}
         {notice && <p class="note">{notice}</p>}
@@ -626,7 +638,7 @@ function PluginsSettings({
           <div class="overlay" onClick={() => { if (!busy) setDrop(null); }}>
             <div class="dialog" onClick={(e) => e.stopPropagation()}>
               <h3>Удалить {drop}?</h3>
-              <p>Плагин будет стёрт из библиотеки. Его настройки и данные удалятся безвозвратно. Выключение этого не делает: при выключении всё сохраняется.</p>
+              <p>Файлы установки, настройки и связи с агентами будут удалены. Пользовательские данные и секреты сохранятся. Выключение только останавливает плагин и сохраняет установку.</p>
               <footer class="dialog-actions">
                 <button type="button" class="secondary" disabled={busy} onClick={() => setDrop(null)}>Отмена</button>
                 <button type="button" class="danger" disabled={busy} onClick={() => void remove(drop)}>Удалить</button>
@@ -634,7 +646,14 @@ function PluginsSettings({
             </div>
           </div>
         )}
-        {tab === "list" ? (
+        {extraTab ? <PluginTab tab={extraTab}/> : tab === "catalog" ? <PluginCatalogPane onInstalled={()=>{reload();history.reload();onCatalogChange()}}/> : tab === "history" ? <div><PluginRecoveryPane/>
+          <button type="button" class="secondary" onClick={()=>history.reload()}>Обновить историю</button>
+          {history.error && <p class="error">{history.error}</p>}
+          {history.data && !history.data.catalogConfigured && <p class="note">Источник обновлений ещё не настроен. Доступных версий из проверенного каталога пока нет.</p>}
+          {history.data?.blocked.map(b=><p class="error" key={b.name}>{b.name}: обновление требует проверки ({b.reason}). Автоматический запуск заблокирован; данные сохранены.</p>)}
+          {history.data?.entries.map(e=><article class="card" key={e.id}><b>{e.name} · {e.previousVersion ? e.previousVersion+" → " : ""}{e.version??"—"}</b><p>{({committed:"Установлено",rolled_back:"Прежняя версия восстановлена",recovery_required:"Требуется проверка"} as Record<string,string>)[e.phase]??"Обновление прервано или выполняется"} · {new Date(e.updated).toLocaleString()} · {e.trust??"Источник не подтверждён"}</p>{e.reason&&<p class="note">{e.reason}</p>}{e.changelog&&<details><summary>Изменения</summary><pre style={{whiteSpace:"pre-wrap"}}>{e.changelog}</pre></details>}</article>)}
+          {history.data?.entries.length===0&&<p class="note">Обновлений через новый менеджер ещё не было.</p>}
+        </div> : tab === "list" ? (
           <>
             <input class="search" placeholder="Поиск плагинов" value={q} onInput={(e) => setQ(e.currentTarget.value)} />
             <div class="plugin-grid">
@@ -739,7 +758,7 @@ export function SettingsPage({ onSaved, section }: { onSaved: () => void; sectio
       </header>
       {error && <p class="error agent-page-error">{error}</p>}
       {!can(settingsResource(section)) ? <Denied /> : null}
-      {section === "general" && can("settings:general") && <GeneralPane />}
+      {section === "general" && can("settings:general") && <><GeneralPane /><SystemUpdatesPane /></>}
       {section === "staff" && can("nav:staff") && <StaffPage />}
       {section === "uikit" && can("settings:uikit") && <KitPage />}
       {section !== "general" && section !== "models" && section !== "plugins" && section !== "uikit" && section !== "staff" && can(settingsResource(section)) && <SectionPane key={section} id={section} />}
@@ -773,6 +792,7 @@ interface AgentRecord {
   avatar: string;
   persona: string;
   model: string;
+  modelProfiles?: ModelProfiles;
   fallback: string;
   serviceModel: string;
   compress: string;
@@ -792,6 +812,7 @@ interface PluginRow {
   forAll?: boolean;
   defaultOn?: boolean;
   disabled?: boolean;
+  tabs?: Omit<PluginTabInfo, "plugin">[];
 }
 
 const blankAgent = (): AgentRecord => ({
@@ -831,7 +852,7 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
   const skills = useLoad<{ skills: { name: string; description: string }[]; disabled?: boolean }>("/v1/roster/skills", []);
   const installModel = useInstallModel();
   const [draft, setDraft] = useState<AgentRecord | undefined>();
-  const [tab, setTab] = useState<"general" | "plugins" | "skills" | "mcp">("general");
+  const [tab, setTab] = useState<"general" | "plugins" | "skills" | "mcp" | "memory">("general");
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -912,6 +933,7 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
     );
   }
 
+  const memoryTab = (plugins.data?.plugins ?? []).flatMap((p) => (p.tabs ?? []).filter((t) => t.placement === "agent" && t.src).map((t) => ({ ...t, plugin: p.name }))).at(0);
   const letter = agentLetter(draft.name || draft.id || "?");
   const hue = agentHue(draft.name || draft.id || "?");
   const subtitle = [draft.specialization.trim(), draft.id ? "карточка агента" : "новый агент"].filter(Boolean).join(" · ");
@@ -932,6 +954,9 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
               {id === "general" ? "Общее" : id === "plugins" ? "Плагины" : id === "skills" ? "Навыки" : "MCP"}
             </button>
           ))}
+          {memoryTab && draft.id && (
+            <button type="button" class={tab === "memory" ? "on" : ""} onClick={() => setTab("memory")}>Память</button>
+          )}
         </div>
         <button type="button" class="agent-save" disabled={!draft.name.trim()} onClick={() => void saveAgentForm()}>Сохранить</button>
       </header>
@@ -967,7 +992,9 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
               <details class="acc" open>
                 <summary>Модели</summary>
                 <div class="body">
-                  <ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                  <div class="model-with-settings"><ModelSelect variant="cselect" label="По умолчанию" value={draft.model} onChange={(model) => patch({ model, fallback: draft.fallback || model, serviceModel: draft.serviceModel || model })} allowEmpty />
+                    <ModelSettings key={draft.id || "new"} route={draft.model || installModel} profiles={draft.modelProfiles ?? {}} onChange={(modelProfiles) => patch({ modelProfiles })} />
+                  </div>
                   <FallbackPick value={draft.fallback || draft.model || installModel} onChange={(fallback) => patch({ fallback })} />
                 </div>
               </details>
@@ -998,6 +1025,9 @@ export function AgentsPage({ agentId }: { agentId?: string }) {
             <AgentPluginTiles rows={mcp} chosen={chosen} onToggle={togglePlugin} empty="Подключённых MCP нет." />
             <p class="note">Пусто? Подключи MCP в Параметры, затем включи здесь тумблером.</p>
           </div>
+        )}
+        {tab === "memory" && memoryTab && draft.id && (
+          <PluginTab key={draft.id} tab={memoryTab} agentId={draft.id} />
         )}
         {tab === "skills" && (
           <div class="card">

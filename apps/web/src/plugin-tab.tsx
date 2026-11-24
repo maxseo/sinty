@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { token } from "./api.js";
+import { token, api } from "./api.js";
+import { DYNAMIC_CATALOG_OP, catalogMessageAllowed, metadataOnly } from "./dynamic-catalog-bridge.js";
 
 /** A tab a plugin declares in its manifest (`ui.tabs`), as listed by GET /v1/plugins. */
 export interface PluginTabInfo {
@@ -11,7 +12,7 @@ export interface PluginTabInfo {
   /** A page of this Web UI build (`board`, `calendar`) instead of an iframe. */
   builtin?: string;
   /** `sidebar`: own page in the left nav. `session`: a view toggle in the open chat's header. `project`: a tab inside a project. */
-  placement: "sidebar" | "session" | "project" | "settings";
+  placement: "sidebar" | "session" | "project" | "settings" | "plugins" | "agent";
 }
 
 /** Access right of a tab, as in docs/spec/plugin-rules.md. */
@@ -47,7 +48,7 @@ export function safeTabPath(path: unknown): string | undefined {
   return path;
 }
 
-export function PluginTab({ tab, sessionId, projectId }: { tab: PluginTabInfo; sessionId?: string; projectId?: string }) {
+export function PluginTab({ tab, sessionId, projectId, agentId }: { tab: PluginTabInfo; sessionId?: string; projectId?: string; agentId?: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [error, setError] = useState("");
   const session = useRef(sessionId);
@@ -55,17 +56,33 @@ export function PluginTab({ tab, sessionId, projectId }: { tab: PluginTabInfo; s
 
   useEffect(() => {
     let inFlight = 0;
+    let closed = false;
+    const catalogNonce = crypto.randomUUID();
     const reply = (msg: Record<string, unknown>): void => frame.current?.contentWindow?.postMessage({ sinty: PROTO, ...msg }, "*");
     const onMessage = (e: MessageEvent): void => {
       const win = frame.current?.contentWindow;
       if (!win || e.source !== win) return;
-      const m = e.data as { sinty?: string; id?: unknown; op?: string; path?: unknown; body?: unknown } | null;
+      const m = e.data as { sinty?: string; id?: unknown; op?: string; path?: unknown; body?: unknown; nonce?: unknown } | null;
       if (!m || m.sinty !== PROTO) return;
       if (m.op === "ready") {
         ready.current = true;
-        reply({ op: "init", plugin: tab.plugin, tab: tab.id, theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", ...(session.current ? { sessionId: session.current } : {}), ...(projectId ? { projectId } : {}) });
+        reply({ op: "init", ...(tab.plugin === "dynamic-tools" && tab.id === "settings" ? { catalogNonce } : {}), plugin: tab.plugin, tab: tab.id, theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", ...(session.current ? { sessionId: session.current } : {}), ...(projectId ? { projectId } : {}), ...(agentId ? { agentId } : {}) });
         return;
       }
+
+      if (m.op === DYNAMIC_CATALOG_OP) {
+        if (typeof m.id !== 'number') return;
+        if (!catalogMessageAllowed(tab.plugin, tab.id, e.source, win, e.origin, m.nonce, catalogNonce) || ['path','body','url','method','query','projectId','agentId','sessionId'].some(key => key in m)) {
+          reply({ id: m.id, ok: false, error: { code: 'catalog_denied', message: 'Read-only metadata capability unavailable' } }); return;
+        }
+        if (inFlight >= MAX_IN_FLIGHT) { reply({ id: m.id, ok: false, error: { code: 'busy', message: 'Too many requests' } }); return; }
+        inFlight++;
+        void Promise.all([api<unknown>('/v1/agent'), api<unknown>('/v1/plugins')]).then(([agent, plugins]) => {
+          if (!closed && frame.current?.contentWindow === win) reply({ id: m.id, ok: true, data: { tools: metadataOnly(agent, plugins), registryOnly: true } });
+        }).catch(() => { if (!closed) reply({ id: m.id, ok: false, error: { code: 'catalog_unavailable', message: 'Registry metadata unavailable for this account' } }); }).finally(() => { inFlight--; });
+        return;
+      }
+
       if ((m.op !== "get" && m.op !== "post") || typeof m.id !== "number") return;
       const id = m.id;
       const path = safeTabPath(m.path);
@@ -105,7 +122,7 @@ export function PluginTab({ tab, sessionId, projectId }: { tab: PluginTabInfo; s
       })();
     };
     addEventListener("message", onMessage);
-    return () => removeEventListener("message", onMessage);
+    return () => { closed = true; removeEventListener("message", onMessage); };
   }, [tab.plugin, tab.id]);
 
   useEffect(() => {

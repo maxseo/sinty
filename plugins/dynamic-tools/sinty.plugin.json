@@ -1,0 +1,46 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "dynamic-tools",
+  "version": "0.1.0",
+  "description": "Динамичные инструменты: выбор реальных схем по запросу, без изменения ядра. Собственный переключатель режима.",
+  "kinds": [
+    "provider",
+    "tool",
+    "context",
+    "ui"
+  ],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "net": [
+      "*"
+    ],
+    "fs": {
+      "read": [
+        "$DATA"
+      ],
+      "write": [
+        "$DATA"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "dynamic-tools.search",
+      "description": "Find available tools and activate their real schemas for the next request",
+      "sideEffects": "none",
+      "idempotent": true
+    }
+  ],
+  "ui": {
+    "tabs": [
+      {
+        "id": "settings",
+        "title": "Динамичные инструменты",
+        "path": "/tab",
+        "placement": "sidebar"
+      }
+    ]
+  },
+  "editable": true
+}

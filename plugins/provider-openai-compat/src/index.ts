@@ -1,9 +1,12 @@
-import { definePlugin, parseSSE, ToolError, type ChatMessage, type ProviderChunk, type ProviderRequest, type TranscriptSegment, type TranscriptWord, openAIModelList } from "@sinty/sdk";
+import { definePlugin, parseSSE, ToolError, z, type ChatMessage, type ProviderChunk, type ProviderRequest, type TranscriptSegment, type TranscriptWord, openAIModelList } from "@sinty/sdk";
+
+import { CompatibleToolNames } from "./tool-call-names.js";
 
 interface ToolCallAcc {
   id: string;
   name: string;
   args: string;
+  candidates?: Set<string>;
 }
 
 export default definePlugin({
@@ -12,44 +15,69 @@ export default definePlugin({
     ctx.provider({
       protocol: "openai-compat",
       async *stream(req) {
+        const compatible = toolCallNameMode(req) === "catalog-compatible";
+        const names = compatible ? new CompatibleToolNames(req.tools.map(tool => tool.name)) : undefined;
+        if (names && !names.valid) throw new ToolError("provider_error", "Duplicate or invalid advertised tool names");
         const baseUrl = (req.endpoint.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
         const res = await ctx.net.fetch(`${baseUrl}/chat/completions`, {
-          method: "POST",
-          signal: req.signal,
-          headers: {
-            "content-type": "application/json",
-            ...(req.endpoint.apiKey ? { authorization: `Bearer ${req.endpoint.apiKey}` } : {}),
-            ...req.endpoint.headers,
-          },
+          method: "POST", signal: req.signal,
+          headers: { "content-type": "application/json", ...(req.endpoint.apiKey ? { authorization: `Bearer ${req.endpoint.apiKey}` } : {}), ...req.endpoint.headers },
           body: JSON.stringify(buildBody(req)),
         });
         if (!res.ok || !res.body) throw await httpError(res);
-
         const calls = new Map<number, ToolCallAcc>();
         let finish = "stop";
+        let issue: string | undefined;
         let usage = { inputTokens: 0, outputTokens: 0 } as Extract<ProviderChunk, { type: "done" }>["usage"];
-
         for await (const msg of parseSSE(res.body, req.signal)) {
           if (msg.data === "[DONE]") break;
           const chunk = JSON.parse(msg.data) as ChatChunk;
           if (chunk.error) throw new ToolError("provider_error", chunk.error.message ?? "stream error");
           if (chunk.usage) usage = usageOf(chunk.usage);
           for (const choice of chunk.choices ?? []) {
+            // ProviderChunk has no choice channel. Unsupported alternatives are rejected, never merged.
+            if (compatible && ((chunk.choices?.length ?? 0) > 1 || choice.index !== 0)) issue ??= "unsupported_tool_choices";
             const d = choice.delta ?? {};
             const reasoning = d.reasoning_content ?? d.reasoning;
             if (reasoning) yield { type: "reasoning", text: reasoning };
             if (d.content) yield { type: "text", text: d.content };
+            if (compatible && !Array.isArray(d.tool_calls ?? [])) { issue ??= "invalid_tool_metadata"; continue; }
             for (const tc of d.tool_calls ?? []) {
-              const acc = calls.get(tc.index) ?? { id: "", name: "", args: "" };
+              if (compatible && issue) continue; // Still drain the response for final usage, never dispatch partial calls.
+              if (compatible && (!tc || typeof tc !== "object")) { issue = "invalid_tool_metadata"; continue; }
+              const acc: ToolCallAcc = calls.get(tc.index) ?? { id: "", name: "", args: "", ...(compatible ? { candidates: new Set([""]) } : {}) };
+              if (compatible) {
+                if (!Number.isInteger(tc.index) || tc.index < 0 || (tc.id !== undefined && (typeof tc.id !== "string" || !tc.id))) { issue = "invalid_tool_metadata"; continue; }
+                if (tc.id && ((acc.id && acc.id !== tc.id) || [...calls].some(([index, call]) => index !== tc.index && call.id === tc.id))) { issue = "tool_identity_conflict"; continue; }
+                const field = tc.function?.name;
+                if (field !== undefined && field !== "") {
+                  if (typeof field !== "string") { issue = "invalid_tool_metadata"; continue; }
+                  acc.candidates = names!.advance(acc.candidates!, field);
+                  if (!acc.candidates.size) { issue = "incomplete_or_unknown_tool_name"; continue; }
+                }
+                if (tc.function?.arguments !== undefined && typeof tc.function.arguments !== "string") { issue = "invalid_tool_metadata"; continue; }
+              } else if (tc.function?.name) acc.name += tc.function.name;
               if (tc.id) acc.id = tc.id;
-              if (tc.function?.name) acc.name += tc.function.name;
-              if (tc.function?.arguments) acc.args += tc.function.arguments;
+              if (tc.function?.arguments) acc.args += tc.function.arguments; // Always argument deltas, including equal fragments.
               calls.set(tc.index, acc);
             }
             if (choice.finish_reason) finish = choice.finish_reason;
           }
         }
+        if (compatible) for (const acc of calls.values()) {
+          const resolved = names!.resolve(acc.candidates!);
+          issue ??= !acc.id ? "incomplete_tool_identity" : resolved.issue;
+          if (resolved.name) acc.name = resolved.name;
+        }
+        if (issue) {
+          // A visible LOCAL adapter refusal, not a fabricated upstream answer. Accept reported usage and end the turn,
+          // rather than throw away paid usage or trigger the core's transport fallback. No tool_call is emitted.
+          yield { type: "text", text: `
 
+[Sinty adapter error: ${issue}. Tool calls were not executed.]` };
+          yield { type: "done", stopReason: "stop", usage };
+          return;
+        }
         for (const acc of [...calls.entries()].sort(([a], [b]) => a - b).map(([, v]) => v)) {
           yield { type: "tool_call", id: acc.id, name: acc.name, args: parseArgs(acc.args) };
         }
@@ -171,8 +199,15 @@ export function segmentsOf(body: object): TranscriptSegment[] | undefined {
   return segments.length ? segments : undefined;
 }
 
+/** Provider-wide adapter contract, independent of upstream model IDs. Never sent upstream. */
+function toolCallNameMode(req: ProviderRequest): "delta" | "catalog-compatible" {
+  const parsed = z.enum(["delta", "catalog-compatible"]).safeParse(req.endpoint.options?.toolCallNameMode ?? "delta");
+  if (!parsed.success) throw new ToolError("provider_error", "Invalid local toolCallNameMode configuration");
+  return parsed.data;
+}
+
 export function buildBody(req: ProviderRequest): Record<string, unknown> {
-  const { promptCacheKey, ...options } = req.endpoint.options ?? {};
+  const { promptCacheKey, toolCallNameMode: _toolCallNameMode, toolCallNameModes: _removedModelModes, ...options } = req.endpoint.options ?? {};
   const baseUrl = req.endpoint.baseUrl ?? "https://api.openai.com/v1";
   const sendKey = promptCacheKey === true || (promptCacheKey === undefined && /^https:\/\/api\.openai\.com(\/|$)/.test(baseUrl));
   const omni = /omni/i.test(req.model);
@@ -262,6 +297,7 @@ export interface ChatChunk {
   error?: { message?: string };
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number }; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
   choices?: {
+    index?: number;
     finish_reason?: string | null;
     delta?: {
       content?: string | null;

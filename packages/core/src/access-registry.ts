@@ -7,7 +7,7 @@ import type { RouteInfo } from "./host/protocol.js";
 export interface AccessItem {
   id: string;
   title: string;
-  placement?: "sidebar" | "session" | "project" | "settings";
+  placement?: "sidebar" | "session" | "project" | "settings" | "plugins" | "agent";
 }
 
 export interface AccessGroup {

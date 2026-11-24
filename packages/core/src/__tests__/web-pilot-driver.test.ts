@@ -1,0 +1,14 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { rm, mkdtemp } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createWebToolsPilotDriver } from "../web-pilot-driver.js";
+test("Web Tools bridge construction/close is lazy: no profile, browser or proxy starts", async(t)=>{const root=await mkdtemp(join(tmpdir(),"sinty-lazy-pilot-"));t.after(()=>rm(root,{recursive:true,force:true}));const driver=createWebToolsPilotDriver(root);assert.equal(await driver.close("never-started"),true);assert.equal(existsSync(join(root,"web-browser-profiles")),false);});
+import { Sinty } from "../sinty.js";
+import { tempHome, testConfig } from "./helpers.js";
+import { createApp } from "../api/server.js";
+import { saveAgent, saveProject, ensureProjectDirs } from "../roster.js";
+test("owner-opted real Web Tools adapter is ready through authenticated API; grant stays lazy and CSRF enforced",async(t)=>{const {home}=tempHome();const sinty=new Sinty({home,config:testConfig([],{},["tool-web"]),browserPilotWebTools:true});await sinty.start({background:false});t.after(async()=>{await sinty.stop();await rm(home,{recursive:true,force:true,maxRetries:10,retryDelay:30});});const app=createApp(sinty),headers={authorization:"Bearer "+sinty.secrets.get("api.token"),"content-type":"application/json"};const ready=await app.request("http://127.0.0.1:3180/v1/browser-pilot",{headers});assert.equal(ready.status,200);assert.equal((await ready.json() as any).ready,true);assert.equal((await app.request("http://127.0.0.1:3180/v1/browser-pilot",{headers:{...headers,origin:"https://foreign.example"}})).status,403);const agent=saveAgent(sinty.paths,{name:"Synthetic owner agent"}),project=saveProject(sinty.paths,{name:"Synthetic local fixture",agentIds:[agent.id],leadId:agent.id});ensureProjectDirs(sinty.paths,project);const grant=await app.request("http://127.0.0.1:3180/v1/browser-pilot",{method:"POST",headers,body:JSON.stringify({agentId:agent.id,projectId:project.id})});assert.equal(grant.status,201);assert.equal((await grant.json() as any).ready,true);assert.equal(existsSync(join(sinty.paths.data,"web-browser-profiles")),false);});
+test("disabled Web Tools cannot be re-enabled by pilot startup opt-in",async(t)=>{const {home}=tempHome();const config=testConfig([],{},[]);config.plugins!.disabled=["tool-web"];const sinty=new Sinty({home,config,browserPilotWebTools:true});t.after(async()=>{await sinty.stop();await rm(home,{recursive:true,force:true,maxRetries:10,retryDelay:30});});assert.equal(sinty.browserPilot.ready,false);});

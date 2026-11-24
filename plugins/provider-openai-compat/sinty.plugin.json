@@ -3,11 +3,16 @@
   "name": "provider-openai-compat",
   "version": "0.1.0",
   "description": "Chat Completions protocol: xAI Grok, OpenAI, DeepSeek, OpenRouter, Ollama, vLLM and other compatible APIs",
-  "kinds": ["provider"],
+  "kinds": [
+    "provider"
+  ],
   "runtime": "node",
   "entry": "dist/index.js",
   "permissions": {
-    "net": ["*"]
+    "net": [
+      "*"
+    ]
   },
-  "editable": true
+  "editable": true,
+  "updateMode": "rpc-only"
 }

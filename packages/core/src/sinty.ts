@@ -1,3 +1,7 @@
+import {ReleaseChecks} from "./release-checks.js";
+import {recoverPluginTransactions} from "./plugin-recovery.js";
+import { createWebToolsPilotDriver } from "./web-pilot-driver.js";
+import { BrowserPilot, type BrowserPilotDriver } from "./browser-pilot.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { SintyEvent } from "@sinty/sdk";
 import { Agent } from "./agent.js";
@@ -57,7 +61,13 @@ export function initHome(home?: string): InitResult {
   return { paths, created, ...(apiToken ? { apiToken } : {}) };
 }
 
+export interface ManagedRuntime {testFeedOrigin?:string;applicationVersion?:string;buildHash?:string;root:string;version:string;sha256:string;instance:string;gate:{readonly blocked:boolean;enter():()=>void}}
 export interface SintyOptions {
+  managed?:ManagedRuntime;
+  /** Internal embedding/test adapter only; no default native adapter until verified on an isolated fixture. */
+  browserPilotDriver?: BrowserPilotDriver;
+  /** Owner-launcher opt-in. Does not create a browser until an authenticated pilot task prepares one. */
+  browserPilotWebTools?: boolean;
   home?: string;
   log?: LogFn;
   /** Overrides on top of config.yaml, mainly for tests and embedding. */
@@ -68,6 +78,11 @@ export interface SintyOptions {
 const PLUGIN_ACTOR = { kind: "system", id: "patches" } as const;
 
 export class Sinty {
+  /** Unknown transaction ownership/corruption keeps the core UI available but prevents work. */
+  pluginRecoveryIssue: string | null = null;
+  retryPluginRecovery(){return recoverPluginTransactions(this.paths.plugins,{dataRoot:this.paths.data,configPath:this.paths.config})}
+
+  readonly managed:ManagedRuntime|undefined;
   readonly paths: SintyPaths;
   readonly config: SintyConfig;
   readonly policy: SintyPolicy;
@@ -79,16 +94,21 @@ export class Sinty {
   readonly patches: PatchManager;
   readonly supervisor: SupervisorClient | undefined;
   readonly agent: Agent;
+  readonly browserPilot: BrowserPilot;
   readonly memory: MemoryRouter;
   readonly models: ModelGateway;
   readonly windows: ContextWindows;
   private readonly log: LogFn;
 
   constructor(opts: SintyOptions = {}) {
-    this.paths = resolvePaths(opts.home);
+    this.managed=opts.managed;
+    this.paths = resolvePaths(opts.home);if(opts.managed)this.paths.managedRoot=opts.managed.root;
     if (!existsSync(this.paths.home)) throw new Error(`${this.paths.home} does not exist; run: sinty init`);
     this.log = opts.log ?? (() => undefined);
     this.config = withDefaultPlugins({ ...loadConfig(this.paths), ...opts.config });
+    const webPilot = opts.browserPilotWebTools !== undefined ? opts.browserPilotWebTools && this.config.plugins.enabled.includes("tool-web") && !(this.config.plugins.disabled ?? []).includes("tool-web") : this.config.plugins.enabled.includes("tool-browser") && !(this.config.plugins.disabled ?? []).includes("tool-browser");
+    this.browserPilot = new BrowserPilot(this.paths.data, opts.browserPilotDriver ?? (webPilot ? createWebToolsPilotDriver(this.paths.data) : undefined), () => !!opts.browserPilotDriver || opts.browserPilotWebTools !== undefined || !!this.host?.plugins.has("tool-browser"));
+    if (webPilot) this.log("info", "Browser backend enabled (owned public browser + local fixture; browser not started)");
     this.policy = { ...loadPolicy(this.paths), ...opts.policy };
     this.secrets = new SecretStore(this.paths);
     this.journal = new Journal(this.paths.journal, (t) => this.secrets.redact(t));
@@ -163,6 +183,7 @@ export class Sinty {
     });
 
     this.agent = new Agent({
+      browserPilot: this.browserPilot,
       memory: this.memory,
       models: this.models,
       paths: this.paths,
@@ -200,6 +221,15 @@ export class Sinty {
 
   /** Starts plugins and the supervisor, then resumes turns that were running when the process stopped. */
   /** `background: false` (offline tools such as `sinty memory eval`) starts plugins only: no supervisor, no resumed turns, no memory queue. */
+  private managedRequests=0;
+  beginManagedRequest():()=>void{if(this.managed?.gate.blocked)throw Error("instance_draining");this.managedRequests++;let done=false;return()=>{if(!done){done=true;this.managedRequests--}}}
+  get managedBusy():number{return (this.supervisor?.activeManagedCheckpoints??0)+this.models.activeManagedCalls+this.managedRequests+this.agent.activeManagedTurns+this.memory.activeManagedJobs+[...this.host.plugins.values()].reduce((n,p)=>n+p.inFlight,0)+(this.reembed?1:0)}
+  assertManagedLifecycle():void{for(const p of this.host.plugins.values()){const m=p.loaded.manifest as typeof p.loaded.manifest&{updateMode?:string};if(m.entry&&!(m.updateMode==="rpc-only"&&!m.kinds.some(k=>["schedule","channel","server","event"].includes(k)))&&!(m.updateMode==="lifecycle"&&p.lifecycleReady))throw Error("managed_plugin_lifecycle_requires_review:"+m.name)}}
+  private managedPaused=new Set<import("./host/host.js").PluginProcess>();
+  async pauseManaged():Promise<void>{this.assertManagedLifecycle();for(const p of this.host.plugins.values()){if((p.loaded.manifest as typeof p.loaded.manifest&{updateMode?:string}).updateMode==="lifecycle"){this.managedPaused.add(p);await p.lifecycle("pause")}}}
+  async resumeManaged():Promise<void>{const errors=[];for(const p of this.managedPaused){try{await p.lifecycle("resume");this.managedPaused.delete(p)}catch(e){errors.push(e)}}if(errors.length)throw Error("managed_resume_requires_owner_review")}
+  private updateChecks:ReleaseChecks|undefined;
+  getReleaseChecks(){return this.updateChecks??=new ReleaseChecks(this,this.managed?.testFeedOrigin?{loopbackOrigin:this.managed.testFeedOrigin}:undefined)}
   async start(opts: { background?: boolean } = {}): Promise<{ failedPlugins: { plugin: string; error: string }[]; resumedTurns: string[] }> {
     const integrity = checkIntegrity(this.paths.install);
     if (!integrity.ok) throw new Error(`install integrity check failed:\n${integrity.problems.slice(0, 8).join("\n")}`);
@@ -208,9 +238,14 @@ export class Sinty {
       if (note && process.platform !== "win32" && note.includes("root")) throw new Error(note);
       if (note) this.log("warn", note);
     }
+    let recovery:ReturnType<typeof recoverPluginTransactions>={repaired:[],blocked:[],configRepairs:[]};
+    try{recovery=this.retryPluginRecovery()}catch(e){this.pluginRecoveryIssue=e instanceof Error&&/^[a-z_]+$/.test(e.message)?e.message:"plugin_recovery_requires_review";for(const name of this.config.plugins.enabled)if(name!=="ui-web")this.host.recoveryBlocked.set(name,this.pluginRecoveryIssue);this.log("error","Plugin recovery-only startup: "+this.pluginRecoveryIssue)}
+    for(const b of recovery.blocked)this.host.recoveryBlocked.set(b.name,b.reason);
+    for(const r of recovery.configRepairs){this.config.plugins.enabled=this.config.plugins.enabled.filter(n=>n!==r.name);if(r.flags.enabled)this.config.plugins.enabled.push(r.name);this.config.plugins.disabled=(this.config.plugins.disabled??[]).filter(n=>n!==r.name);if(r.flags.disabled)this.config.plugins.disabled.push(r.name)}
     const { failed } = await this.host.start();
     for (const f of failed) this.log("error", `plugin ${f.plugin} failed to start: ${f.error}`);
-    if (opts.background === false) return { failedPlugins: failed, resumedTurns: [] };
+    if (opts.background === false || this.pluginRecoveryIssue) return { failedPlugins: failed, resumedTurns: [] };
+    this.getReleaseChecks().start();
     if (this.supervisor) {
       this.supervisor.setTools(this.agent.supervisedTools());
       await this.supervisor.start();
@@ -227,9 +262,11 @@ export class Sinty {
    * then stops plugins. Jobs that do not finish in time stay pending and resume on the next start.
    */
   async stop(opts: { drainTimeoutMs?: number } = {}): Promise<void> {
+    this.updateChecks?.stop();
     this.reembed?.controller.abort();
     await this.reembed?.done;
     await this.agent.stop();
+    await this.browserPilot.stop();
     try {
       await this.memory.drainBeforeClose(opts.drainTimeoutMs);
     } catch (e) {

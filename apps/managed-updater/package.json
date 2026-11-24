@@ -1,0 +1,14 @@
+{
+  "name": "@sinty/managed-updater",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --test-concurrency=1 src/manager.test.mjs",
+    "start": "node dist/src/worker.mjs"
+  }
+}

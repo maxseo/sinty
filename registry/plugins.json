@@ -51,6 +51,17 @@
       ]
     },
     {
+      "name": "dynamic-tools",
+      "version": "0.1.0",
+      "description": "Динамичные инструменты: выбор реальных схем по запросу, без изменения ядра. Собственный переключатель режима.",
+      "kinds": [
+        "provider",
+        "tool",
+        "context",
+        "ui"
+      ]
+    },
+    {
       "name": "fact-extractor",
       "version": "0.1.0",
       "description": "Memory processor: extracts durable facts after each turn with the cheap model route and filters memory writes",
@@ -102,11 +113,30 @@
       ]
     },
     {
+      "name": "memory-v1",
+      "version": "0.1.1",
+      "description": "Claims with proof for one user and agent, a recall policy, and an agent-card memory graph",
+      "kinds": [
+        "memory",
+        "tool",
+        "ui",
+        "server"
+      ]
+    },
+    {
       "name": "otel",
       "version": "0.1.0",
       "description": "Writes turn, model and tool events as JSON lines for later OpenTelemetry export",
       "kinds": [
         "event"
+      ]
+    },
+    {
+      "name": "plugin-catalog",
+      "version": "0.1.0",
+      "description": "Проверенный каталог пакетов Sinty: установка, версии и обновления.",
+      "kinds": [
+        "ui"
       ]
     },
     {
@@ -228,6 +258,14 @@
       ]
     },
     {
+      "name": "tool-browser",
+      "version": "0.1.0",
+      "description": "Browser: persistent headed Chromium, DOM actions, screenshots and project files; separate from basic Web Tools HTTP. Trusted identity/network/session lifecycle managed by core.",
+      "kinds": [
+        "tool"
+      ]
+    },
+    {
       "name": "tool-fs",
       "version": "0.1.0",
       "description": "Read, list, write and edit files in the workspace and skills folders",
@@ -262,7 +300,7 @@
     {
       "name": "tool-web",
       "version": "0.1.0",
-      "description": "Web tools: web.search, web.read, web.links, web.screenshot, web.interact, web.fetch_file. Public internet only; the core checks every address",
+      "description": "Web Tools: basic public HTTP search/read/links/download. Browser is a separate plugin. Legacy screenshot/interact callable for compatibility only.",
       "kinds": [
         "tool"
       ]

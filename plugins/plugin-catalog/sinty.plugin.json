@@ -1,0 +1,43 @@
+{
+  "name": "plugin-catalog",
+  "version": "0.1.0",
+  "description": "Проверенный каталог пакетов Sinty: установка, версии и обновления.",
+  "categories": [
+    "system",
+    "ui"
+  ],
+  "updateMode": "rpc-only",
+  "kinds": [
+    "ui"
+  ],
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {},
+  "editable": false,
+  "ui": {
+    "tabs": [
+      {
+        "id": "catalog",
+        "title": "Маркетплейс",
+        "builtin": "plugin-catalog",
+        "placement": "plugins"
+      }
+    ]
+  },
+  "settings": {
+    "title": "Маркетплейс",
+    "fields": [
+      {
+        "key": "indexUrl",
+        "label": "HTTPS index.json",
+        "type": "text"
+      },
+      {
+        "key": "publicKey",
+        "label": "Доверенный публичный Ed25519 PEM-ключ",
+        "type": "text"
+      }
+    ]
+  },
+  "changelog": "CHANGELOG.md"
+}

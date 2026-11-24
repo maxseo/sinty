@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 
 export type Route =
   | { page: "chat"; sessionId?: string }
+  | { page: "browser-pilot" }
   | { page: "board" }
   | { page: "plugins" }
   | { page: "agents"; agentId?: string }
@@ -17,6 +18,7 @@ export function parse(hash: string): Route {
     case "s":
       return id ? { page: "chat", sessionId: decodeURIComponent(id) } : { page: "chat" };
     // The global «Журнал» (#/pending) and «Супервизор» (#/supervisor) pages are now chat-header tabs; old links open the chat list.
+    case "browser-pilot":
     case "board":
     case "plugins":
     case "calendar":

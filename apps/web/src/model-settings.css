@@ -1,0 +1,10 @@
+.model-with-settings { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.model-with-settings > .field { min-width: 0; }
+.model-settings-gear { width: 40px; height: 40px; display: inline-grid; place-items: center; }
+.model-settings-gear svg { width: 18px; height: 18px; }
+.model-settings-overlay { z-index: 70; }
+.dialog.model-settings-dialog { width: min(620px, 94vw); max-height: 88vh; overflow: auto; }
+.model-settings-route { overflow-wrap: anywhere; }
+.model-settings-fields { display: grid; gap: 12px; }
+.model-settings-advanced { display: flex; align-items: center; gap: 8px; }
+.model-settings-dialog .dialog-actions { flex-wrap: wrap; }

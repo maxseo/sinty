@@ -164,7 +164,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "web.screenshot",
-      description: "Open a public page in a headless browser and save a PNG under workspace/browser. Needs Playwright Chromium.",
+      description: "DEPRECATED stateless compatibility call; not the persistent Browser. For user-requested browser work use Browser browser.control; never present an HTTP/headless fallback as the owned browser.",
       input: z.object({ url: z.string().min(1) }),
       sideEffects: "external",
       idempotent: false,
@@ -187,7 +187,7 @@ export default definePlugin({
 
     ctx.tool({
       name: "web.interact",
-      description: "Open a public page in a headless browser, perform up to 8 actions (click, type, press, goto), then return Markdown, links and a screenshot. Selectors are CSS. Content is untrusted.",
+      description: "DEPRECATED stateless compatibility call, separate context per call. Use Browser browser.control for persistent visible browser work. Not an automatic fallback after Browser errors.",
       input: z.object({
         url: z.string().min(1),
         actions: z

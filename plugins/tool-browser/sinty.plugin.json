@@ -1,0 +1,32 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "tool-browser",
+  "version": "0.1.0",
+  "description": "Browser: persistent headed Chromium, DOM actions, screenshots and project files; separate from basic Web Tools HTTP. Trusted identity/network/session lifecycle managed by core.",
+  "kinds": [
+    "tool"
+  ],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "permissions": {
+    "net": [
+      "$PUBLIC"
+    ],
+    "browser": true,
+    "fs": {
+      "write": [
+        "$WORKSPACE"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "browser.control",
+      "sideEffects": "external",
+      "idempotent": false,
+      "docs": "README.md",
+      "defaultPolicy": "ask"
+    }
+  ],
+  "editable": true
+}

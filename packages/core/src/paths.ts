@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface SintyPaths {
+  managedRoot?:string;
   home: string;
   install: string;
   config: string;
@@ -25,7 +26,7 @@ export interface SintyPaths {
 
 /** Files only the core may touch. A plugin permission covering any of them is rejected. */
 export function coreOwnedPaths(p: SintyPaths): string[] {
-  return [p.config, p.policy, p.agents, p.secrets, p.secretKey, p.journal, p.accounts, p.blobs, p.install];
+  return [join(p.home,".managed-owner.json"),...(p.managedRoot?[p.managedRoot]:[]),p.config, p.policy, p.agents, p.secrets, p.secretKey, p.journal, p.accounts, p.blobs, p.install];
 }
 
 /** Install root: `SINTY_INSTALL_ROOT`, else the nearest parent that has `integrity.json` or the repo workspace file. */

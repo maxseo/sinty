@@ -1,6 +1,6 @@
 {
   "name": "sinty",
-  "version": "0.0.1",
+  "version": "0.5.1",
   "description": "Sinty CLI: init, run, serve, secret, doctor",
   "license": "MIT",
   "type": "module",

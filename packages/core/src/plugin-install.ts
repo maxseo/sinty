@@ -1,13 +1,19 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import {catalogProof} from "./plugin-catalog-trust.js";
+import {packageFingerprint} from "./plugin-recovery.js";
+import {configPluginFlags,syncText,type UpdateReceipt} from "./plugin-recovery.js";
+import { extractPluginArchive } from "./plugin-archive.js";
+import { assertReleaseCompatibility, releaseHash, type ReleaseCompatibility } from "./plugin-release.js";
+import { transactPluginDirectory, PluginTransactionError } from "./plugin-transaction.js";
+import { parseDocument } from "yaml";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, lstatSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import type { SintyConfig } from "./config.js";
+import { loadConfig, type SintyConfig } from "./config.js";
 import type { PluginHost } from "./host/host.js";
 import { parseManifest } from "./host/manifest.js";
 import { markAgentMade } from "./agent-plugins.js";
-import { enablePluginInConfig, forgetPluginInConfig } from "./mcp-install.js";
-import { pluginDataDir } from "./host/manifest.js";
+import { forgetPluginInConfig, setPluginEnabledInConfig } from "./mcp-install.js";
 import { isInside, type SintyPaths } from "./paths.js";
 import { dropPluginFromRoster } from "./roster.js";
 
@@ -32,6 +38,8 @@ export interface PluginInstallInput {
   npm?: string;
   /** Replace an existing home plugin folder. Never replaces a bundled plugin. Default false. */
   replace?: boolean;
+  /** Exact old/new permission fingerprints after owner review; never inferred from category. */
+  permissionsReview?: { from: string; to: string };
   /** Enable in config.yaml and hot-start. Default true. */
   enable?: boolean;
 }
@@ -42,10 +50,12 @@ export interface PluginInstallResult {
   description: string;
   kinds: string[];
   location: "home";
-  source: "path" | "npm";
+  source: "path" | "npm" | "catalog";
   enabled: boolean;
   started: boolean;
   startError?: string;
+  trust?: "local-path-unverified" | "npm-registry-unverified" | "trusted-catalog";
+  rollbackAvailable?: boolean;
   next?: string;
 }
 
@@ -67,6 +77,7 @@ export async function installHomePlugin(
   config: SintyConfig,
   host: PluginHost,
   input: PluginInstallInput,
+  verifiedCatalogProof?: object,
 ): Promise<PluginInstallResult> {
   const hasPath = typeof input.path === "string" && input.path.trim().length > 0;
   const hasNpm = typeof input.npm === "string" && input.npm.trim().length > 0;
@@ -87,6 +98,7 @@ export async function installHomePlugin(
     }
 
     const manifestPath = join(srcDir, "sinty.plugin.json");
+    if (existsSync(srcDir) && lstatSync(srcDir).isSymbolicLink() || existsSync(manifestPath) && lstatSync(manifestPath).isSymbolicLink()) throw new PluginInstallError("unsafe_package", "Plugin source and manifest must not be links");
     if (!existsSync(manifestPath)) {
       throw new PluginInstallError("bad_manifest", `no sinty.plugin.json in ${srcDir}`, "Point at a Sinty plugin folder (or an npm package that ships one).");
     }
@@ -99,6 +111,9 @@ export async function installHomePlugin(
     }
 
     const name = manifest.name;
+    const signed=catalogProof(verifiedCatalogProof);
+    if(verifiedCatalogProof&&!signed)throw new PluginInstallError("catalog_proof_invalid","Invalid internal catalog provenance");
+    if(signed&&(resolve(signed.dir)!==resolve(srcDir)||signed.name!==name||signed.version!==manifest.version||packageFingerprint(srcDir)!==signed.treeHash))throw new PluginInstallError("catalog_proof_stale","Verified package changed");
     if (!PLUGIN_NAME.test(name) || RESERVED_FOLDERS.has(name) || name.startsWith(".")) {
       throw new PluginInstallError("bad_name", `plugin name ${name} is invalid or reserved`);
     }
@@ -112,82 +127,50 @@ export async function installHomePlugin(
       );
     }
 
+    mkdirSync(paths.plugins,{recursive:true});
+    if(lstatSync(paths.plugins).isSymbolicLink()||realpathSync(paths.plugins)!==join(realpathSync(paths.home),"plugins"))throw new PluginInstallError("unsafe_plugin_path","Managed plugins root cannot escape its home");
     const homeDir = join(paths.plugins, name);
     assertSafeHomeDir(paths, homeDir, name);
 
-    // Refuse copying a folder that is already the home destination (noop / loop).
-    if (resolve(srcDir) === resolve(homeDir) && !input.replace) {
-      // Already installed at home: just enable/reload.
-      ensureSdkLink(paths);
-      return finishInstall(paths, config, host, manifest, source, input.enable !== false, false);
+    const sameHome=resolve(srcDir)===resolve(homeDir);
+    const replace = input.replace === true || sameHome;
+    if (existsSync(homeDir) && !replace) throw new PluginInstallError("exists", "plugin folder already exists", "Pass replace: true after reviewing the update.");
+    if (existsSync(homeDir) && lstatSync(homeDir).isSymbolicLink() || existsSync(join(homeDir,"sinty.plugin.json")) && lstatSync(join(homeDir,"sinty.plugin.json")).isSymbolicLink()) throw new PluginInstallError("unsafe_package","Installed plugin cannot be a link");
+    const previous = existsSync(join(homeDir,"sinty.plugin.json")) ? parseManifest(JSON.parse(readFileSync(join(homeDir,"sinty.plugin.json"),"utf8"))) : undefined;
+    if(previous && releaseHash(previous.permissions)!==releaseHash(manifest.permissions)) {
+      const from=releaseHash(previous.permissions),to=releaseHash(manifest.permissions);
+      if(input.permissionsReview?.from!==from||input.permissionsReview?.to!==to)throw new PluginInstallError("permission_review_required","Updated plugin changes permissions",JSON.stringify({from,to}));
     }
-
-    const replace = input.replace === true;
-    if (existsSync(homeDir)) {
-      if (!replace) {
-        throw new PluginInstallError("exists", `plugin folder already exists at ${homeDir}`, "Pass replace: true to overwrite, or pick another name.");
-      }
-      await host.unload(name);
-      rmSync(homeDir, { recursive: true, force: true });
-    }
-
-    mkdirSync(paths.plugins, { recursive: true });
+    const metadata=manifest as typeof manifest & {compatibility?:ReleaseCompatibility};
+    const release=JSON.parse(readFileSync(join(paths.install,"release.json"),"utf8")),sdk=JSON.parse(readFileSync(join(paths.install,"packages","sdk","package.json"),"utf8"));
+    try{assertReleaseCompatibility(metadata.compatibility,{core:release.version,sdk:sdk.version,protocol:"sinty/1.0",platform:process.platform,arch:process.arch});}catch{throw new PluginInstallError("incompatible_plugin","Package is incompatible with current core/SDK/protocol/platform");}
+    const on=config.plugins.enabled.includes(name),off=(config.plugins.disabled??[]).includes(name),running=host.plugins.has(name),enable=input.enable!==false;
+    const onIndex=config.plugins.enabled.indexOf(name),offIndex=(config.plugins.disabled??[]).indexOf(name);
+    const restoreFlags=():void=>{config.plugins.enabled=config.plugins.enabled.filter(n=>n!==name);if(on)config.plugins.enabled.splice(Math.min(onIndex,config.plugins.enabled.length),0,name);config.plugins.disabled=(config.plugins.disabled??[]).filter(n=>n!==name);if(off)config.plugins.disabled.splice(Math.min(offIndex,config.plugins.disabled.length),0,name)};
     ensureSdkLink(paths);
-    cpSync(srcDir, homeDir, {
-      recursive: true,
-      filter: (src) => {
-        const base = basename(src);
-        return base !== ".git" && base !== ".staging";
-      },
-    });
+    const diskBefore=configPluginFlags(paths.config,name);
+    const receipt:UpdateReceipt={version:manifest.version,...(previous?{previousVersion:previous.version}:{}),source,trust:source==="path"?"local-path-unverified":"npm-registry-unverified",signatureVerified:false,publisher:null};
+    if(signed)Object.assign(receipt,{source:"catalog",trust:"trusted-catalog",signatureVerified:true,publisher:signed.publisher,artifactSha256:signed.artifactSha256,catalogUrl:signed.catalogUrl,catalogSequence:signed.catalogSequence,signatureScope:"catalog-index"});
+    if(signed&&previous&&host.plugins.has(name)&&((previous as {updateMode?:string}).updateMode!=="rpc-only"||(host.plugins.get(name)?.loaded.manifest as {updateMode?:string}|undefined)?.updateMode!=="rpc-only"||(manifest as {updateMode?:string}).updateMode!=="rpc-only"))throw new PluginInstallError("plugin_restart_required","Active catalog update requires both lifecycle declarations");
+    const maintenance=await host.beginUpdate(name);
+    try {
+      const tx=await transactPluginDirectory({root:paths.plugins,name,source:srcDir,dataRoot:paths.data,configPath:paths.config,configBefore:diskBefore,configAfter:enable?{enabled:true,disabled:false}:diskBefore,metadata:receipt,stop:()=>host.unload(name,maintenance.token),
+        validate:dir=>{if(signed&&packageFingerprint(dir)!==signed.treeHash)throw new PluginInstallError("catalog_proof_stale","Verified staged package changed");const m=parseManifest(JSON.parse(readFileSync(join(dir,"sinty.plugin.json"),"utf8")));if(m.name!==name||releaseHash(m)!==releaseHash(manifest))throw new PluginInstallError("bad_manifest","Staged package metadata changed after review");if(previous&&releaseHash(parseManifest(JSON.parse(readFileSync(join(homeDir,"sinty.plugin.json"),"utf8"))))!==releaseHash(previous))throw new PluginInstallError("stale_update","Installed package changed during preparation; review again");const meta=m as typeof m & {changelog?:string};if(meta.changelog&&(!existsSync(join(dir,meta.changelog))||!lstatSync(join(dir,meta.changelog)).isFile()||lstatSync(join(dir,meta.changelog)).size>256*1024))throw new PluginInstallError("bad_changelog","Declared changelog must be an included file <=256 KiB");if(meta.changelog)receipt.changelog=readFileSync(join(dir,meta.changelog),"utf8").slice(0,8192);if(m.runtime==="node"&&!m.entry&&!m.kinds.every(k=>k==="ui"))throw new PluginInstallError("bad_entry","Node plugin requires an entry");if(m.runtime==="node"&&m.entry){const p=resolve(dir,m.entry);if(!isInside(p,dir)||!existsSync(p)||lstatSync(p).isSymbolicLink())throw new PluginInstallError("bad_entry","Node entry must be a package file");}},
+        activate:async()=>{if(enable){config.plugins.enabled=[...new Set([...config.plugins.enabled,name])];config.plugins.disabled=(config.plugins.disabled??[]).filter(n=>n!==name);const error=await host.reload(name,maintenance.token);if(error||!host.plugins.has(name))throw new PluginInstallError("start_failed","New plugin failed readiness");}return {name,version:manifest.version,description:manifest.description,kinds:[...manifest.kinds],location:"home" as const,source,enabled:config.plugins.enabled.includes(name)&&!(config.plugins.disabled??[]).includes(name),started:enable}},
+        commit:()=>{if(enable){const latest=configPluginFlags(paths.config,name);if(latest.enabled!==diskBefore.enabled||latest.disabled!==diskBefore.disabled)throw new PluginInstallError("stale_config","Plugin settings changed during update; review again");const doc=parseDocument(existsSync(paths.config)?readFileSync(paths.config,"utf8"):"");const arr=(k:string):string[]=>{const v=doc.getIn(["plugins",k]);return v&&typeof v==="object"&&"toJSON" in v?(v as {toJSON():string[]}).toJSON():[]};doc.setIn(["plugins","enabled"],[...new Set([...arr("enabled"),name])]);doc.setIn(["plugins","disabled"],arr("disabled").filter(n=>n!==name));syncText(paths.config,String(doc))}},
+        restoreRuntime:async()=>{restoreFlags();if(running){const error=await host.reload(name,maintenance.token);if(error||!host.plugins.has(name))throw new Error("Previous runtime could not restart")}}
+      });
+      return {...tx.value,...(signed?{source:"catalog" as const}:{}),trust:signed?"trusted-catalog" as const:source==="path"?"local-path-unverified" as const:"npm-registry-unverified" as const,rollbackAvailable:!!tx.previous,next:signed?"Проверенная версия из подписанного каталога установлена; прежняя версия сохранена при обновлении.":tx.previous?"Previous package retained in managed rollback storage; source trust remains "+source:"Installed from "+source+" (not a signed catalog package)"};
+    } catch(e) {restoreFlags();if(e instanceof PluginTransactionError){if(e.rollbackRestored===false)host.recoveryBlocked.set(name,e.code);throw new PluginInstallError(e.code,e.message,JSON.stringify({rollbackRestored:e.rollbackRestored??false}));}throw e;} finally {maintenance.release()}
 
-    return finishInstall(paths, config, host, manifest, source, input.enable !== false, true);
   } finally {
     if (staging) rmSync(staging, { recursive: true, force: true });
   }
 }
 
-async function finishInstall(
-  paths: SintyPaths,
-  config: SintyConfig,
-  host: PluginHost,
-  manifest: { name: string; version: string; description: string; kinds: string[] },
-  source: "path" | "npm",
-  enable: boolean,
-  wrote: boolean,
-): Promise<PluginInstallResult> {
-  const name = manifest.name;
-  let started = false;
-  let startError: string | undefined;
-  if (enable) {
-    enablePluginInConfig(paths, name);
-    if (!config.plugins.enabled.includes(name)) config.plugins.enabled = [...config.plugins.enabled, name];
-    startError = await host.reload(name);
-    started = !startError && Boolean(host.plugins.get(name));
-  }
-  return {
-    name,
-    version: manifest.version,
-    description: manifest.description,
-    kinds: [...manifest.kinds],
-    location: "home",
-    source,
-    enabled: enable,
-    started,
-    ...(startError ? { startError } : {}),
-    next: started
-      ? wrote
-        ? `Plugin ${name} installed under $SINTY_HOME/plugins and loaded.`
-        : `Plugin ${name} was already at home; enabled and loaded.`
-      : enable
-        ? `Plugin ${name} was written/enabled; fix startError or restart sinty web.`
-        : `Plugin ${name} copied to $SINTY_HOME/plugins (not enabled). Turn it on in Settings → Plugins.`,
-  };
-}
-
 /**
- * Removes a home plugin from the library. The process stops, the folder and its data directory go away,
- * and config.yaml drops the plugin's settings. A bundled plugin stays: it can only be turned off.
+ * Removes a managed home plugin from the library. The process stops and only its install folder goes away,
+ * and config.yaml drops the plugin's settings. User data/secrets/shared dependencies stay. Bundled plugins can only be turned off.
  */
 export async function removeHomePlugin(paths: SintyPaths, host: PluginHost, name: string): Promise<void> {
   const id = name.trim();
@@ -195,22 +178,50 @@ export async function removeHomePlugin(paths: SintyPaths, host: PluginHost, name
   if (existsSync(join(paths.bundledPlugins, id, "sinty.plugin.json"))) {
     throw new PluginInstallError("bundled", `плагин ${id} встроен в установку`, "Его можно выключить. Из библиотеки убираются только добавленные плагины.");
   }
-  const homeDir = join(paths.plugins, id);
-  if (!existsSync(join(homeDir, "sinty.plugin.json"))) {
-    throw new PluginInstallError("not_found", `плагина ${id} нет в библиотеке`);
-  }
-  assertSafeHomeDir(paths, homeDir, id);
-  const dataDir = pluginDataDir(paths, id);
-  const dataResolved = resolve(dataDir);
-  if (existsSync(dataDir) && (!isInside(dataResolved, paths.data) || dataResolved === resolve(paths.data))) {
-    throw new PluginInstallError("bad_name", "отказ стереть данные вне папки плагина");
-  }
-  await host.unload(id);
+  const homeDir = removableHomeDir(paths, id);
+  setPluginEnabledInConfig(paths, id, false);
+  await host.disable(id);
+  removableHomeDir(paths, id); // Recheck after waiting for the process to exit.
   forgetPluginInConfig(paths, id);
   dropPluginFromRoster(paths, id);
   markAgentMade(paths, id, false);
-  if (existsSync(dataDir)) rmSync(dataResolved, { recursive: true, force: true });
   rmSync(resolve(homeDir), { recursive: true, force: true });
+}
+
+/** Library/UI hint; backend repeats all checks immediately before removal. */
+export function canRemoveHomePlugin(paths: SintyPaths, name: string): boolean {
+  try { removableHomeDir(paths, name); return true; } catch { return false; }
+}
+
+function removableHomeDir(paths: SintyPaths, name: string): string {
+  if (!PLUGIN_NAME.test(name)) throw new PluginInstallError("bad_name", "invalid plugin name");
+  if (existsSync(join(paths.bundledPlugins, name, "sinty.plugin.json"))) {
+    throw new PluginInstallError("bundled", "Встроенный плагин можно только выключить");
+  }
+  const dir = join(paths.plugins, name);
+  const manifest = join(dir, "sinty.plugin.json");
+  if (!existsSync(manifest)) throw new PluginInstallError("not_found", "Плагин не установлен в управляемой библиотеке");
+  const root = resolve(paths.plugins);
+  // Refuse junctions/symlinks and redirected parents; never delete external/shared installs.
+  if (lstatSync(root).isSymbolicLink() || lstatSync(dir).isSymbolicLink() || lstatSync(manifest).isSymbolicLink()
+    || realpathSync(root) !== join(realpathSync(paths.home), "plugins")
+    || realpathSync(dir) !== join(realpathSync(root), name)) {
+    throw new PluginInstallError("unsafe_path", "Отказ удалить плагин по ссылке или вне управляемой папки");
+  }
+  const parsed = parseManifest(JSON.parse(readFileSync(manifest, "utf8")));
+  if (parsed.name !== name) throw new PluginInstallError("bad_name", "Имя плагина не совпадает с папкой");
+  // Otherwise discovery would expose a second install with the same name after removal.
+  for (const search of hostSearchPaths(paths)) {
+    const other = resolve(paths.home, search, name);
+    if (resolve(other) !== resolve(dir) && existsSync(join(other, "sinty.plugin.json"))) {
+      throw new PluginInstallError("external", "Есть другая установка с тем же именем в searchPaths; она не удаляется автоматически");
+    }
+  }
+  return dir;
+}
+
+function hostSearchPaths(paths: SintyPaths): string[] {
+  return loadConfig(paths).plugins.searchPaths;
 }
 
 function resolvePath(paths: SintyPaths, raw: string): string {
@@ -249,35 +260,7 @@ async function packNpm(spec: string, staging: string): Promise<string> {
   if (!tgz) throw new PluginInstallError("npm_failed", "npm pack produced no tarball");
   const extractDir = join(staging, "extract");
   mkdirSync(extractDir, { recursive: true });
-  const tar = spawnSync("tar", ["-xzf", join(staging, tgz), "-C", extractDir], { encoding: "utf8", windowsHide: true, timeout: 60_000 });
-  if (tar.status !== 0) {
-    // Windows Node often has no tar.exe; fall back to npm's unpack via `npm install --ignore-scripts` into a prefix — heavier but portable.
-    const prefix = join(staging, "prefix");
-    mkdirSync(prefix, { recursive: true });
-    const inst = spawnSync("npm", ["install", join(staging, tgz), "--prefix", prefix, "--ignore-scripts", "--no-save", "--no-package-lock"], {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 120_000,
-    });
-    if (inst.status !== 0) {
-      throw new PluginInstallError("npm_failed", "failed to extract npm pack tarball", (inst.stderr || tar.stderr || "").trim().slice(0, 500));
-    }
-    const nm = join(prefix, "node_modules");
-    const scopes = existsSync(nm) ? readdirSync(nm) : [];
-    for (const s of scopes) {
-      if (s.startsWith(".")) continue;
-      const p = join(nm, s);
-      if (s.startsWith("@")) {
-        for (const child of readdirSync(p)) {
-          const cand = join(p, child);
-          if (existsSync(join(cand, "sinty.plugin.json"))) return cand;
-        }
-      } else if (existsSync(join(p, "sinty.plugin.json"))) {
-        return p;
-      }
-    }
-    throw new PluginInstallError("bad_manifest", "npm package has no sinty.plugin.json after extract");
-  }
+  try { extractPluginArchive(readFileSync(join(staging,tgz)),extractDir); } catch { throw new PluginInstallError("unsafe_archive","npm package archive rejected; only bounded materialized regular-file tar packages are supported"); }
   const pkgRoot = join(extractDir, "package");
   if (existsSync(join(pkgRoot, "sinty.plugin.json"))) return pkgRoot;
   throw new PluginInstallError("bad_manifest", "npm package has no sinty.plugin.json");

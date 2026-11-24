@@ -1,3 +1,6 @@
+import {HarnessUpdateDialog} from "./harness-update-dialog.js";
+import { keepDialogOpen } from "./composer-state.js";
+import { BrowserPilotPanel } from "./browser-pilot.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
 import { api, ApiError, setUnauthorizedHandler, shortTime, subscribe, token, userSession, type Pending, type SessionInfo, type SintyEvent } from "./api.js";
@@ -24,14 +27,57 @@ export function App() {
   return <Shell />;
 }
 
+function FirstRun({ onDone }: { onDone: () => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [again, setAgain] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [error, setError] = useState("");
+  const submit = async (e: Event): Promise<void> => {
+    e.preventDefault();
+    setError("");
+    if (password !== again) {
+      setError("Пароли не совпадают.");
+      return;
+    }
+    try {
+      const r = await api<{ token: string }>("/v1/auth/setup", { body: { email, password, firstName, lastName } });
+      userSession.set(r.token);
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+  return (
+    <form class="login" onSubmit={submit}>
+      <h1>Sinty</h1>
+      <p class="muted">Первый человек на этой установке становится суперадмином. После этого регистрация закрывается.</p>
+      <input autoFocus placeholder="Имя" value={firstName} onInput={(e) => setFirstName(e.currentTarget.value)} />
+      <input placeholder="Фамилия" value={lastName} onInput={(e) => setLastName(e.currentTarget.value)} />
+      <input type="email" placeholder="Почта" value={email} onInput={(e) => setEmail(e.currentTarget.value)} required />
+      <input type="password" placeholder="Пароль (от 8 символов)" value={password} onInput={(e) => setPassword(e.currentTarget.value)} />
+      <input type="password" placeholder="Повторите пароль" value={again} onInput={(e) => setAgain(e.currentTarget.value)} />
+      <button type="submit" disabled={!email.trim() || password.length < 8 || password !== again}>Создать суперадмина</button>
+      {error && <p class="error">{error}</p>}
+    </form>
+  );
+}
+
 function Login({ onDone }: { onDone: () => void }) {
   const reset = /^#\/reset\/([^&]+)/.exec(location.hash);
+  const [needed, setNeeded] = useState<boolean | null>(null);
+  useEffect(() => {
+    void api<{ needed: boolean }>("/v1/auth/setup").then((r) => setNeeded(r.needed)).catch(() => setNeeded(false));
+  }, []);
   const [mode, setMode] = useState<"email" | "token" | "forgot" | "reset">(reset ? "reset" : "email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  if (needed === null) return <form class="login"><h1>Sinty</h1></form>;
+  if (needed) return <FirstRun onDone={onDone} />;
   const submitEmail = async (e: Event): Promise<void> => {
     e.preventDefault();
     setError("");
@@ -197,7 +243,7 @@ function Shell() {
   const [projectId, setProjectId] = useState(localStorage.getItem("sinty.project") ?? "");
   const [focusedProject, setFocusedProject] = useState<string | null>(null);
   const [acctOpen, setAcctOpen] = useState(false);
-  const [updateNote, setUpdateNote] = useState("");
+  const [updatesOpen,setUpdatesOpen]=useState(false);
   const [tabs, setTabs] = useState<PluginTabInfo[]>([]);
   useEffect(() => {
     void api<{ plugins: { name: string; tabs?: Omit<PluginTabInfo, "plugin">[] }[] }>("/v1/plugins")
@@ -367,6 +413,7 @@ function Shell() {
                       <div class="side-scroll">
                       {agentsOn ? <AgentNav current={route.page === "agents" ? route.agentId : undefined} /> : (
                         <nav>
+                          {me?.superadmin && <a href={href({ page: "browser-pilot" })}>Браузер · пилот</a>}
                           {can("settings:general") && <a class={settingsOn && route.section === "general" ? "on" : ""} href={href({ page: "settings", section: "general" })}>Основные</a>}
                           {can("settings:models") && <a class={settingsOn && route.section === "models" ? "on" : ""} href={href({ page: "settings", section: "models" })}>Модели</a>}
                           {can("nav:plugins") && <a class={settingsOn && route.section === "plugins" ? "on" : ""} href={href({ page: "settings", section: "plugins" })}>Плагины</a>}
@@ -427,13 +474,14 @@ function Shell() {
                 title="Обновить клиент"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setUpdateNote("Обновление клиентского харнеса появится позже — пока нечего устанавливать.");
-                  setAcctOpen(true);
+                  setUpdatesOpen(true);
+                  setAcctOpen(false);
                 }}
               ><IconUpload /></button>
+              {updatesOpen&&<HarnessUpdateDialog onClose={()=>setUpdatesOpen(false)} />}
               {acctOpen && (
                 <div class="acct-menu" onClick={(e) => e.stopPropagation()}>
-                  {updateNote && <div class="acct-upd">{updateNote}</div>}
+                  
                   <button type="button" class="acct-item" onClick={() => { setAcctOpen(false); go({ page: "settings", section: usageSection }); }}>Использование</button>
                   <button type="button" class="acct-item" onClick={() => { setAcctOpen(false); go({ page: "settings", section: firstSection(can) }); }}>Параметры <span class="muted">тема здесь</span></button>
                   <div class="acct-sep" />
@@ -455,8 +503,9 @@ function Shell() {
           </div>
         )}
       </aside>
-      <main class={`main${studio && route.page === "chat" ? " studio" : ""}`}>
-        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId} sessionId={route.sessionId} title={sessions.find((s) => s.id === route.sessionId)?.title ?? ""} projectName={projects.find((p) => p.id === sessions.find((s) => s.id === route.sessionId)?.projectId)?.name} onChange={refresh} tabs={sessionTabs} studio={studio} studioTab={studioTab} onStudio={toggleStudio} /> : <Empty onNew={newChat} />)}
+      <main class="main">
+        {route.page === "chat" && (route.sessionId ? <Chat key={route.sessionId + ":" + (me?.user?.id ?? me?.kind ?? "")} draftOwner={me?.user?.id ?? me?.kind ?? ""} sessionId={route.sessionId} title={sessions.find((s) => s.id === route.sessionId)?.title ?? ""} projectName={projects.find((p) => p.id === sessions.find((s) => s.id === route.sessionId)?.projectId)?.name} onChange={refresh} tabs={sessionTabs} studio={studio} studioTab={studioTab} onStudio={toggleStudio} /> : <Empty onNew={newChat} />)}
+        {me && route.page === "browser-pilot" && (me.superadmin ? <BrowserPilotPanel /> : <Denied />)}
         {me && route.page === "board" && (builtinOn("board") ? <Board /> : <Denied />)}
         {me && route.page === "agents" && (can("nav:agents") ? <AgentsPage agentId={route.agentId} /> : <Denied />)}
         {me && route.page === "settings" && <SettingsPage section={route.section} onSaved={() => void api<AgentInfo>("/v1/agent").then(setAgent)} />}
@@ -484,13 +533,13 @@ function Shell() {
         </div>
       )}
       {rename && (
-        <div class="overlay" onClick={() => setRename(null)}>
-          <form class="dialog" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); if (rename.title.trim()) void patchChat(rename.id, { title: rename.title.trim() }); setRename(null); }}>
+        <div class="overlay" onKeyDown={keepDialogOpen}>
+          <form class="dialog" role="dialog" aria-modal="true" aria-label="Название чата" onSubmit={(e) => e.preventDefault()}>
             <header class="dialog-head"><h3>Название чата</h3></header>
             <label class="field">Название<input value={rename.title} onInput={(e) => setRename({ ...rename, title: e.currentTarget.value })} autoFocus /></label>
             <footer class="dialog-actions">
               <button type="button" class="secondary" onClick={() => setRename(null)}>Отмена</button>
-              <button type="submit" disabled={!rename.title.trim()}>Сохранить</button>
+              <button type="button" disabled={!rename.title.trim()} onClick={() => { if (rename.title.trim()) { void patchChat(rename.id, { title: rename.title.trim() }); setRename(null); } }}>Сохранить</button>
             </footer>
           </form>
         </div>

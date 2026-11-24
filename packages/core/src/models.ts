@@ -76,6 +76,8 @@ const DEFAULT_PLUGIN_TOKENS_PER_DAY = 2_000_000;
  */
 export class ModelGateway {
   private readonly usage: PluginUsageStore;
+  private managedCalls=0;get activeManagedCalls(){return this.managedCalls}
+  private async tracked<T>(fn:()=>Promise<T>):Promise<T>{this.managedCalls++;try{return await fn()}finally{this.managedCalls--}}
 
   constructor(private readonly d: GatewayDeps) {
     this.usage = d.usage ?? new MemoryUsage();
@@ -99,7 +101,8 @@ export class ModelGateway {
     return this.resolve(route).length > 0;
   }
 
-  async complete(call: CompleteCall): Promise<CompleteResult> {
+  async complete(call:CompleteCall):Promise<CompleteResult>{return this.tracked(()=>this.completeImpl(call))}
+  private async completeImpl(call: CompleteCall): Promise<CompleteResult> {
     const candidates = this.resolve(call.route);
     if (!candidates.length) throw new ModelError("route_missing", `no model for route ${call.route ?? "default"}`, "Set models.default or models.routes in config.yaml.");
     let last: unknown;
@@ -114,7 +117,8 @@ export class ModelGateway {
     throw last instanceof Error ? last : new ModelError("provider_error", String(last));
   }
 
-  async embed(call: EmbedCall): Promise<EmbedResult> {
+  async embed(call:EmbedCall):Promise<EmbedResult>{return this.tracked(()=>this.embedImpl(call))}
+  private async embedImpl(call: EmbedCall): Promise<EmbedResult> {
     const [route] = this.resolve(call.route ?? "embed");
     if (!route) throw new ModelError("route_missing", `no model for route ${call.route ?? "embed"}`, "Set models.routes.embed in config.yaml, e.g. openai/text-embedding-3-small.");
     const { providerId, model, protocol, endpoint } = this.endpoint(route);
@@ -124,7 +128,8 @@ export class ModelGateway {
     return { vectors: r.vectors, provider: providerId, model, ...(r.usage ? { usage: r.usage } : {}) };
   }
 
-  async transcribe(call: TranscribeCall): Promise<TranscribeResult> {
+  async transcribe(call:TranscribeCall):Promise<TranscribeResult>{return this.tracked(()=>this.transcribeImpl(call))}
+  private async transcribeImpl(call: TranscribeCall): Promise<TranscribeResult> {
     const [route] = this.resolve(call.route ?? "stt");
     if (!route) throw new ModelError("route_missing", `no model for route ${call.route ?? "stt"}`, "Set models.routes.stt in config.yaml, e.g. openai/whisper-1.");
     const bytes = Buffer.from(call.data, "base64").byteLength;

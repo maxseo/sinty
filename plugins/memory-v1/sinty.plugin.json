@@ -1,0 +1,66 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "name": "memory-v1",
+  "version": "0.2.3",
+  "description": "Memory cards for one user and agent, with a recall policy and an agent-card graph",
+  "kinds": [
+    "memory",
+    "tool",
+    "ui",
+    "server"
+  ],
+  "categories": [
+    "functional"
+  ],
+  "runtime": "node",
+  "entry": "dist/index.js",
+  "changelog": "CHANGELOG.md",
+  "updateMode": "restart",
+  "permissions": {
+    "fs": {
+      "read": [
+        "$DATA"
+      ],
+      "write": [
+        "$DATA"
+      ]
+    },
+    "agent": [
+      "sessions.read"
+    ],
+    "models": [
+      "cheap"
+    ]
+  },
+  "tools": [
+    {
+      "name": "memory_v1.remember",
+      "sideEffects": "write",
+      "idempotent": false,
+      "docs": "README.md"
+    },
+    {
+      "name": "memory_v1.search",
+      "sideEffects": "read",
+      "idempotent": true,
+      "docs": "README.md"
+    },
+    {
+      "name": "memory_v1.close",
+      "sideEffects": "write",
+      "idempotent": false,
+      "docs": "README.md"
+    }
+  ],
+  "ui": {
+    "tabs": [
+      {
+        "id": "graph",
+        "title": "Память",
+        "placement": "agent",
+        "path": "/graph"
+      }
+    ]
+  },
+  "editable": true
+}

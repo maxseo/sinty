@@ -1,0 +1,14 @@
+{
+  "name": "@sinty/plugin-dynamic-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.ui.json && node scripts/build-ui.mjs",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\" && node --test tests/host.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json"
+  },
+  "dependencies": {
+    "@sinty/sdk": "workspace:*"
+  }
+}

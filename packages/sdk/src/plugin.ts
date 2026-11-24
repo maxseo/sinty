@@ -52,12 +52,13 @@ export interface UiTab {
    * which session is open (`init.sessionId`, then `{ op: "session" }` when the user switches chats).
    * `project`: a tab inside a project; the bridge tells the page `init.projectId`.
    * `settings`: shown as that plugin's settings section, not in the left navigation.
+   * `agent`: a tab on the agent card, after MCP and before Save. The bridge tells the page `init.agentId`.
    * Every tab is an access right `ui:<plugin>/<id>` (docs/spec/plugin-rules.md).
    */
   placement?: UiTabPlacement;
 }
 
-export type UiTabPlacement = "sidebar" | "session" | "project" | "settings";
+export type UiTabPlacement = "sidebar" | "session" | "project" | "settings" | "plugins" | "agent";
 
 export interface ManifestTool {
   name: string;
@@ -70,10 +71,18 @@ export interface ManifestTool {
 }
 
 /** Shape of `sinty.plugin.json`. Mirrors `schemas/plugin-manifest.schema.json`. */
+export type PluginCategory = "system" | "functional" | "ui";
+/** Bounded AND ranges (>=0.5.1 <0.6.0), independent core and SDK versions. */
+export interface PluginCompatibility { core?: string; sdk?: string; protocol?: string; platforms?: ("win32" | "linux" | "darwin")[]; architectures?: ("x64" | "arm64")[] }
 export interface PluginManifest {
   $schema?: string;
   name: string;
   version: string;
+  categories?: PluginCategory[];
+  compatibility?: PluginCompatibility;
+  changelog?: string;
+  /** rpc-only asserts there are no untracked background/detached jobs. Otherwise restart is required. */
+  updateMode?: "rpc-only" | "lifecycle" | "restart";
   description: string;
   kinds: PluginKind[];
   runtime: PluginRuntime;
@@ -346,6 +355,8 @@ export interface PublicNet {
 // ---- setup context ----
 
 export interface PluginContext {
+  /** Suspend autonomous producers, finish already admitted work; resume after failed update. */
+  lifecycle?(hooks:{pause():Promise<void>|void;resume():Promise<void>|void}):void;
   readonly name: string;
   readonly config: Readonly<Record<string, unknown>>;
   /** Absolute paths; the process can only write where `permissions.fs.write` allows. `data` is this plugin's own folder (`$DATA`). */

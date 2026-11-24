@@ -14,6 +14,10 @@ reference for plugin authors and for the core; code lives in `packages/core/src/
    `packages/core/src/__tests__/golden`).
 3. **Plugins extend, never replace, the safety rails.** Memory plugins run in their own permission-confined
    process, reach models only through the core, have timeouts and budgets, and their output is untrusted data.
+   A running memory **provider** replaces the builtin fact store. Its near records (facts and preferences)
+   fill `memory.profile` without a search. Decisions and open questions stay in long memory and are found
+   by recall. The journal and the conversation summary stay in the core. A processor that does not provide storage, such as `fact-extractor`,
+   does not replace the builtin store. Turning the provider off restores the builtin store on the next snapshot.
 
 ## Vocabulary
 

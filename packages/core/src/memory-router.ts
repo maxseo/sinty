@@ -30,6 +30,7 @@ export type SummaryFacts = { summary: string; facts: { text: string; tier: Memor
 export interface MemoryCtx {
   sessionId: string;
   agentId: string;
+  userId?: string;
 }
 
 type MemoryEventType = "memory.written" | "memory.compacted" | "memory.degraded" | "memory.recalled" | "memory.experiment" | "memory.snapshot";
@@ -160,6 +161,15 @@ interface PluginRef {
   id: string;
 }
 
+function renderNear(records: MemoryRecord[]): string {
+  if (!records.length) return "";
+  return ["Memory already in front of you. Do not repeat it back unless asked.", ...records.map((r) => `- [${r.ref ?? "fact"}] ${r.text}`), "This is the near memory. Decisions and open questions stay in long memory and are found with memory.recall."].join("\n");
+}
+
+function traceFact(r: MemoryRecord): MemoryTrace["facts"][number] {
+  return { id: r.id, text: r.text, tier: r.tier ?? "profile", scope: r.scope ?? "user", source: r.ref ?? r.provider, createdAt: r.createdAt ?? "" };
+}
+
 /** The fold transcript given to the summary model and to onCompaction processors. */
 export function foldTranscript(head: SintyEvent[]): string {
   return head
@@ -203,6 +213,7 @@ export class MemoryRouter {
   }
 
   /** Waits for the afterTurn queue to go idle. */
+  get activeManagedJobs():number{return this.draining?1:0}
   async idle(): Promise<void> {
     while (this.draining) await this.draining;
   }
@@ -258,15 +269,19 @@ export class MemoryRouter {
    * another agent starts speaking), then the conversation summary. Both change only at compaction, so the provider
    * can cache them. Without a journal (unit tests) the live block is used.
    */
-  sessionMessages(ctx: MemoryCtx, trace?: MemoryTrace): ChatMessage[] {
+  async sessionMessages(ctx: MemoryCtx, trace?: MemoryTrace): Promise<ChatMessage[]> {
     const b = this.builtin;
     const who = { agentId: ctx.agentId, chatId: ctx.sessionId };
-    const snap = this.snapshot(ctx);
+    const snap = await this.snapshot(ctx);
     if (trace) {
-      const ids = new Set(snap.factIds);
-      trace.facts = [...b.store.profile(who), ...b.store.recentLog(10, who)].filter((f) => ids.has(f.id)).map((f) => ({ id: f.id, text: f.text, tier: f.tier, scope: f.scope, source: f.source, createdAt: f.createdAt }));
+      if (this.ownsMemory()) trace.facts = (await this.nearRecords(ctx)).map(traceFact);
+      else {
+        const ids = new Set(snap.factIds);
+        trace.facts = [...b.store.profile(who), ...b.store.recentLog(10, who)].filter((f) => ids.has(f.id)).map((f) => ({ id: f.id, text: f.text, tier: f.tier, scope: f.scope, source: f.source, createdAt: f.createdAt }));
+      }
     }
-    const blocks: ContextBlock[] = [{ id: "memory.profile", content: snap.text, source: BUILTIN }];
+    const blocks: ContextBlock[] = [];
+    if (snap.text) blocks.push({ id: "memory.profile", content: snap.text, source: this.ownsMemory() ? this.providers()[0]?.id ?? "plugin" : BUILTIN });
     const summary = b.summary(ctx.sessionId);
     if (summary) blocks.push({ id: "memory.summary", content: `<conversation_summary>\n${summary.text}\n</conversation_summary>`, source: BUILTIN });
     if (summary && trace) trace.summary = { text: summary.text, coversUntil: summary.coversUntil, tokens: summary.tokens };
@@ -275,17 +290,24 @@ export class MemoryRouter {
   }
 
   /** The session's memory profile block: the journaled snapshot, or a new one (journaled) when it is missing or stale. */
-  private snapshot(ctx: MemoryCtx): { text: string; factIds: string[] } {
+  private async snapshot(ctx: MemoryCtx): Promise<{ text: string; factIds: string[] }> {
     const b = this.builtin;
     const who = { agentId: ctx.agentId, chatId: ctx.sessionId };
-    const live = (): { text: string; factIds: string[] } => ({ text: b.block(who), factIds: [...b.store.profile(who), ...b.store.recentLog(10, who)].map((f) => f.id) });
+    const live = async (): Promise<{ text: string; factIds: string[] }> => {
+      if (!this.ownsMemory()) return { text: b.block(who), factIds: [...b.store.profile(who), ...b.store.recentLog(10, who)].map((f) => f.id) };
+      const records = await this.nearRecords(ctx);
+      return { text: renderNear(records), factIds: records.map((r) => r.id) };
+    };
     if (!this.d.sessionEvents) return live();
     const events = this.d.sessionEvents(ctx.sessionId, ["memory.snapshot", "memory.compacted"]);
     const last = events.findLast((e): e is SintyEvent<"memory.snapshot"> => e.type === "memory.snapshot");
     const compacted = events.findLast((e) => e.type === "memory.compacted");
     const sameAgent = (last?.data as { agentId?: string } | undefined)?.agentId === ctx.agentId;
-    if (last && sameAgent && (!compacted || compacted.seq < last.seq)) return { text: last.data.text, factIds: last.data.factIds };
-    const fresh = live();
+    const fresh = await live();
+    const builtinShowing = Boolean(last && (last.data.text !== "" || last.data.factIds.length > 0));
+    const handoff = Boolean(last && ((this.ownsMemory() && builtinShowing && !last.data.text.startsWith("Memory already in front of you.")) || (!this.ownsMemory() && !builtinShowing && fresh.text !== "")));
+    const pluginGap = Boolean(this.ownsMemory() && last && last.data.text === "" && fresh.text !== "");
+    if (last && sameAgent && (!compacted || compacted.seq < last.seq) && !handoff && !pluginGap) return { text: last.data.text, factIds: last.data.factIds };
     const reason = !last ? "start" : !sameAgent ? "agent" : "compaction";
     this.d.record({ sessionId: ctx.sessionId, type: "memory.snapshot", actor: MEMORY_ACTOR, data: { text: fresh.text, factIds: fresh.factIds, reason, agentId: ctx.agentId } });
     return fresh;
@@ -300,7 +322,7 @@ export class MemoryRouter {
     const exp = this.experiment(turnIn);
     const turn = exp.turn;
     let blocks: ContextBlock[] = [...(await this.recallForTurn(turn, exp.overrides, trace))];
-    const updates = this.memoryUpdates(ctx);
+    const updates = await this.memoryUpdates(ctx);
     if (updates.block) blocks.push(updates.block);
     for (const p of this.processors("beforeContext")) {
       const t0 = Date.now();
@@ -328,7 +350,7 @@ export class MemoryRouter {
     await this.recallForTurn(exp.turn, exp.overrides, trace);
   }
 
-  private memoryUpdates(ctx: MemoryCtx): { block?: ContextBlock; factIds: string[] } {
+  private async memoryUpdates(ctx: MemoryCtx): Promise<{ block?: ContextBlock; factIds: string[] }> {
     if (!this.d.sessionEvents) return { factIds: [] };
     const events = this.d.sessionEvents(ctx.sessionId, ["memory.snapshot", "context.turn"]);
     const at = events.findLastIndex((e) => e.type === "memory.snapshot");
@@ -336,6 +358,12 @@ export class MemoryRouter {
     const known = new Set((events[at]!.data as { factIds: string[] }).factIds);
     for (const e of events.slice(at + 1)) for (const id of (e.data as { factIds?: string[] }).factIds ?? []) known.add(id);
     const who = { agentId: ctx.agentId, chatId: ctx.sessionId };
+    if (this.ownsMemory()) {
+      const records = (await this.nearRecords(ctx)).filter((r) => !known.has(r.id));
+      if (!records.length) return { factIds: [] };
+      const content = ["<memory_updates>", "Near memory saved since this conversation's memory block was written. Use it with that block.", ...records.map((r) => `- [${r.ref ?? "fact"}] ${r.text}`), "</memory_updates>"].join("\n");
+      return { block: { id: "memory.updates", content, source: this.providers()[0]?.id ?? "plugin" }, factIds: records.map((r) => r.id) };
+    }
     const facts = [...this.builtin.store.profile(who), ...this.builtin.store.recentLog(10, who)].filter((f) => !known.has(f.id));
     if (!facts.length) return { factIds: [] };
     const content = [
@@ -460,6 +488,7 @@ export class MemoryRouter {
     const out: MemoryRecord[] = [];
     const embeddings = await this.embedMany(queries, turn.sessionId);
     for (const [i, query] of queries.entries()) {
+      if (this.ownsMemory()) break;
       const embedding = embeddings?.[i];
       const facts = this.builtin.recall({ query, chatId: turn.sessionId, agentId: turn.agentId, limit, ...(embedding ? { embedding } : {}) });
       out.push(...facts.map((f) => BuiltinMemory.toRecord(f)));
@@ -539,13 +568,21 @@ export class MemoryRouter {
     }
     if (name === "memory.forget") {
       const f = { ...(a.id ? { id: a.id } : {}), ...(a.text ? { text: a.text } : {}) };
+      if (this.ownsMemory()) {
+        let deleted = 0;
+        for (const p of this.memoryTargets()) {
+          const r = await this.callProvider<{ deleted: number }>(p, "forget", [f], ctx.sessionId, this.settings.hooks.timeoutMs);
+          deleted += r?.deleted ?? 0;
+        }
+        return { deleted };
+      }
       const deleted = this.builtin.forget(f);
       for (const p of this.writeTargets()) await this.callProvider(p, "forget", [f], ctx.sessionId, this.settings.hooks.timeoutMs);
       return { deleted };
     }
     let embedding: Float32Array<ArrayBuffer> | undefined = a.embedding ? Float32Array.from(a.embedding) : undefined;
     if (!embedding && a.query) embedding = (await this.embedMany([a.query], ctx.sessionId))?.[0];
-    const facts = this.builtin.recall({ query: a.query ?? "", chatId: ctx.sessionId, agentId: ctx.agentId, ...(embedding ? { embedding } : {}) });
+    const facts = this.ownsMemory() ? [] : this.builtin.recall({ query: a.query ?? "", chatId: ctx.sessionId, agentId: ctx.agentId, ...(embedding ? { embedding } : {}) });
     const providers = this.providers();
     const processors = this.processors("afterRecall");
     if (!providers.length && !processors.length) return facts.map(toolRow);
@@ -582,6 +619,18 @@ export class MemoryRouter {
       if (next && typeof next === "object" && typeof next.text === "string") {
         cur = { ...cur, text: next.text, tier: isTier(next.tier) ? next.tier : cur.tier, about: next.about === "work" || next.about === "user" ? next.about : cur.about };
       }
+    }
+    if (this.ownsMemory()) {
+      const targets = this.memoryTargets();
+      let saved: { id: string; action: "inserted" | "updated" } = { id: "", action: "inserted" };
+      for (const p of targets) {
+        const r = await this.callProvider<{ id?: string; action?: string }>(p, "write", [{ ...cur, userId: opts.turn?.userId || this.d.config.agent.userId }], sessionId, this.settings.hooks.timeoutMs);
+        if (r && typeof r.id === "string" && r.id) saved = { id: r.id, action: r.action === "updated" ? "updated" : "inserted" };
+      }
+      if (opts.journal) {
+        this.d.record({ sessionId, type: "memory.written", actor: MEMORY_ACTOR, data: { id: saved.id, action: saved.action, tier: cur.tier, scope: cur.scope, source: cur.source, provider: targets[0]?.id ?? "plugin", ...(opts.by ? { by: opts.by } : {}) } });
+      }
+      return saved;
     }
     const embedding = (await this.embedMany([cur.text], sessionId))?.[0];
     const saved = this.builtin.write(cur, embedding);
@@ -861,6 +910,28 @@ export class MemoryRouter {
   }
 
   // ---- plugins ----
+
+  private async nearRecords(ctx: MemoryCtx): Promise<MemoryRecord[]> {
+    const turn: TurnInfo = { sessionId: ctx.sessionId, turnId: "", agentId: ctx.agentId, userId: ctx.userId || this.d.config.agent.userId, text: "" };
+    const out: MemoryRecord[] = [];
+    for (const p of this.providers()) {
+      const rows = await this.callProvider<MemoryRecord[]>(p, "recall", [{ query: "", limit: 40, turn }], ctx.sessionId, this.settings.recall.timeoutMs);
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) if (row && typeof row.text === "string" && row.text) out.push(this.normalizeRecord({ ...row, untrusted: true }, p.id));
+    }
+    return out;
+  }
+
+  /** A running memory provider replaces the builtin fact store for recall, profile and writes. */
+  private ownsMemory(): boolean {
+    return this.providers().length > 0;
+  }
+
+  /** Where writes go while a memory plugin owns storage: memory.writeTo when set, otherwise every provider. */
+  private memoryTargets(): PluginRef[] {
+    const chosen = this.writeTargets();
+    return chosen.length ? chosen : this.providers();
+  }
 
   private processors(hook: string): { plugin: PluginProcess; name: string }[] {
     return (this.d.host?.memoryProcessors() ?? []).filter((p) => p.hooks.includes(hook));

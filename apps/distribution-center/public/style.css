@@ -1,0 +1,65 @@
+/* Tokens copied from apps/web/src/style.css; no runtime dependency on harness assets. */
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f4f5;
+  --panel: #ffffff;
+  --panel-2: #fafafa;
+  --text: #050505;
+  --muted: #71717a;
+  --line: rgba(0, 0, 0, 0.1);
+  --line-strong: #d4d4d8;
+  --accent: #74ff2a;
+  --accent-hover: #72e035;
+  --accent-3d: #58cd1a;
+  --accent-soft: rgba(116, 255, 42, 0.22);
+  --accent-text: #000000;
+  --user: #ecfccb;
+  --warn: #fff6dc;
+  --warn-line: #e0b84a;
+  --err: #fff0f0;
+  --err-line: #f87171;
+  --ok: #58cd1a;
+  --run: #74ff2a;
+  --block: #e0b84a;
+  --btn: #74ff2a;
+  --btn-text: #000000;
+  --field: #ffffff;
+  --menu: #ffffff;
+  --hover: #f4f4f5;
+  --shadow: 0 4px 0 0 #58cd1a;
+  --font: Inter, system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --control: 42px;
+  --radius: 12px;
+  font: 16px/1.45 var(--font);
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #050505;
+  --panel: #0a0a0a;
+  --panel-2: #141414;
+  --text: #ffffff;
+  --muted: #a1a1aa;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: #2a2a2a;
+  --accent: #74ff2a;
+  --accent-hover: #72e035;
+  --accent-3d: #58cd1a;
+  --accent-soft: rgba(116, 255, 42, 0.12);
+  --accent-text: #000000;
+  --user: rgba(116, 255, 42, 0.12);
+  --warn: #2a2414;
+  --warn-line: #e0b84a;
+  --err: #2a1414;
+  --err-line: #f87171;
+  --ok: #74ff2a;
+  --run: #74ff2a;
+  --block: #e0b84a;
+  --btn: #74ff2a;
+  --btn-text: #000000;
+  --field: #141414;
+  --menu: #141414;
+  --hover: #1c1c1c;
+  --shadow: 0 4px 0 0 #58cd1a;
+}
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:var(--text);background:var(--bg);font-synthesis:none;--paper:var(--panel)}*{box-sizing:border-box}body{margin:0;display:flex;min-height:100vh}aside{width:228px;padding:28px 18px;background:var(--paper);border-right:1px solid var(--line);position:fixed;inset:0 auto 0 0;display:flex;flex-direction:column;gap:24px}.brand{font-size:25px;font-weight:750;letter-spacing:-1px}.brand span{display:block;font-size:12px;color:var(--muted);font-weight:500;letter-spacing:0;margin-top:8px}nav{display:grid;gap:7px}button{font:inherit;border:1px solid var(--line);border-radius:9px;padding:10px 14px;cursor:pointer;background:#fff;color:inherit}button:hover{background:#f2f0ff}button.on{background:var(--accent-soft);color:var(--text);border-color:transparent}button.primary{background:var(--accent);color:var(--accent-text);border:0}button:disabled{opacity:.5;cursor:wait}aside p{margin-top:auto;color:var(--muted);font-size:12px;line-height:1.7}main{margin-left:228px;max-width:1240px;width:100%;padding:36px 44px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px;gap:20px}header small{font-size:11px;letter-spacing:2px;color:var(--muted)}h1{font-size:28px;margin:7px 0}h2{font-size:18px;margin:0 0 14px}.card{border:1px solid var(--line);border-radius:14px;background:var(--paper);padding:23px;margin-bottom:17px;box-shadow:0 2px 4px #20263503}p{line-height:1.6}.note,.meta{color:var(--muted);font-size:13px}.badge{font-size:12px;color:var(--muted);padding:8px 12px;border:1px solid var(--line);border-radius:20px}.error{color:#b63447;white-space:pre-wrap}label{display:grid;gap:7px;font-size:13px}form{display:flex;gap:15px;align-items:end;flex-wrap:wrap}input{font:inherit;border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:220px;background:white}article .actions{display:flex;gap:9px;flex-wrap:wrap}.status{display:inline-block;border-radius:6px;padding:3px 8px;font-size:12px;background:var(--accent-soft);color:var(--text)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f7f8fa;padding:14px;border-radius:8px;font:12px/1.7 ui-monospace,monospace}dialog{border:1px solid var(--line);border-radius:15px;padding:25px;max-width:680px;width:90%}dialog::backdrop{background:#16233b65}footer{display:flex;gap:10px;justify-content:end}details{margin:13px 0}[hidden]{display:none!important}@media(max-width:800px){aside{width:180px}main{margin-left:180px;padding:24px 18px}header{display:block}.badge{display:inline-block;margin-top:10px}}

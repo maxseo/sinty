@@ -54,26 +54,29 @@ export function SkillsPane() {
   };
 
   return (
-    <div class="settings-sheet">
-      <h3>Навыки</h3>
-      <div class="tabs">
+    <div class="settings-sheet settings-ux skills-pane">
+      <div class="card">
+      <div class="section-h"><h3>Навыки</h3><span class="muted small">{skills.length} в библиотеке</span></div>
+      <div class="seg pills">
         <button type="button" class={tab === "list" ? "on" : ""} onClick={() => setTab("list")}>Доступные навыки</button>
         <button type="button" class={tab === "add" ? "on" : ""} onClick={() => setTab("add")}>Добавить навык</button>
       </div>
       {error && <p class="error">{error}</p>}
-      {notice && <p class="small">{notice}</p>}
+      {notice && <p class="note" role="status">{notice}</p>}
       {disabled && <p class="muted">Плагин skills выключен. Включите его в разделе «Плагины» и перезапустите sinty web.</p>}
       {tab === "list" ? (
         <>
-          <label class="field">Навыков в каталоге<span class="small muted">Сколько навыков перечислять в промпте. Остальные открываются по имени.</span>
+          <label class="field skills-limit">Навыков в каталоге
             <input type="number" min={1} max={500} value={limit} onInput={(e) => setLimit(e.currentTarget.value)} />
+            <span class="field-help">Сколько навыков перечислять в промпте. Остальные открываются по имени.</span>
           </label>
-          <button type="button" class="secondary" disabled={limit === savedLimit} onClick={() => void saveLimit()}>Сохранить лимит</button>
-          <div class="plugin-grid">
+          <div class="actions"><button type="button" class="btn" disabled={limit === savedLimit || !Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 500} onClick={() => void saveLimit()}>Сохранить лимит</button></div>
+          <div class="plugin-grid skills-grid">
             {skills.map((s) => (
-              <button type="button" key={s.name} class="skill-card" onClick={() => setOpen(s.name)}>
-                <b>{s.name}</b>
-                <span class="small muted">{s.description || "без описания"}</span>
+              <button type="button" key={s.name} class="plugin-tile skill-card" onClick={() => setOpen(s.name)}>
+                <span class="plugin-av" aria-hidden="true">{s.name.slice(0, 1).toLocaleLowerCase()}</span>
+                <span class="plugin-txt"><b>{s.name}</b>
+                <span title={s.description}>{s.description || "без описания"}</span></span>
               </button>
             ))}
           </div>
@@ -82,6 +85,7 @@ export function SkillsPane() {
       ) : (
         <AddSkill disabled={disabled} onDone={() => { setTab("list"); setNotice("Навык записан. Каталог в промпте обновится после перезапуска sinty web."); void load(); }} onError={setError} />
       )}
+      </div>
       {open && <SkillView name={open} onClose={() => setOpen(null)} />}
     </div>
   );
@@ -148,14 +152,14 @@ function AddSkill({ disabled, onDone, onError }: { disabled: boolean; onDone: ()
   };
 
   return (
-    <section class="panel">
+    <section class="skills-add">
       <div class="cmd-line">
         <input value={command} placeholder="npx skills add владелец/репозиторий" disabled={disabled || busy} onInput={(e) => setCommand(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") void run({ command }); }} />
-        <button type="button" class="icon" title="Запустить" disabled={disabled || busy || !command.trim()} onClick={() => void run({ command })}>→</button>
+        <button type="button" class="btn" title="Запустить" aria-label="Установить навык командой" disabled={disabled || busy || !command.trim()} onClick={() => void run({ command })}>→</button>
       </div>
-      <div class="row">
-        <button type="button" class="secondary" disabled={disabled || busy} onClick={() => void sendFolder()}>Загрузить из папки</button>
-        <button type="button" class="secondary" disabled={disabled || busy} onClick={() => zipRef.current?.click()}>Загрузить из zip</button>
+      <div class="actions">
+        <button type="button" class="btn" disabled={disabled || busy} onClick={() => void sendFolder()}>Загрузить из папки</button>
+        <button type="button" class="btn" disabled={disabled || busy} onClick={() => zipRef.current?.click()}>Загрузить из zip</button>
         <button type="button" class="secondary" disabled={disabled || busy} onClick={() => setManual(true)}>Добавить скилл</button>
       </div>
       <input ref={zipRef} class="file-hidden" type="file" accept=".zip,application/zip" onChange={(e) => { void sendZip(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ""; }} />
@@ -195,17 +199,19 @@ function ManualSkill({ disabled, onClose, onDone, onError }: { disabled: boolean
   };
   return (
     <div class="overlay" onClick={onClose}>
-      <form class="dialog skill-form" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void save(); }}>
-        <header class="dialog-head"><h3>Новый скилл</h3><button type="button" class="icon" onClick={onClose}>×</button></header>
-        <label class="field">Slug (опционально)<input value={slug} placeholder="brand-voice" onInput={(e) => setSlug(e.currentTarget.value)} /></label>
+      <form class="dialog skill-form" role="dialog" aria-modal="true" aria-label="Новый скилл" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        <header class="dialog-head"><h3>Новый скилл</h3><button type="button" class="icon" aria-label="Закрыть" onClick={onClose}>×</button></header>
+        <div class="grid-2">
+        <label class="field">Папка / slug (опционально)<input value={slug} placeholder="brand-voice" onInput={(e) => setSlug(e.currentTarget.value)} /></label>
         <label class="field">Название<input value={name} required onInput={(e) => setName(e.currentTarget.value)} /></label>
-        <label class="field">Краткое описание<textarea rows={2} required value={desc} onInput={(e) => setDesc(e.currentTarget.value)} /></label>
-        <label class="field">Когда использовать<textarea rows={3} required value={when} onInput={(e) => setWhen(e.currentTarget.value)} /></label>
+        <label class="field">Описание<input required value={desc} onInput={(e) => setDesc(e.currentTarget.value)} /></label>
+        <label class="field">Когда использовать<input required value={when} onInput={(e) => setWhen(e.currentTarget.value)} /></label>
+        </div>
         <label class="field">SKILL.md файл
           <input class="file-hidden" type="file" accept=".md,text/markdown" onChange={(e) => void pickMd(e.currentTarget.files?.[0] ?? null)} />
           <span class="small muted">{mdName || "Выбрать .md"}</span>
         </label>
-        <label class="field">Инструкции (SKILL.md body)<textarea rows={10} required value={body} onInput={(e) => setBody(e.currentTarget.value)} /></label>
+        <label class="field">Инструкции (SKILL.md body)<textarea rows={6} required value={body} onInput={(e) => setBody(e.currentTarget.value)} /></label>
         <footer class="dialog-actions">
           <button type="button" class="secondary" onClick={onClose}>Отмена</button>
           <button type="submit" disabled={disabled || !name.trim() || !desc.trim() || !when.trim() || !body.trim()}>Сохранить</button>
@@ -246,10 +252,10 @@ function SkillView({ name, onClose }: { name: string; onClose: () => void }) {
   };
   return (
     <div class="overlay" onClick={onClose}>
-      <div class="dialog skill-view" onClick={(e) => e.stopPropagation()}>
+      <div class="dialog skill-view" role="dialog" aria-modal="true" aria-label={name} onClick={(e) => e.stopPropagation()}>
         <header class="dialog-head">
           <h3>{name}</h3>
-          <button type="button" class="icon" onClick={onClose}>×</button>
+          <button type="button" class="icon" aria-label="Закрыть" onClick={onClose}>×</button>
         </header>
         {item?.description && <p class="muted">{item.description}</p>}
         {error && <p class="error">{error}</p>}

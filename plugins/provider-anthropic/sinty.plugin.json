@@ -3,11 +3,16 @@
   "name": "provider-anthropic",
   "version": "0.1.0",
   "description": "Anthropic Messages protocol for Claude models",
-  "kinds": ["provider"],
+  "kinds": [
+    "provider"
+  ],
   "runtime": "node",
   "entry": "dist/index.js",
   "permissions": {
-    "net": ["*"]
+    "net": [
+      "*"
+    ]
   },
-  "editable": true
+  "editable": true,
+  "updateMode": "rpc-only"
 }

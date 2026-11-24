@@ -12,6 +12,7 @@ test("CURATED_MCP: Max-confirmed ids only, no excluded web cards", () => {
     "sqlite",
     "filesystem",
     "telegram",
+    "outlook",
     "max-messenger",
     "memory",
   ]);
@@ -48,6 +49,13 @@ test("curatedById + install body for github", () => {
   const body = curatedInstallBody(g!);
   assert.deepEqual(body.command, ["npx", "-y", "@modelcontextprotocol/server-github"]);
   assert.deepEqual(body.env, { GITHUB_PERSONAL_ACCESS_TOKEN: "secret://github.token" });
+});
+
+test("outlook uses Graph client-credentials package", () => {
+  const o = curatedById("outlook");
+  assert.ok(o?.command?.includes("@lnwebworks/outlook-mcp-server"));
+  assert.equal(o?.envHints?.AZURE_CLIENT_SECRET, "secret://outlook.secret");
+  assert.equal(o?.envHints?.OUTLOOK_USER_EMAIL, "secret://outlook.mailbox");
 });
 
 test("max-messenger uses real @woyax package", () => {

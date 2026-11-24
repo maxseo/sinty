@@ -1,0 +1,15 @@
+{
+  "name": "@sinty/distribution-center",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "build": "node build.mjs",
+    "test": "node ../../node_modules/typescript/bin/tsc -p ../../packages/core/tsconfig.json --outDir ../../packages/core/.distribution-core-checkpoint && node build.mjs && node --test --test-concurrency=1 src/center.test.ts",
+    "start": "node dist/src/main.js"
+  }
+}

@@ -1,5 +1,7 @@
 # Sinty
 
+Native per-agent/model generation overrides: [model profiles](docs/spec/model-profiles.md).
+
 **Syntet AI agent that runs the same on a laptop and on any VPS.**
 One process, one SQLite file, plugins for everything else.
 
@@ -213,3 +215,14 @@ docs/           architecture, specs, integrations, roadmap
 ## License
 
 [MIT](LICENSE)
+
+MCP management: Settings → MCP keeps disabled installs visible. Each MCP has a persisted live on/off switch and, for a managed home install, confirmed uninstall. Disabling stops its tools/process/restart timer immediately. Uninstall preserves user data, secrets and shared dependencies; bundled/external installs can only be switched off.
+
+Shared custom selects render in a viewport-anchored portal (flip/resize/scroll, keyboard navigation and focus restoration) rather than inside clipping cards. Skills follows the settings-card layout without replacing its real import/view APIs. UI Kit contains the approved 46 grouped, searchable specimens; its controls are local demonstrations, including the shared searchable and multi-select components, with no backend operations.
+
+
+OpenAI-compatible name assembly can be enabled once per provider: `providers.runninghub.options.toolCallNameMode: catalog-compatible`. It covers **all current and future model IDs** on that endpoint: genuine name fragments and repeated complete-name metadata, constrained by the exact advertised catalog, with isolated call identities. Ambiguous catalog-prefix interpretations stop safely with a visible local adapter error and reported usage retained; no tool runs or automatic transport fallback. Other providers keep the default delta contract. No per-model exceptions. See [the contract](docs/spec/protocol.md#openai-compatible-tool-name-contract).
+
+### Optional dynamic tool catalog
+
+The bundled `dynamic-tools` plugin offers an initially-OFF, plugin-owned mode switch, pinned real schemas and permission-scoped discovery for the three shipped chat adapters. Its sidebar page **Динамичные инструменты** compares tool-schema counts/UTF-8 JSON bytes, not tokens or dollars. Load it before provider plugins; standard lifecycle OFF/ON is not the own quick mode switch. See [plugin documentation](plugins/dynamic-tools/README.md) for retention, fallback/replay, bridge security and trade-offs. No automatic paid test is performed.

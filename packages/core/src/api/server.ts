@@ -1,14 +1,20 @@
+import { readAttachmentPreview } from "../attachment-preview.js";
+import {ManagedUpdateBridge} from "../managed-updates.js";
+import {PluginCatalogClient} from "../plugin-catalog.js";
+import {updateHistory} from "../plugin-recovery.js";
+import { BrowserPilotError, browserPilotAgentIds } from "../browser-pilot.js";
 import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serve, type ServerType } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import { scrubText } from "@sinty/supervisor";
-import { PROTOCOL_VERSION, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
+import { PROTOCOL_VERSION, z, type Actor, type BlobRef, type EventType, type LiveEvent } from "@sinty/sdk";
 import { AgentError } from "../agent.js";
+import { generationControls, modelProfilesSchema, validateProfile } from "../model-profile.js";
 import { BLOB_MAX_BYTES, blobTooBigMessage, saveBlob, saveBlobStream } from "../blobs.js";
 import { AccountError, type AccessAction, type AccountUser, type Grant } from "../accounts.js";
 import { accessRegistry, registryIds, routeRight, sectionResource, tabResource, type AccessGroup, type RegistryPlugin } from "../access-registry.js";
@@ -16,8 +22,8 @@ import { rotateApiToken, TokenRotationError } from "../api-token.js";
 import { liveEvents, sessionInfo } from "../plugin-bridge.js";
 import type { Sinty } from "../sinty.js";
 import { DEFAULT_COMPRESS_PROMPT, DEFAULT_FACTS_PROMPT, DEFAULT_ON_PLUGINS, loadConfig, NAMED_MODEL_ROUTES, saveModelCatalog, saveNamedRoutes, saveSettings } from "../config.js";
-import { installMcpPlugin, McpInstallError, type McpInstallInput } from "../mcp-install.js";
-import { installHomePlugin, removeHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
+import { installMcpPlugin, setPluginEnabledInConfig, McpInstallError, type McpInstallInput } from "../mcp-install.js";
+import { installHomePlugin, removeHomePlugin, canRemoveHomePlugin, PluginInstallError, type PluginInstallInput } from "../plugin-install.js";
 import { discoverPlugins } from "../discover.js";
 import { loadRegistry } from "../registry.js";
 import { openGenerationFile } from "../media-file.js";
@@ -84,8 +90,9 @@ const OVERVIEW: ReadonlySet<EventType> = new Set<EventType>([
 
 const SUPERVISOR_EVENTS: EventType[] = ["supervisor.notice", "supervisor.escalated", "supervisor.incident_resolved"];
 
-export function createApp(sinty: Sinty): Hono {
+export function createApp(sinty: Sinty, testing?:{catalogLoopbackOrigin:string}): Hono {
   const app = new Hono();
+  app.use("/v1/*",async(c,next)=>{if(!sinty.managed||["GET","HEAD"].includes(c.req.method)||c.req.path.startsWith("/v1/updates/"))return next();let release:()=>void;try{release=sinty.beginManagedRequest()}catch{return c.json({error:{code:"instance_draining",message:"Харнес готовится к обновлению. Новые задания временно не принимаются."}},503)}try{return await next()}finally{release()}});
   // Resolved on every request: after a rotation (POST /v1/auth/rotate or `sinty token rotate` next to this server)
   // only the new token is accepted, without a restart.
   const given = (c: Context): string => {
@@ -114,6 +121,7 @@ export function createApp(sinty: Sinty): Hono {
 
   app.onError((err, c) => {
     if (err instanceof AgentError) return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
+    if (err instanceof BrowserPilotError) return c.json({ error: { code: err.code, message: err.message } }, 409);
     if (err instanceof AccountError) return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
     return c.json({ error: { code: "internal", message: err.message } }, 500);
   });
@@ -121,6 +129,19 @@ export function createApp(sinty: Sinty): Hono {
   type ActorAuth = { kind: "machine" } | { kind: "user"; user: AccountUser };
   const actors = new WeakMap<Context, ActorAuth>();
   const OPEN_AUTH = new Set(["/v1/auth/login", "/v1/auth/forgot", "/v1/auth/reset", "/v1/auth/setup"]);
+  /** Browser CSRF: if the client sent Origin and SINTY_PUBLIC_ORIGIN is set, they must match. Non-browser (no Origin) is allowed. */
+  const publicOrigin = (): string | undefined => {
+    const raw = process.env.SINTY_PUBLIC_ORIGIN;
+    if (!raw) return undefined;
+    try { return new URL(raw).origin; } catch { return undefined; }
+  };
+  const originAllowed = (c: Context): boolean => {
+    const expected = publicOrigin();
+    if (!expected) return true;
+    const origin = c.req.header("origin");
+    if (!origin) return true;
+    return origin === expected;
+  };
   const actorOf = (c: Context): ActorAuth | undefined => actors.get(c);
   /** A project box counts only while the role still sees «Проекты» in the panel. */
   const allows = (c: Context, resource: string, action: AccessAction): boolean => {
@@ -172,11 +193,24 @@ export function createApp(sinty: Sinty): Hono {
     { method: "PUT", path: /^\/v1\/plugins\/shared$/, need: { resource: "nav:plugins", action: "edit" } },
   ];
 
+  // Local controlled fixture only: public synthetic form, no credentials/submissions/network.
+  app.get("/browser-pilot-fixture", (c) => {
+    c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; frame-src 'none'");
+    return c.html('<!doctype html><meta charset="utf-8"><title>Sinty browser pilot fixture</title><h1>Локальная тестовая форма</h1><form onsubmit="return false"><label>Имя <input name="name"></label><label>Комментарий <textarea name="note"></textarea></label><label>Вариант <select><option>Один</option><option>Два</option></select></label><label>Файл <input type="file"></label><button type="submit" disabled>Отправка отключена</button></form><a download="pilot.txt" href="/browser-pilot-download">Скачать тестовый результат</a>');
+  });
+
+  app.get("/browser-pilot-download", (c) => { c.header("Content-Disposition", "attachment; filename=pilot.txt"); return c.text("synthetic-pilot-result"); });
+
   app.get("/v1/health", (c) => c.json({ ok: true, protocol: PROTOCOL_VERSION }));
 
   app.use("/v1/*", async (c, next) => {
     if (c.req.path === "/v1/health") return next();
-    if (OPEN_AUTH.has(c.req.path)) return next();
+    if (OPEN_AUTH.has(c.req.path)) {
+      if (c.req.method !== "GET" && c.req.method !== "HEAD" && !originAllowed(c)) {
+        return c.json({ error: { code: "origin_not_allowed", message: "Origin not allowed" } }, 403);
+      }
+      return next();
+    }
     const t = given(c);
     if (valid(t)) {
       actors.set(c, { kind: "machine" });
@@ -191,6 +225,8 @@ export function createApp(sinty: Sinty): Hono {
     }
     return next();
   });
+
+  app.use("/v1/*",async(c,next)=>{if(sinty.pluginRecoveryIssue&&!["GET","HEAD"].includes(c.req.method)&&!c.req.path.startsWith("/v1/auth/")&&c.req.path!=="/v1/plugins/recovery/retry")return c.json({error:{code:"plugin_recovery_mode",message:"Работа приостановлена: проверьте восстановление плагинов в разделе Плагины."}},503);return next()});
 
   /** Staff screens: superadmin, or a role with that box on «Сотрудники». */
   const staffMay = (c: Context, action: AccessAction): boolean => superadmin(c) || allows(c, "nav:staff", action);
@@ -391,7 +427,7 @@ export function createApp(sinty: Sinty): Hono {
       plugins: [...catalog.map((p) => ({
         ...p,
         enabled: enabled.has(p.name),
-        removable: existsSync(join(sinty.paths.plugins, p.name, "sinty.plugin.json")) && !existsSync(join(sinty.paths.bundledPlugins, p.name, "sinty.plugin.json")),
+        removable: canRemoveHomePlugin(sinty.paths, p.name),
       })), ...extra],
     });
   });
@@ -462,6 +498,44 @@ export function createApp(sinty: Sinty): Hono {
     }),
   );
 
+  /** Installed library is independent of the running-process registry. Never expose commands/env. */
+  app.get("/v1/managed/identity",c=>{managerOwner(c);return c.json(sinty.managed?{managed:true,version:sinty.managed.version,sha256:sinty.managed.sha256,applicationVersion:sinty.managed.applicationVersion,buildHash:sinty.managed.buildHash,instance:sinty.managed.instance}:{managed:false})});
+  const managedUpdates=new ManagedUpdateBridge(sinty,testing?{loopbackOrigin:testing.catalogLoopbackOrigin}:undefined);
+  app.get("/v1/updates/managed",async c=>{managerOwner(c);try{return c.json(await managedUpdates.status())}catch{return c.json({mode:"managed",applySupported:false,error:"managed_helper_unavailable"},503)}});
+  app.post("/v1/updates/review",async c=>{managerOwner(c);const x=z.object({version:z.string().max(128)}).strict().parse(await c.req.json());try{return c.json(await managedUpdates.review(x.version))}catch(e){throw new AgentError("update_review_failed",e instanceof Error?e.message:"Проверка обновления не удалась",409)}});
+  app.post("/v1/updates/apply",async c=>{managerOwner(c);const x=z.object({reviewId:z.string().regex(/^[a-f0-9]{48}$/),confirm:z.literal(true)}).strict().parse(await c.req.json());try{return c.json(await managedUpdates.apply(x.reviewId),202)}catch{throw new AgentError("update_apply_rejected","Внешний updater не принял подтверждённое обновление",409)}});
+  app.post("/v1/updates/recover",async c=>{managerOwner(c);z.object({confirm:z.literal(true)}).strict().parse(await c.req.json());return c.json(await managedUpdates.recover())});
+  app.get("/v1/updates",c=>{managerOwner(c);return c.json(sinty.getReleaseChecks().state)});
+  app.post("/v1/updates/check",async c=>{managerOwner(c);return c.json(await sinty.getReleaseChecks().checkNow())});
+  const catalogClient=new PluginCatalogClient(sinty.paths,sinty.config,sinty.host,testing?{loopbackOrigin:testing.catalogLoopbackOrigin}:undefined);
+  const managerOwner=(c:Context):void=>{const actor=actorOf(c);if(!c.req.header("authorization")?.startsWith("Bearer ")||!actor||actor.kind==="user"&&!actor.user.system)throw new AccountError("forbidden","Установка плагинов требует владельца",403);const origin=c.req.header("origin"),expected=publicOrigin()??new URL(c.req.url).origin;if(origin&&origin!==expected||c.req.header("sec-fetch-site")==="cross-site")throw new AccountError("forbidden","Cross-origin plugin management denied",403)};
+  const catalogError=(e:unknown):never=>{const raw=e instanceof Error?e.message:"catalog_error",code=e instanceof PluginInstallError?e.code:/^[a-z_]{1,64}$/.test(raw)?raw:"catalog_error";const messages:Record<string,string>={activation_failed_rolled_back:"Новая версия не запустилась. Прежняя версия восстановлена; данные сохранены.",plugin_restart_required:"Для этого плагина требуется управляемый перезапуск. Текущая версия не изменена.",catalog_package_tampered:"Пакет не прошёл проверку SHA-256. Установка отменена.",catalog_signature_invalid:"Подпись каталога не подтверждена доверенным ключом. Установка запрещена.",catalog_review_stale:"Версия или установленный плагин изменились. Проверьте изменения заново.",catalog_review_required:"Повторно откройте проверку пакета и подтвердите установку.",catalog_anchor_changed_review_required:"Источник или доверенный ключ изменились. Требуется проверка владельцем.",bundled_requires_harness_update:"Встроенный плагин обновляется вместе с харнесом."};throw new AgentError(code,messages[code]??raw,409)};
+  app.get("/v1/plugins/recovery",(c)=>{managerOwner(c);return c.json({globalIssue:sinty.pluginRecoveryIssue,blocked:[...sinty.host.recoveryBlocked].map(([name,reason])=>({name,reason})),canRetry:true,automaticDataRollback:false})});
+  app.post("/v1/plugins/recovery/retry",async(c)=>{managerOwner(c);const x=z.object({confirm:z.literal(true)}).strict().safeParse(await c.req.json().catch(()=>null));if(!x.success)throw new AgentError("bad_request","Подтвердите безопасную проверку",400);try{const result=sinty.retryPluginRecovery();return c.json({...result,restartRequired:result.repaired.length>0||!!sinty.pluginRecoveryIssue,message:result.blocked.length?"Данные или пакеты требуют проверки. Автоматического отката данных нет.":"Проверка завершена. Восстановленные плагины запускаются только после обычного перезапуска."})}catch(e){return c.json({error:{code:"recovery_requires_review",message:e instanceof Error?e.message:"Recovery failed"},restartRequired:false},409)}});
+  app.get("/v1/plugins/catalog",async(c)=>{if(!allows(c,"nav:plugins","view"))return forbid(c);try{return c.json(await catalogClient.list())}catch(e){return catalogError(e)}});
+  app.post("/v1/plugins/catalog/review",async(c)=>{managerOwner(c);if(!allows(c,"nav:plugins","add")&&!allows(c,"nav:plugins","edit"))return forbid(c);const request=z.object({name:z.string().regex(/^[a-z][a-z0-9-]{1,63}$/),version:z.string().max(128)}).strict().safeParse(await c.req.json().catch(()=>null));if(!request.success)throw new AgentError("bad_request","name/version required",400);const x=request.data;try{return c.json(await catalogClient.review(x.name,x.version))}catch(e){return catalogError(e)}});
+  app.post("/v1/plugins/catalog/install",async(c)=>{managerOwner(c);if(!allows(c,"nav:plugins","add")||!allows(c,"nav:plugins","edit"))return forbid(c);const request=z.object({reviewId:z.string().uuid(),confirm:z.literal(true)}).strict().safeParse(await c.req.json().catch(()=>null));if(!request.success)throw new AgentError("bad_request","Owner confirmation and reviewId required",400);const x=request.data;try{const result=await catalogClient.install(x.reviewId,x.confirm);sinty.supervisor?.setTools(sinty.agent.supervisedTools());return c.json(result,201)}catch(e){return catalogError(e)}});
+  app.get("/v1/plugins/history",(c)=>{if(!allows(c,"nav:plugins","view"))return forbid(c);try{return c.json({catalogConfigured:catalogClient.configured,entries:updateHistory(sinty.paths.plugins),blocked:[...sinty.host.recoveryBlocked].map(([name,reason])=>({name,reason}))})}catch{return c.json({error:{code:"update_history_unavailable",message:"История обновлений требует проверки"}},409)}});
+
+  app.get("/v1/plugins/installed", (c) => {
+    if (!allows(c, "nav:plugins", "view")) return forbid(c);
+    return c.json({ plugins: discoverPlugins(sinty.paths, sinty.config.plugins.searchPaths).flatMap((entry) => {
+      try {
+        const loaded = sinty.host.locate(entry.name);
+        const p = sinty.host.plugins.get(entry.name);
+        const enabled = sinty.config.plugins.enabled.includes(entry.name) && !sinty.config.plugins.disabled?.includes(entry.name);
+        const error = sinty.host.startErrors.get(entry.name) ?? (p?.disabled && enabled ? "Остановлен после повторных сбоев" : undefined);
+        return [{ ...entry, runtime: loaded.manifest.runtime,
+          location: loaded.bundled ? "bundled" : loaded.dir === join(sinty.paths.plugins, entry.name) ? "home" : "external",
+          removable: canRemoveHomePlugin(sinty.paths, entry.name),
+          enabled, disabled: !enabled, tools: p?.ready && !p.disabled ? p.tools.map((t) => t.name) : [],
+          status: !enabled ? "disabled" : error ? "failed" : p?.ready ? "running" : p ? "starting" : "stopped",
+          ...(error ? { error: sinty.secrets.redact(error) } : {}),
+        }];
+      } catch { return []; }
+    }) });
+  });
+
   app.get("/v1/plugins", (c) =>
     c.json({
       plugins: [...sinty.host.plugins.values()].map((p) => ({
@@ -520,6 +594,7 @@ export function createApp(sinty: Sinty): Hono {
         baseUrl: p.baseUrl ?? "",
         hasKey: Boolean(p.apiKey && sinty.secrets.resolve(p.apiKey)),
       })),
+      generation: { maxOutputTokens: sinty.config.models.maxOutputTokens, providers: Object.fromEntries(Object.entries(sinty.config.providers).map(([id, provider]) => [id, generationControls(provider)])) },
       // Named routes (models.routes) + service.model for Settings → Models.
       routes: { ...(sinty.config.models.routes ?? {}) },
       namedRouteKeys: [...NAMED_MODEL_ROUTES],
@@ -603,6 +678,14 @@ export function createApp(sinty: Sinty): Hono {
   app.post("/v1/roster/agents", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Partial<AgentRecord>;
     try {
+      if (body.modelProfiles !== undefined) {
+        const profiles = modelProfilesSchema.parse(body.modelProfiles);
+        for (const [route, profile] of Object.entries(profiles)) {
+          const provider = sinty.config.providers[route.slice(0, route.indexOf("/"))];
+          if (!provider) throw new Error("Profile provider is not configured");
+          validateProfile(profile, provider, sinty.config.models.maxOutputTokens);
+        }
+      }
       return c.json(saveAgent(sinty.paths, { ...body, name: body.name ?? "" }), 201);
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
@@ -612,6 +695,14 @@ export function createApp(sinty: Sinty): Hono {
   app.put("/v1/roster/agents/:id", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Partial<AgentRecord>;
     try {
+      if (body.modelProfiles !== undefined) {
+        const profiles = modelProfilesSchema.parse(body.modelProfiles);
+        for (const [route, profile] of Object.entries(profiles)) {
+          const provider = sinty.config.providers[route.slice(0, route.indexOf("/"))];
+          if (!provider) throw new Error("Profile provider is not configured");
+          validateProfile(profile, provider, sinty.config.models.maxOutputTokens);
+        }
+      }
       return c.json(saveAgent(sinty.paths, { ...body, id: c.req.param("id"), name: body.name ?? "" }));
     } catch (e) {
       throw new AgentError("bad_request", e instanceof Error ? e.message : String(e));
@@ -654,7 +745,23 @@ export function createApp(sinty: Sinty): Hono {
   });
 
 
-  /** Deletes a home plugin: folder, data directory, saved settings, and roster references. Bundled plugins stay. */
+  app.put("/v1/plugins/:name/enabled", async (c) => {
+    if (!allows(c, "nav:plugins", "edit")) return forbid(c);
+    const request = z.object({ name: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/), body: z.object({ enabled: z.boolean() }).strict() })
+      .safeParse({ body: await c.req.json().catch(() => null), name: c.req.param("name") });
+    if (!request.success) throw new AgentError("bad_request", "name and boolean enabled required");
+    const { name, body: { enabled } } = request.data;
+    try { sinty.host.locate(name); } catch { throw new AgentError("not_found", "Plugin not installed", 404); }
+    // Keep the UI available. Other bundled plugins, including default-on ones, may be disabled.
+    if (name === "ui-web" && !enabled) throw new AgentError("bad_request", "Web UI cannot disable itself");
+    setPluginEnabledInConfig(sinty.paths, name, enabled);
+    sinty.config.plugins = loadConfig(sinty.paths).plugins;
+    const error = enabled ? await sinty.host.reload(name) : (await sinty.host.unload(name), undefined);
+    sinty.supervisor?.setTools(sinty.agent.supervisedTools());
+    return c.json({ ok: true, enabled, ...(error ? { startError: sinty.secrets.redact(error) } : {}) });
+  });
+
+  /** Deletes managed plugin code/settings/roster references. User data and secrets stay. */
   app.delete("/v1/plugins/:name", async (c) => {
     if (!allows(c, "nav:plugins", "delete") && !allows(c, "nav:plugins", "edit")) return forbid(c);
     try {
@@ -713,6 +820,44 @@ export function createApp(sinty: Sinty): Hono {
   app.put("/v1/plugins/shared", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { names?: string[] };
     return c.json({ names: setSharedPlugins(sinty.paths, body.names ?? []) });
+  });
+
+  const pilotOwner = (c: Context): string => {
+    const actor = actorOf(c);
+    if (!c.req.header("authorization")?.startsWith("Bearer ") || !actor || actor.kind === "user" && !actor.user.system) throw new AccountError("forbidden", "Browser pilot requires the signed-in local owner", 403);
+    const expected = publicOrigin() ?? new URL(c.req.url).origin;
+    const origin = c.req.header("origin");
+    if (origin && origin !== expected || c.req.header("sec-fetch-site") === "cross-site") throw new AccountError("forbidden", "Cross-origin browser pilot control denied", 403);
+    return actor.kind === "machine" ? "local-machine-owner" : actor.user.id;
+  };
+  app.get("/v1/browser-pilot", (c) => {
+    const owner = pilotOwner(c);
+    const agents = listAgents(sinty.paths), projects = listProjects(sinty.paths);
+    return c.json({ ready: sinty.browserPilot.ready, reason: sinty.browserPilot.ready ? null : "driver_contract_unverified", agents: agents.map(({ id, name }) => ({ id, name })), projects: projects.map(project => ({ id: project.id, name: project.name, agentIds: project.agentIds, pilotAgentIds: browserPilotAgentIds(agents, project) })), leases: sinty.browserPilot.list(owner) });
+  });
+  app.post("/v1/browser-pilot", async (c) => {
+    const ownerId = pilotOwner(c);
+    const input = z.object({ agentId: z.string().min(1).max(100), projectId: z.string().min(1).max(100), uploads: z.array(z.string().min(1).max(512)).max(8).default([]) }).strict().safeParse(await c.req.json().catch(() => null));
+    if (!input.success) throw new AgentError("invalid_args", "Select a real project and its roster agent");
+    if (!sinty.browserPilot.ready) throw new BrowserPilotError("driver_contract_unverified", "Isolated native driver contract/consent must be verified before granting browser access");
+    const agents = listAgents(sinty.paths), agent = agents.find((a) => a.id === input.data.agentId), project = listProjects(sinty.paths).find((p) => p.id === input.data.projectId);
+    if (!agent || !project || !browserPilotAgentIds(agents, project).includes(agent.id)) throw new AgentError("invalid_args", "Select an existing eligible roster agent for this project pilot");
+    const host = new URL(c.req.url); if (host.hostname !== "127.0.0.1" || host.protocol !== "http:" || !host.port) throw new AgentError("local_only", "Pilot supports the local Windows owner only");
+    ensureProjectDirs(sinty.paths, project);
+    const session = sinty.agent.createSession({ title: "Браузер: локальный пилот", projectId: project.id, metadata: { agentIds: [agent.id] } });
+    return c.json(sinty.browserPilot.grant({ ownerId, agentId: agent.id, sessionId: session.id, projectId: project.id, workspace: realpathSync(projectDir(sinty.paths, project)) }, host.origin + "/browser-pilot-fixture", input.data.uploads), 201);
+  });
+  app.post("/v1/browser-pilot/:id/control", async (c) => {
+    const owner = pilotOwner(c), id = c.req.param("id");
+    const input = z.object({ action: z.enum(["pause", "resume", "release"]) }).strict().safeParse(await c.req.json().catch(() => null));
+    if (!input.success) throw new AgentError("invalid_args", "Unknown owner control");
+    return c.json(input.data.action === "pause" ? sinty.browserPilot.pause(owner, id) : input.data.action === "resume" ? sinty.browserPilot.resume(owner, id) : await sinty.browserPilot.release(owner, id));
+  });
+  app.post("/v1/browser-pilot/:id/send", async (c) => {
+    const owner = pilotOwner(c);
+    const input = z.object({ text: z.string().trim().min(1).max(10_000) }).strict().safeParse(await c.req.json().catch(() => null));
+    if (!input.success) throw new AgentError("invalid_args", "Task text required; identity is server-owned");
+    return c.json(sinty.agent.sendPilot(owner, c.req.param("id"), input.data.text), 202);
   });
 
   app.post("/v1/sessions", async (c) => {
@@ -800,8 +945,25 @@ export function createApp(sinty: Sinty): Hono {
     const body = (await c.req.json().catch(() => ({}))) as { text?: string; channel?: string; attachments?: BlobRef[]; agentId?: string };
     const text = body.text?.trim() || (body.attachments?.length ? "Смотри вложения." : "");
     if (!text) throw new AgentError("bad_request", "text is required");
-    const r = sinty.agent.send(c.req.param("id"), text, { idempotencyKey: c.req.header("idempotency-key"), channel: body.channel, attachments: body.attachments, agentId: body.agentId });
+    const actor = actorOf(c);
+    const options = { idempotencyKey: c.req.header("idempotency-key"), channel: body.channel, attachments: body.attachments, agentId: body.agentId, ...(actor?.kind === "user" ? { actor: { kind: "human" as const, id: actor.user.id } } : {}) };
+    const owner = actor && (actor.kind === "machine" || actor.user.system) && c.req.header("authorization")?.startsWith("Bearer ");
+    const r = sinty.browserPilot.ready && owner ? sinty.agent.sendOwnerChat(pilotOwner(c), c.req.param("id"), text, options) : sinty.agent.send(c.req.param("id"), text, options);
     return c.json(r, 202);
+  });
+
+  app.get("/v1/sessions/:id/attachments/:seq/:index", (c) => {
+    if(!c.req.header("authorization")?.startsWith("Bearer "))return unauthorized(c);
+    const id=c.req.param("id"),seq=Number(c.req.param("seq")),index=Number(c.req.param("index"));
+    if(!sinty.journal.getSession(id)||!Number.isSafeInteger(seq)||seq<1||!Number.isSafeInteger(index)||index<0||index>=100)throw new AgentError("not_found","attachment not found",404);
+    // The common /sessions/:id/* middleware authorizes this session/project first.
+    // Bind to ONE saved user-message event, never a caller-supplied blob hash/path.
+    const event=sinty.journal.events(id,{afterSeq:seq-1,limit:1})[0];
+    const refs=event?.type==="message.user"&&event.seq===seq&&event.data&&typeof event.data==="object"?(event.data as {attachments?:unknown}).attachments:undefined;
+    const ref=Array.isArray(refs)?refs[index]:undefined;
+    const image=ref&&typeof ref==="object"?readAttachmentPreview(sinty.paths.data,(ref as {blob?:unknown}).blob):undefined;
+    if(!image)throw new AgentError("not_found","image preview unavailable",404);
+    return new Response(image.bytes,{headers:{"content-type":image.mime,"content-length":String(image.bytes.length),"cache-control":"private, no-store","x-content-type-options":"nosniff","content-security-policy":"default-src 'none'; sandbox","cross-origin-resource-policy":"same-origin","referrer-policy":"no-referrer","content-disposition":"inline"}});
   });
 
   app.get("/v1/sessions/:id/media", (c) => {
@@ -844,6 +1006,7 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/v1/sessions/:id/pending", (c) => c.json({ pending: sinty.agent.pending(c.req.param("id")) }));
 
   app.post("/v1/sessions/:id/approvals/:callId", async (c) => {
+    if (sinty.browserPilot.has(c.req.param("id"))) sinty.browserPilot.execution(pilotOwner(c), c.req.param("id"));
     const body = (await c.req.json().catch(() => ({}))) as { decision?: string; note?: string; remember?: boolean };
     if (body.decision !== "approve" && body.decision !== "deny") throw new AgentError("bad_request", 'decision must be "approve" or "deny"');
     const by: Actor = { kind: "human", id: "api" };
@@ -928,6 +1091,7 @@ export function createApp(sinty: Sinty): Hono {
   app.get("/v1/settings/sections", (c) => c.json({ sections: listSections(sectionSources()).filter((s) => allows(c, sectionResource(s.id), "view")) }));
 
   app.put("/v1/settings/sections/:id", async (c) => {
+    if(c.req.param("id")==="plugin.plugin-catalog")managerOwner(c);
     if (!allows(c, sectionResource(c.req.param("id")), "edit")) return forbid(c);
     const body = (await c.req.json().catch(() => null)) as { values?: unknown } | null;
     if (!body || !body.values || typeof body.values !== "object" || Array.isArray(body.values)) throw new AgentError("bad_request", "values is required");
@@ -1007,7 +1171,12 @@ export function createApp(sinty: Sinty): Hono {
     const url = new URL(c.req.url);
     url.searchParams.delete("token");
     const search = url.searchParams.toString();
-    return proc.handleHttp(found.index, found.params, c.req.raw, rel + (search ? `?${search}` : ""));
+    const headers = new Headers(c.req.raw.headers);
+    headers.delete("x-sinty-user-id");
+    const actor = actorOf(c);
+    const userId = actor?.kind === "user" ? actor.user.id : sinty.config.agent.userId;
+    if (userId) headers.set("x-sinty-user-id", userId);
+    return proc.handleHttp(found.index, found.params, new Request(c.req.raw, { headers }), rel + (search ? `?${search}` : ""));
   };
   app.all("/p/:plugin", pluginRoute);
   app.all("/p/:plugin/*", pluginRoute);
@@ -1122,8 +1291,8 @@ function safeEqual(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-export function startServer(sinty: Sinty, opts: { host?: string; port?: number } = {}): Promise<{ server: ServerType; url: string }> {
-  const app = createApp(sinty);
+export function startServer(sinty: Sinty, opts: { host?: string; port?: number;testing?:{catalogLoopbackOrigin:string} } = {}): Promise<{ server: ServerType; url: string }> {
+  const app = createApp(sinty,opts.testing);
   const hostname = opts.host ?? sinty.config.server.host;
   const port = opts.port ?? sinty.config.server.port;
   return new Promise((resolve) => {

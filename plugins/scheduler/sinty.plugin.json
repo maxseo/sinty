@@ -3,21 +3,61 @@
   "name": "scheduler",
   "version": "0.1.0",
   "description": "Durable cron and fire-at jobs that wake a session while Sinty is running",
-  "kinds": ["schedule", "tool", "server"],
+  "kinds": [
+    "schedule",
+    "tool",
+    "server"
+  ],
   "runtime": "node",
   "entry": "dist/index.js",
   "permissions": {
-    "fs": { "write": ["$DATA"] },
-    "agent": ["sessions.read", "sessions.write"]
+    "fs": {
+      "write": [
+        "$DATA"
+      ]
+    },
+    "agent": [
+      "sessions.read",
+      "sessions.write"
+    ]
   },
   "tools": [
-    { "name": "schedule.create", "sideEffects": "write", "idempotent": false, "docs": "README.md", "defaultPolicy": "allow" },
-    { "name": "schedule.list", "sideEffects": "read", "idempotent": true, "docs": "README.md" },
-    { "name": "schedule.cancel", "sideEffects": "write", "idempotent": true, "docs": "README.md" }
+    {
+      "name": "schedule.create",
+      "sideEffects": "write",
+      "idempotent": false,
+      "docs": "README.md",
+      "defaultPolicy": "allow"
+    },
+    {
+      "name": "schedule.list",
+      "sideEffects": "read",
+      "idempotent": true,
+      "docs": "README.md"
+    },
+    {
+      "name": "schedule.cancel",
+      "sideEffects": "write",
+      "idempotent": true,
+      "docs": "README.md"
+    }
   ],
   "config": {
-    "tickMs": { "type": "integer", "default": 1000, "description": "How often to check due jobs (ms), 1000–60000" }
+    "tickMs": {
+      "type": "integer",
+      "default": 1000,
+      "description": "How often to check due jobs (ms), 1000–60000"
+    }
   },
-  "ui": { "tabs": [{ "id": "calendar", "title": "Календарь", "builtin": "calendar" }] },
-  "editable": true
+  "ui": {
+    "tabs": [
+      {
+        "id": "calendar",
+        "title": "Календарь",
+        "builtin": "calendar"
+      }
+    ]
+  },
+  "editable": true,
+  "updateMode": "lifecycle"
 }

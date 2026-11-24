@@ -43,6 +43,7 @@ A plugin shows UI only through its manifest. The Web UI never hard-codes a plugi
 | Sidebar page | `ui.tabs[]` with `placement: "sidebar"` (default) | global left panel |
 | Chat view | `ui.tabs[]` with `placement: "session"` | toggle in an open chat header, next to Чат / Журнал |
 | Project view | `ui.tabs[]` with `placement: "project"` (new) | tab inside a project; the page gets `projectId` |
+| Agent card | `ui.tabs[]` with `placement: "agent"` | tab on the agent card, after MCP and before Сохранить; the page gets `agentId` |
 | Settings section | `settings` | Settings, under the core items |
 
 Rules:
@@ -173,3 +174,28 @@ hot start and canary. Code: `packages/core/src/agent-plugins.ts`, `patches.ts` (
 
 To give such a plugin more than this table, a human edits its folder by hand or installs it from a path; the agent
 cannot.
+
+### Narrow dynamic tool metadata capability
+
+`tab/1` additionally supports `op: "dynamic-tools.catalog"` ONLY for plugin `dynamic-tools`, tab `settings`. The parent `init` supplies that iframe instance's `catalogNonce`; requests echo it as `nonce`. The bridge verifies exact source Window, sandbox origin `null`, plugin/tab and nonce, and rejects endpoint/method/body/query/project/agent/session fields. It uses only the parent's ordinary authenticated GET `/v1/agent` and GET `/v1/plugins`, forwarding `{ tools: [{name,description,plugin}], registryOnly: true }` after field stripping and size bounds. No auth, cookie, schema, config, provider details, history or execution capability is transferred. This does not authorize a plugin or agent to call any tool. Runtime discovery remains scoped to the provider request's permitted true schemas. Other plugins have no new API reachability; generic same-plugin `get`/`post` remains unchanged.
+
+
+## Staged vNext package metadata / update foundation (not deployed)
+
+`categories?: ("system" | "functional" | "ui")[]` describes purpose; `kinds` still describes extension points, `permissions` is the only grant declaration. Omitted categories preserve legacy manifests (display can use inferredCategories). No category enables privileged access.
+
+`compatibility?: { core?, sdk?, protocol?, platforms?, architectures? }`: core/SDK use independent strict-SemVer comparator AND ranges, e.g. `>=0.5.1 <0.6.0` and `>=0.0.1 <0.1.0`. At most four comparators, no wildcard/caret/tilde/OR; prereleases require an explicit same-base prerelease comparator. `protocol` is exact; platforms win32/linux/darwin, architectures x64/arm64. Unsupported or unsatisfied declarations fail closed BEFORE old plugin unload. These are staged fields: deployed old0.5.1 parser cannot accept them until its update.
+
+`changelog?: "CHANGELOG.md"` is a bounded relative package file path, never URL/parent traversal; declared file must be included. Existing packages without metadata remain valid. New authoring requires purpose, versioned history, compatibility, minimal permissions and tests. Single developer command: `node scripts/plugin-version.mjs check`; `node scripts/plugin-version.mjs bump <name> <new-version> <change-note>` updates manifest/package/changelog together, never publishes. Manifest version is authoritative; SDK0.0.1 is NOT forcibly made0.5.1. Permission/surface changes follow the existing breaking-change rule above.
+
+Home path/npm updates now stage and validate, quiesce only selected plugin, retain previous directory under managed .rollback, activate/reload and atomically persist enablement only after readiness. Changed permissions require exact owner-reviewed old/new fingerprints; categories cannot suppress review. Failed validation does not interrupt old runtime; failed activation restores package and old runtime; failed restoration reports rollback_failed. Config/data/secrets are not package replacement targets. Bundled overwrite prohibition remains. Local path/npm packages are explicitly unsigned/unverified-publisher sources, not signed catalog installs. Materialized safe regular files only: links/hardlinks/PAX/GNU extended headers are rejected in this bounded first archive reader; no npm install-script fallback. Signed catalog primitives do NOT constitute a deployed catalog or download client.
+
+
+## Signed distribution and update contracts (2026-11)
+Use scripts/plugin-version.mjs to keep manifest/package versions and CHANGELOG aligned. Publish built, self-contained regular files with scripts/plugin-publish.mjs: explicit --dir, --out, --base HTTPS URL, --key owner-selected Ed25519 private-key file, --publisher ID, --files allowlist. No lifecycle scripts/dependency installation occurs on the receiver; bundle non-SDK runtime dependencies. Packages use bounded regular-file USTAR; this publisher supports names <=100 UTF-8 bytes and compressed artifacts <=20MB. Links and signing-key material are rejected. Do not publish credentials. Catalog signatures authenticate the index; the verified SHA-256 binds its immutable package version. Do not describe this as a separate package signature.
+Manifest updateMode defaults to restart. rpc-only is an explicit author contract: no detached work/background timers that survive known host RPCs, no untracked child/background jobs or incompatible data migration. Active hot updates require BOTH installed and candidate manifests to declare rpc-only; otherwise the manager refuses activation and reports restart-required. This is not a sandbox or a proof that arbitrary plugin code is quiet. DATA changes during failed activation require owner review; no automatic DATA rollback/migration is promised.
+UI placement plugins renders inside Settings > Plugins, not the sidebar. For ordinary custom plugin pages use path and the existing sandboxed PluginTab bridge. builtin identifiers are core-owned UI implementations; plugin-catalog is the actual bundled catalog client UI. Declare a tab only when a user-facing workflow needs it. categories, kinds, UI location, updateMode and permissions remain separate; none grant capabilities automatically.
+
+
+### Managed lifecycle (pt309u, staged)
+A request-only executable plugin may declare updateMode: rpc-only only if it creates no autonomous work. A plugin with timers/jobs/background callbacks must instead declare updateMode: lifecycle and register optional ctx.lifecycle({pause: async()=>{},resume: async()=>{}}). Pause must stop new autonomous dispatch and await already-running plugin jobs before acknowledgement; resume must be idempotent and restore paused dispatch after a failed core drain. The host checks the actual registered capability, not just the manifest claim. Schedule/channel/server/event kinds cannot bypass this via rpc-only. Unsupported/restart-required plugins remain blocked for managed hot handover; no detached-process cleanup or data-migration safety is implied. Existing SDK contexts without lifecycle remain valid; it is optional. See scheduler source as the implemented example.

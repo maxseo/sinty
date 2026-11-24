@@ -1,3 +1,4 @@
+import { validPluginVersion, validPluginRange, assertReleaseCompatibility, type ReleaseCompatibility } from "../plugin-release.js";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { z, type PluginManifest } from "@sinty/sdk";
@@ -17,7 +18,7 @@ const uiTabSchema = z
       .refine((p) => !p.split("/").some((seg) => seg === ".." || seg === "."), "path must not contain . or .. segments")
       .optional(),
     builtin: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).optional(),
-    placement: z.enum(["sidebar", "session", "project", "settings"]).optional(),
+    placement: z.enum(["sidebar", "session", "project", "settings", "plugins", "agent"]).optional(),
   })
   .strict()
   .refine((t) => (t.path === undefined) !== (t.builtin === undefined), { message: 'a tab needs exactly one of "path" and "builtin"' });
@@ -44,7 +45,11 @@ const manifestSchema = z
   .object({
     $schema: z.string().optional(),
     name: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/),
-    version: z.string().regex(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/),
+    version: z.string().refine(validPluginVersion, "strict semver required"),
+    updateMode: z.enum(["rpc-only", "lifecycle", "restart"]).optional(),
+    categories: z.array(z.enum(["system", "functional", "ui"])).min(1).max(3).refine(a => new Set(a).size === a.length).optional(),
+    compatibility: z.object({ core: z.string().refine(validPluginRange).optional(), sdk: z.string().refine(validPluginRange).optional(), protocol: z.string().max(40).optional(), platforms: z.array(z.enum(["win32", "linux", "darwin"])).min(1).optional(), architectures: z.array(z.enum(["x64", "arm64"])).min(1).optional() }).strict().optional(),
+    changelog: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9_./-]*$/).refine(p => !p.split("/").some(s => s === "." || s === ".." || s === "")).optional(),
     description: z.string().min(1).max(300),
     kinds: z.array(z.enum(["provider", "tool", "context", "channel", "server", "schedule", "event", "ui", "memory"])).min(1),
     runtime: z.enum(["node", "mcp-stdio", "http"]),
@@ -124,6 +129,8 @@ export function findPlugin(paths: SintyPaths, name: string, searchPaths: readonl
     const file = join(dir, "sinty.plugin.json");
     if (!existsSync(file)) continue;
     const manifest = manifestSchema.parse(JSON.parse(readFileSync(file, "utf8"))) as PluginManifest;
+    const compatibility=(manifest as PluginManifest & {compatibility?:ReleaseCompatibility}).compatibility;
+    if(compatibility){const core=JSON.parse(readFileSync(join(paths.install,"release.json"),"utf8")),sdk=JSON.parse(readFileSync(join(paths.install,"packages","sdk","package.json"),"utf8"));assertReleaseCompatibility(compatibility,{core:core.version,sdk:sdk.version,protocol:"sinty/1.0",platform:process.platform,arch:process.arch});}
     if (manifest.name !== name) throw new Error(`${file}: name "${manifest.name}" does not match folder "${name}"`);
     const bundled = isInside(dir, paths.install);
     return { dir, manifest, bundled, ...(!bundled && root === paths.plugins && agentMadePlugins(paths).has(name) ? { agentMade: true } : {}) };

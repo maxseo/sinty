@@ -27,3 +27,5 @@ pnpm test
 
 - User-facing behaviour change: update `README.md` and `README.ru.md`.
 - Milestone status change: update `docs/roadmap.md`.
+
+- Staged package/update contract: read docs/spec/plugin-template.md. New plugin purpose categories never grant permissions; tool-only code needs no tab. Keep manifest/package SemVer and CHANGELOG aligned with scripts/plugin-version.mjs. Runtime schema, SDK types and JSON schema must change together. No publishing or updater execution without owner authorization.

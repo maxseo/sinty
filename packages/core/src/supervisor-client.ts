@@ -60,6 +60,8 @@ export class SupervisorClient {
     for (const event of this.hooks.replay()) this.send({ t: "event", event });
   }
 
+  get activeManagedCheckpoints(){return this.waiting.size}
+  async stopAndWait():Promise<void>{this.stopping=true;const child=this.child;if(!child||child.exitCode!==null)return;const exit=new Promise<void>(r=>child.once("exit",()=>r()));if(child.connected)child.disconnect();let timer:ReturnType<typeof setTimeout>|undefined;try{await Promise.race([exit,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error("supervisor_graceful_stop_timeout")),5000)})])}finally{clearTimeout(timer)}}
   stop(): void {
     this.stopping = true;
     this.child?.kill();

@@ -6,6 +6,7 @@ type CacheControl = { type: "ephemeral"; ttl?: "1h" };
 
 type Block = (
   | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
 ) & { cache_control?: CacheControl };
@@ -163,7 +164,9 @@ function toWireMessages(messages: ChatMessage[], mark: (m: ChatMessage) => Cache
     } else if (m.role === "system") {
       push("user", [{ type: "text", text: `<system>\n${m.content}\n</system>` }], mark(m));
     } else {
-      push("user", [{ type: "text", text: m.content }], mark(m));
+      const blocks: Block[] = [{ type: "text", text: m.content }];
+      for (const image of m.images ?? []) blocks.push({ type: "image", source: { type: "base64", media_type: image.mime, data: image.data } });
+      push("user", blocks, mark(m));
     }
   }
   return out;

@@ -38,6 +38,7 @@ export default definePlugin({
     const tickMs = Number.isFinite(tickRaw) ? Math.min(60_000, Math.max(1_000, Math.floor(tickRaw))) : 10_000;
     let timer: ReturnType<typeof setInterval> | undefined;
     let pumping = false;
+    let paused=false;
 
     const publicJob = (j: ScheduleJob) => ({
       id: j.id,
@@ -95,7 +96,7 @@ export default definePlugin({
     }
 
     async function tick(): Promise<void> {
-      if (pumping) return;
+      if (pumping||paused) return;
       pumping = true;
       try {
         const now = new Date();
@@ -261,6 +262,7 @@ export default definePlugin({
       }
     }
 
+    (ctx as typeof ctx & {lifecycle?:(hooks:{pause():Promise<void>;resume():void})=>void}).lifecycle?.({async pause(){paused=true;if(timer)clearInterval(timer);timer=undefined;while(pumping)await new Promise(r=>setTimeout(r,10))},resume(){paused=false;if(!timer){timer=setInterval(()=>void tick(),tickMs);timer.unref?.()}void tick()}});
     void tick();
     timer = setInterval(() => {
       void tick();

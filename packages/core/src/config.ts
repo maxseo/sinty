@@ -52,6 +52,7 @@ export const configSchema = z.object({
       facts: z.string().default(""),
     })
     .prefault({}),
+  updates:z.object({enabled:z.boolean().default(true),indexUrl:z.string().optional(),publicKey:z.string().optional(),intervalHours:z.number().min(1).max(168).default(6)}).prefault({}),
   plugins: z
     .object({
       enabled: z.array(z.string()).default(["provider-openai-compat", "provider-anthropic", "tool-fs", "ui-web", "kanban"]),
@@ -309,6 +310,7 @@ export function saveSettings(
   const disabledNode = doc.getIn(["plugins", "disabled"]);
   const wasDisabled = disabledNode && typeof (disabledNode as { toJSON?: () => unknown }).toJSON === "function" ? ((disabledNode as { toJSON: () => unknown }).toJSON() as unknown[]) : [];
   const disabled = new Set((Array.isArray(wasDisabled) ? wasDisabled : []).filter((n): n is string => typeof n === "string"));
+  for (const name of enabled) disabled.delete(name);
   for (const name of DEFAULT_ON_PLUGINS) {
     if (enabled.includes(name)) disabled.delete(name);
     else disabled.add(name);

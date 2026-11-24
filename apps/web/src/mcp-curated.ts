@@ -105,6 +105,21 @@ export const CURATED_MCP: readonly CuratedMcp[] = [
     docsUrl: "https://www.npmjs.com/package/@node2flow/telegram-bot-mcp",
   },
   {
+    id: "outlook",
+    title: "Outlook",
+    summary: "Почта Outlook через Microsoft Graph: чтение, поиск, отправка и папки.",
+    runtime: "mcp-stdio",
+    command: ["npx", "-y", "@lnwebworks/outlook-mcp-server"],
+    envHints: {
+      AZURE_TENANT_ID: "secret://outlook.tenant",
+      AZURE_CLIENT_ID: "secret://outlook.client",
+      AZURE_CLIENT_SECRET: "secret://outlook.secret",
+      OUTLOOK_USER_EMAIL: "secret://outlook.mailbox",
+    },
+    note: "App registration в Entra ID (client credentials): Mail.ReadWrite и Mail.Send как application permissions, admin consent. Секреты: tenant id, client id, client secret и адрес ящика, от имени которого работает сервер.",
+    docsUrl: "https://www.npmjs.com/package/@lnwebworks/outlook-mcp-server",
+  },
+  {
     id: "max-messenger",
     title: "MAX",
     summary: "Мессенджер MAX (VK): сообщения, чаты, медиа, кнопки.",
