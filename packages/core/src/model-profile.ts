@@ -31,8 +31,14 @@ export type ModelProfiles = z.infer<typeof modelProfilesSchema>;
 type Provider = { protocol: string; baseUrl?: string | undefined; options?: ProviderEndpoint["options"] };
 const numeric = ["temperature", "top_p", "top_k", "repeat_penalty", "repetition_penalty", "frequency_penalty", "presence_penalty"] as const;
 
-function isDeepseekEndpoint(baseUrl: string | undefined): boolean {
-  try { return new URL(baseUrl ?? "").hostname === "api.deepseek.com"; } catch { return false; }
+/** Endpoints whose chat API has a real switch for thinking, and which demand the previous trace back. */
+export function reasoningSwitch(baseUrl: string | undefined): "deepseek" | "dashscope" | "openrouter" | undefined {
+  let host = "";
+  try { host = new URL(baseUrl ?? "").hostname; } catch { return undefined; }
+  if (host === "api.deepseek.com") return "deepseek";
+  if (host === "dashscope.aliyuncs.com" || host === "dashscope-intl.aliyuncs.com" || host.endsWith(".dashscope.aliyuncs.com")) return "dashscope";
+  if (host === "openrouter.ai") return "openrouter";
+  return undefined;
 }
 
 /** Protocol acceptance is NOT a claim that an individual model supports these parameters. */
@@ -42,7 +48,7 @@ export function generationControls(provider: Provider) {
     : protocol === "anthropic" ? ["temperature", "top_p", "top_k"]
     : protocol === "openai-responses" ? ["temperature", "top_p"] : [];
   return { protocol, numericFields, reasoning: protocol === "openai-compat" || protocol === "openai-responses",
-    reasoningOff: protocol === "openai-compat" && isDeepseekEndpoint(provider.baseUrl),
+    reasoningOff: protocol === "openai-compat" && reasoningSwitch(provider.baseUrl) !== undefined,
     thinkingBudget: protocol === "anthropic", cacheBreakpoints: protocol === "anthropic",
     cacheRoutingKey: protocol === "openai-compat" || protocol === "openai-responses", modelSupport: "unknown" as const };
 }
@@ -87,15 +93,24 @@ export function resolveModelProfile(provider: Provider, profiles: ModelProfiles 
   // Native Anthropic spreads endpoint.options after req.maxOutputTokens. Active profiles must agree with reservation.
   if (provider.protocol === "anthropic") options.max_tokens = maxOutputTokens;
   if (profile.reasoningEffort !== undefined) {
+    const kind = reasoningSwitch(provider.baseUrl);
     if (provider.protocol === "openai-responses") {
       const old = options.reasoning;
       options.reasoning = { ...(old && typeof old === "object" && !Array.isArray(old) ? old : {}), effort: profile.reasoningEffort, summary: "auto" };
     } else if (profile.reasoningEffort === "off") {
       delete options.reasoning_effort;
-      options.thinking = { type: "disabled" };
+      if (kind === "deepseek") options.thinking = { type: "disabled" };
+      if (kind === "dashscope") options.enable_thinking = false;
+      if (kind === "openrouter") options.reasoning = { enabled: false };
+    } else if (kind === "openrouter") {
+      delete options.reasoning_effort;
+      options.reasoning = { effort: profile.reasoningEffort };
+    } else if (kind === "dashscope") {
+      delete options.reasoning_effort;
+      options.enable_thinking = true;
     } else {
       options.reasoning_effort = profile.reasoningEffort;
-      if (generationControls(provider).reasoningOff) options.thinking = { type: "enabled" };
+      if (kind === "deepseek") options.thinking = { type: "enabled" };
     }
   }
   if (profile.thinkingBudgetTokens !== undefined) options.thinking = { type: "enabled", budget_tokens: profile.thinkingBudgetTokens };

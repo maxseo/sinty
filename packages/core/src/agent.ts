@@ -1054,6 +1054,7 @@ export class Agent {
         this.record({ sessionId, turnId, stepId, type: "model.request", actor: SYSTEM, data: { route: i === 0 ? "default" : `fallback.${i - 1}`, provider: providerId, model, messagesHash: request.messagesHash, estTokens: request.estTokens, ...(request.trimmed ? { trimmedForWindow: true } : {}) } });
         try {
           let text = "";
+          let reasoning = "";
           const toolCalls: ToolCallRef[] = [];
           let stopReason = "stop";
           let usage: Usage = { provider: providerId, model, inputTokens: 0, outputTokens: 0 };
@@ -1077,6 +1078,7 @@ export class Agent {
               text += chunk.text;
               this.streamEvent({ type: "model.delta", sessionId, turnId, ts: new Date().toISOString(), data: { text: chunk.text } });
             } else if (chunk.type === "reasoning") {
+              reasoning += chunk.text;
               this.streamEvent({ type: "model.delta", sessionId, turnId, ts: new Date().toISOString(), data: { reasoning: chunk.text } });
             } else if (chunk.type === "tool_call") {
               toolCalls.push({ callId: chunk.id || newId("call"), tool: fromWire(chunk.name), args: chunk.args });
@@ -1085,7 +1087,7 @@ export class Agent {
               usage = { provider: providerId, model, ...chunk.usage };
             }
           }
-          this.record({ sessionId, turnId, stepId, type: "model.response", actor: AGENT, data: strip({ text: text || undefined, toolCalls, stopReason, usage }) });
+          this.record({ sessionId, turnId, stepId, type: "model.response", actor: AGENT, data: strip({ text: text || undefined, ...(reasoning ? { reasoning } : {}), toolCalls, stopReason, usage }) });
           this.record({ sessionId, turnId, stepId, type: "usage.recorded", actor: SYSTEM, data: usage });
           const ratio = tokenRatio(request.estTokens, usage.inputTokens);
           if (ratio) this.ratios.set(sessionId, ratio);
@@ -1884,6 +1886,7 @@ export function eventsToMessages(events: SintyEvent[], dataDir?: string): ChatMe
         out.push({
           role: "assistant",
           content: d.text ?? "",
+          ...(d.reasoning ? { reasoningContent: d.reasoning } : {}),
           ...(d.toolCalls.length ? { toolCalls: d.toolCalls.map((c) => ({ id: c.callId, name: toWire(c.tool), args: c.args })) } : {}),
         });
         open = d.toolCalls.map((c) => c.callId);

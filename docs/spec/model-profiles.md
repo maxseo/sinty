@@ -19,7 +19,7 @@ The catalog does not report verified parameter support. The read-only generation
 * openai-compat: temperature (0–2), top_p (>0–1), top_k (positive integer), frequency/presence penalties (−2–2), and backend-specific repeat_penalty OR repetition_penalty (>0–100). Choose only the actual spelling your backend supports.
 * anthropic: temperature (0–1), top_p, top_k; explicit thinking budget ≥1024 and below the effective output limit. Explicit thinking is not combined with manual sampling (including configured provider sampling); inherited thinking budgets must fit a custom output limit. Adaptive-thinking-only models are not covered by that legacy budget control; leave it inherited.
 * openai-responses: temperature, top_p, and low/medium/high reasoning effort.
-* openai-compat reasoning effort uses low/medium/high. Off is exposed only for the existing direct api.deepseek.com thinking-disabled implementation, NOT for RunningHub/OpenRouter/local proxies or other providers.
+* openai-compat reasoning effort uses low/medium/high. Off is implemented for api.deepseek.com (`thinking.type=disabled`), DashScope (`enable_thinking=false`) and OpenRouter (`reasoning.enabled=false`). Other openai-compat hosts, including RunningHub and local proxies, still have no checked off switch. When thinking stays on, the assistant trace is stored on `model.response.reasoning` and sent back as `reasoning_content`.
 * anthropic cache controls concern cache breakpoints and 5m/1h TTL (1h can cost more on writes).
 * openai-compat/Responses prompt-cache key control only controls sending the session routing key. False does NOT disable automatic remote caching.
 

@@ -93,3 +93,8 @@ test("MCP images: real host journals refs, not base64, and transcript replay res
 
   } finally { await sinty.stop(); }
 });
+
+test("reasoning replay keeps the thinking trace on the assistant message", () => {
+  const messages = eventsToMessages([event(1, "model.response", { text: "готово", reasoning: "сначала проверил", toolCalls: [{ callId: "c", tool: "fs.read", args: {} }], stopReason: "tool_use", usage: { provider: "p", model: "m", inputTokens: 1, outputTokens: 1 } })]);
+  assert.equal(messages[0]?.reasoningContent, "сначала проверил");
+});

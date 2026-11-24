@@ -33,6 +33,17 @@ test("openai-compat: prompt_cache_key is sent to api.openai.com and when enabled
   assert.ok(!("promptCacheKey" in on));
 });
 
+test("openai-compat: Qwen thinking trace is sent back, and off stops that", () => {
+  const message = { role: "assistant" as const, content: "смотрю", reasoningContent: "шаг 1", toolCalls: [{ id: "c1", name: "fs.read", args: { path: "a" } }] };
+  const on = buildBody({ ...req("https://openrouter.ai/api/v1"), messages: [message] });
+  assert.equal((on.messages as { reasoning_content?: string }[])[0]?.reasoning_content, "шаг 1");
+  const off = buildBody({ ...req("https://openrouter.ai/api/v1", { reasoning: { enabled: false } }), messages: [message] });
+  assert.equal((off.messages as { reasoning_content?: string }[])[0]?.reasoning_content, undefined);
+  const dash = buildBody({ ...req("https://dashscope-intl.aliyuncs.com/compatible-mode/v1", { enable_thinking: false }), messages: [message] });
+  assert.equal(dash.enable_thinking, false);
+  assert.equal((dash.messages as { reasoning_content?: string }[])[0]?.reasoning_content, undefined);
+});
+
 test("openai-compat: reasoning off disables DeepSeek thinking and sets no max_tokens", () => {
   const off = buildBody({ ...req("https://api.deepseek.com/v1"), reasoning: "off" });
   assert.deepEqual(off.thinking, { type: "disabled" });

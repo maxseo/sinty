@@ -41,6 +41,8 @@ test("profiles: protocol validation and concrete reasoning/cache semantics never
   assert.throws(() => validateProfile({ advanced: true, thinkingBudgetTokens: 1024, temperature: 1 }, anthropic, 2048));
   assert.equal(generationControls(provider).modelSupport, "unknown");
   assert.equal(generationControls({ protocol: "openai-compat", baseUrl: "https://notapi.deepseek.com/v1" }).reasoningOff, false);
+  assert.equal(generationControls({ protocol: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }).reasoningOff, true);
+  assert.equal(generationControls({ protocol: "openai-compat", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1" }).reasoningOff, true);
   const p: ModelProfiles = { "a/m": { advanced: true, thinkingBudgetTokens: 1024, maxOutputTokens: 2048, promptCache: true, cacheTtl: "1h" } };
   const a = resolveModelProfile(anthropic, p, "a/m", 99);
   assert.equal(a.options?.max_tokens, 2048);
@@ -48,6 +50,12 @@ test("profiles: protocol validation and concrete reasoning/cache semantics never
   assert.equal(a.options?.cacheTtl, "1h");
   const d = resolveModelProfile({ protocol: "openai-compat", baseUrl: "https://api.deepseek.com/v1", options: { reasoning_effort: "high" } }, { "d/m": { advanced: true, reasoningEffort: "off" } }, "d/m", 8192);
   assert.deepEqual(d.options?.thinking, { type: "disabled" }); assert.equal(d.options?.reasoning_effort, undefined);
+  const q = resolveModelProfile({ protocol: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }, { "openrouter/qwen/qwen4-max": { advanced: true, reasoningEffort: "off" } }, "openrouter/qwen/qwen4-max", 8192);
+  assert.deepEqual(q.options?.reasoning, { enabled: false });
+  const qOn = resolveModelProfile({ protocol: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }, { "openrouter/qwen/qwen4-max": { advanced: true, reasoningEffort: "high" } }, "openrouter/qwen/qwen4-max", 8192);
+  assert.deepEqual(qOn.options?.reasoning, { effort: "high" });
+  const ds = resolveModelProfile({ protocol: "openai-compat", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" }, { "ds/qwen-max": { advanced: true, reasoningEffort: "off" } }, "ds/qwen-max", 8192);
+  assert.equal(ds.options?.enable_thinking, false);
   const r = resolveModelProfile({ protocol: "openai-responses", options: { reasoning: { summary: "concise", unrelated: true } } }, { "r/m": { advanced: true, reasoningEffort: "low", promptCacheKey: false } }, "r/m", 8192);
   assert.deepEqual(r.options?.reasoning, { summary: "auto", unrelated: true, effort: "low" }); assert.equal(r.options?.promptCacheKey, false);
 });

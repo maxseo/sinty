@@ -215,7 +215,7 @@ export function buildBody(req: ProviderRequest): Record<string, unknown> {
     model: req.model,
     stream: true,
     stream_options: { include_usage: true },
-    messages: req.messages.map((message) => toWireMessage(message, omni)),
+    messages: [],
     ...(sendKey && req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
     ...(omni && req.messages.some((message) => message.audio?.length) ? { modalities: ["text"] } : {}),
     ...options,
@@ -231,16 +231,28 @@ export function buildBody(req: ProviderRequest): Record<string, unknown> {
     body.reasoning_effort = req.reasoning;
     if (deepseek) body.thinking = { type: "enabled" };
   }
+  body.messages = req.messages.map((message) => toWireMessage(message, omni, echoReasoning(baseUrl, body)));
   return body;
 }
 
-function toWireMessage(m: ChatMessage, audioUri = false): Record<string, unknown> {
+function echoReasoning(baseUrl: string, options: Record<string, unknown>): boolean {
+  let host = "";
+  try { host = new URL(baseUrl).hostname; } catch { return false; }
+  const thinking = options.thinking;
+  const thinkingOff = !!thinking && typeof thinking === "object" && !Array.isArray(thinking) && (thinking as { type?: unknown }).type === "disabled";
+  const openrouterOff = !!options.reasoning && typeof options.reasoning === "object" && !Array.isArray(options.reasoning) && (options.reasoning as { enabled?: unknown }).enabled === false;
+  if (thinkingOff || options.enable_thinking === false || openrouterOff) return false;
+  return host === "api.deepseek.com" || host === "openrouter.ai" || host === "dashscope.aliyuncs.com" || host === "dashscope-intl.aliyuncs.com" || host.endsWith(".dashscope.aliyuncs.com");
+}
+
+function toWireMessage(m: ChatMessage, audioUri = false, echo = false): Record<string, unknown> {
   if (m.role === "tool") return { role: "tool", tool_call_id: m.toolCallId, content: m.content };
-  if (m.role === "assistant" && m.toolCalls?.length) {
+  if (m.role === "assistant" && (m.toolCalls?.length || echo || m.reasoningContent)) {
     return {
       role: "assistant",
       content: m.content || null,
-      tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) } })),
+      ...(echo ? { reasoning_content: m.reasoningContent ?? "" } : {}),
+      ...(m.toolCalls?.length ? { tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) } })) } : {}),
     };
   }
   if (m.images?.length || m.audio?.length) {

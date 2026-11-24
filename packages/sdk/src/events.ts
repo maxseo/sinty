@@ -61,7 +61,8 @@ export interface EventDataMap {
   /** `trimmedForWindow`: a fallback route with a smaller window got this request with old tool results cut. */
   "model.request": { route: string; provider: string; model: string; messagesHash: string; estTokens?: number; trimmedForWindow?: boolean };
   "model.delta": { text?: string; reasoning?: string };
-  "model.response": { text?: string; toolCalls: ToolCallRef[]; stopReason: string; usage: Usage };
+  /** `reasoning` is the thinking trace. The next provider call must send it back when the model requires it. */
+  "model.response": { text?: string; reasoning?: string; toolCalls: ToolCallRef[]; stopReason: string; usage: Usage };
   /**
    * The next route is tried. `reason` is the error of `from`, or `window_too_small` when `from` (a fallback) was
    * skipped because the prompt (`need` tokens, real-usage scaled) does not fit its `window` even with old tool

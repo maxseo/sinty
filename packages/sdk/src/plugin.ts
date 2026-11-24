@@ -126,6 +126,11 @@ export interface ChatMessage {
   audio?: { mime: string; data: string }[];
   toolCallId?: string;
   toolCalls?: { id: string; name: string; args: unknown }[];
+  /**
+   * Thinking trace from an earlier assistant turn. DashScope, DeepSeek and OpenRouter reject the next call unless
+   * this is sent back as `reasoning_content`. It is data, not a new instruction.
+   */
+  reasoningContent?: string;
   untrusted?: boolean;
   /** Set by the core only; never part of the content a provider sends. */
   cacheHint?: CacheHint;
