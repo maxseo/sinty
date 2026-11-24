@@ -29,7 +29,7 @@ import { detectPolicyTrustPhrase } from "./policy-trust.js";
 import { watchStall } from "./stall.js";
 import { generationMedia } from "./media-file.js";
 import { resolveModelProfile } from "./model-profile.js";
-import { agentHasPlugin, ensureProjectDirs, listProjects, loadRoster, projectDir, saveAgent, sharedPlugins, type AgentRecord } from "./roster.js";
+import { agentHasPlugin, ensureProjectDirs, listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
 import type { SecretStore } from "./secrets.js";
 import type { SupervisorClient } from "./supervisor-client.js";
 
@@ -199,7 +199,6 @@ export class Agent {
   createSession(init: { title?: string | undefined; projectId?: string | undefined; metadata?: Record<string, unknown> | undefined } = {}): SessionRow {
     const s = this.d.journal.createSession(newId("ses"), init);
     this.record({ sessionId: s.id, type: "session.created", actor: SYSTEM, data: strip({ title: init.title, projectId: init.projectId, metadata: init.metadata }) });
-    this.grantLeadSkill(s.id);
     return this.d.journal.getSession(s.id)!;
   }
 
@@ -1634,13 +1633,12 @@ export class Agent {
     return { members, leadId };
   }
 
-  /** A multi-agent chat names a lead, and that agent keeps the kanban-lead skill. */
-  private grantLeadSkill(sessionId: string): void {
+  /** Skills ticked on the card. The chat lead also gets the existing kanban-lead skill, without writing it onto the card. */
+  private enabledSkills(sessionId: string, agent: AgentRecord): string[] {
+    const skills = [...agent.skills];
     const { members, leadId } = this.team(sessionId);
-    if (members.length < 2 || !leadId) return;
-    const lead = members.find((a) => a.id === leadId);
-    if (!lead || lead.skills.includes("kanban-lead")) return;
-    saveAgent(this.d.paths, { ...lead, skills: [...lead.skills, "kanban-lead"] });
+    if (members.length > 1 && agent.id === leadId && !skills.includes("kanban-lead")) skills.push("kanban-lead");
+    return skills;
   }
 
   private agentCanUse(agent: AgentRecord, wireName: string): boolean {
@@ -1658,7 +1656,7 @@ export class Agent {
     const sections = this.d.host.sections();
     if (!sections.length) return out;
     const shared = speaker ? sharedPlugins(this.d.paths) : null;
-    const input = { sessionId, ...(speaker ? { agent: { id: speaker.id, name: speaker.name, skills: [...speaker.skills] } } : {}) };
+    const input = { sessionId, ...(speaker ? { agent: { id: speaker.id, name: speaker.name, skills: this.enabledSkills(sessionId, speaker) } } : {}) };
     for (const s of sections) {
       if (speaker && !agentHasPlugin(speaker, s.plugin.name, DEFAULT_ON_PLUGINS, shared)) continue;
       const key = `${sessionId}\u0000${s.plugin.name}/${s.name}`;
@@ -1733,7 +1731,8 @@ export class Agent {
         const lead = members.find((a) => a.id === leadId);
         const lines = members.map((a) => {
           const tools = this.toolSchemas().filter((t) => this.agentCanUse(a, t.name)).map((t) => t.name);
-          return `- ${a.name} (${a.id})${a.id === leadId ? ", тимлид" : ""}. Специализация: ${a.specialization.trim() || "—"}. ${a.summary.trim() || "Без краткого описания."} Навыки: ${a.skills.length ? a.skills.join(", ") : "нет"}. Инструменты: ${tools.length ? tools.join(", ") : "нет"}.`;
+          const skills = sessionId ? this.enabledSkills(sessionId, a) : a.skills;
+          return `- ${a.name} (${a.id})${a.id === leadId ? ", тимлид" : ""}. Специализация: ${a.specialization.trim() || "—"}. ${a.summary.trim() || "Без краткого описания."} Навыки: ${skills.length ? skills.join(", ") : "нет"}. Инструменты: ${tools.length ? tools.join(", ") : "нет"}.`;
         });
         parts.push([
           "В этом чате несколько агентов. Задачи ведутся на канбан-доске проекта: kanban.list, kanban.create, kanban.update. Колонки backlog, todo, doing, review, done.",

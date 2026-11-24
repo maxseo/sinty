@@ -91,15 +91,15 @@ test("speaker: a multi-agent chat uses its own lead and gives that agent kanban-
     const beta = saveAgent(sinty.paths, { name: "Beta", specialization: "вёрстка", summary: "Собирает страницы", persona: "BETA-PERSONA-MARKER", skills: [] });
     const project = saveProject(sinty.paths, { name: "team", agentIds: [alpha.id, beta.id], leadId: alpha.id });
     const s = sinty.agent.createSession({ projectId: project.id, metadata: { agentIds: [alpha.id, beta.id], leadId: beta.id } });
-    assert.ok(loadRoster(sinty.paths).agents.find((a) => a.id === beta.id)?.skills.includes("kanban-lead"));
+    assert.deepEqual(loadRoster(sinty.paths).agents.find((a) => a.id === beta.id)?.skills, []);
     const alone = sinty.agent.createSession({ projectId: project.id, metadata: { agentIds: [alpha.id], leadId: alpha.id } });
-    assert.equal(loadRoster(sinty.paths).agents.find((a) => a.id === alpha.id)?.skills.includes("kanban-lead"), false);
     sinty.agent.send(s.id, "hi");
     sinty.agent.send(alone.id, "solo");
     await sinty.agent.idle();
     const team = requests(home)[0]!.messages[0]!.content;
     assert.match(team, /^BETA-PERSONA-MARKER/);
     assert.match(team, /Ты тимлид/);
+    assert.match(team, /kanban-lead/);
     assert.match(team, /вёрстка/);
     assert.doesNotMatch(requests(home)[1]!.messages[0]!.content, /Ты тимлид/);
   });
