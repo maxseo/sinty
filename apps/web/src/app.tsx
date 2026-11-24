@@ -240,6 +240,7 @@ function Shell() {
   const [rename, setRename] = useState<{ id: string; title: string } | null>(null);
   const [agentChoices, setAgentChoices] = useState<{ id: string; name: string }[]>([]);
   const [pickedAgents, setPickedAgents] = useState<string[]>([]);
+  const [chatLead, setChatLead] = useState("");
   const [projectId, setProjectId] = useState(localStorage.getItem("sinty.project") ?? "");
   const [focusedProject, setFocusedProject] = useState<string | null>(null);
   const [acctOpen, setAcctOpen] = useState(false);
@@ -286,13 +287,30 @@ function Shell() {
     });
   };
   const openProjectChat = (id: string): void => {
-    setChatProject(id);
-    setPickedAgents([]);
-    void api<{ agents: { id: string; name: string }[] }>("/v1/roster/agents").then((d) => setAgentChoices(d.agents)).catch(() => setAgentChoices([]));
+    void api<{ agents: { id: string; name: string }[] }>("/v1/roster/agents").then(async (d) => {
+      setAgentChoices(d.agents);
+      if (d.agents.length <= 1) {
+        const only = d.agents[0];
+        const s = await api<SessionInfo>("/v1/sessions", { body: { title: "Новый чат", projectId: id, ...(only ? { metadata: { agentIds: [only.id] } } : {}) } });
+        await refresh();
+        go({ page: "chat", sessionId: s.id });
+        return;
+      }
+      setPickedAgents([]);
+      setChatLead("");
+      setChatProject(id);
+    }).catch(() => { setAgentChoices([]); setChatProject(id); });
+  };
+  const toggleChatAgent = (id: string): void => {
+    const next = pickedAgents.includes(id) ? pickedAgents.filter((x) => x !== id) : [...pickedAgents, id];
+    setPickedAgents(next);
+    setChatLead(next.length < 2 ? "" : next.includes(chatLead) ? chatLead : next[0] ?? "");
   };
   const createProjectChat = async (): Promise<void> => {
     if (!chatProject || pickedAgents.length === 0) return;
-    const s = await api<SessionInfo>("/v1/sessions", { body: { title: "Новый чат", projectId: chatProject, metadata: { agentIds: pickedAgents } } });
+    const metadata: { agentIds: string[]; leadId?: string } = { agentIds: pickedAgents };
+    if (pickedAgents.length >= 2) metadata.leadId = pickedAgents.includes(chatLead) ? chatLead : pickedAgents[0]!;
+    const s = await api<SessionInfo>("/v1/sessions", { body: { title: "Новый чат", projectId: chatProject, metadata } });
     setChatProject(null);
     await refresh();
     go({ page: "chat", sessionId: s.id });
@@ -551,10 +569,13 @@ function Shell() {
             <p class="small muted">Отметьте агентов, которые будут в этом чате.</p>
             {agentChoices.length === 0 && <p class="muted small">Сначала создайте агента.</p>}
             {agentChoices.map((a) => (
-              <label key={a.id} class="check">
-                <input type="checkbox" checked={pickedAgents.includes(a.id)} onChange={() => setPickedAgents(pickedAgents.includes(a.id) ? pickedAgents.filter((id) => id !== a.id) : [...pickedAgents, a.id])} />
+              <div key={a.id} class="chat-pick">
+                <input type="checkbox" checked={pickedAgents.includes(a.id)} onChange={() => toggleChatAgent(a.id)} />
                 <span>{a.name}</span>
-              </label>
+                {pickedAgents.length >= 2 && pickedAgents.includes(a.id) && (
+                  <button type="button" class={chatLead === a.id ? "lead on" : "lead"} onClick={() => setChatLead(a.id)}>{chatLead === a.id ? "тимлид" : "назначить"}</button>
+                )}
+              </div>
             ))}
             <footer class="dialog-actions">
               <button type="button" class="secondary" onClick={() => setChatProject(null)}>Отмена</button>

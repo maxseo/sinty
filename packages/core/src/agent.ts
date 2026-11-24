@@ -29,7 +29,7 @@ import { detectPolicyTrustPhrase } from "./policy-trust.js";
 import { watchStall } from "./stall.js";
 import { generationMedia } from "./media-file.js";
 import { resolveModelProfile } from "./model-profile.js";
-import { agentHasPlugin, ensureProjectDirs, listProjects, loadRoster, projectDir, sharedPlugins, type AgentRecord } from "./roster.js";
+import { agentHasPlugin, ensureProjectDirs, listProjects, loadRoster, projectDir, saveAgent, sharedPlugins, type AgentRecord } from "./roster.js";
 import type { SecretStore } from "./secrets.js";
 import type { SupervisorClient } from "./supervisor-client.js";
 
@@ -199,6 +199,7 @@ export class Agent {
   createSession(init: { title?: string | undefined; projectId?: string | undefined; metadata?: Record<string, unknown> | undefined } = {}): SessionRow {
     const s = this.d.journal.createSession(newId("ses"), init);
     this.record({ sessionId: s.id, type: "session.created", actor: SYSTEM, data: strip({ title: init.title, projectId: init.projectId, metadata: init.metadata }) });
+    this.grantLeadSkill(s.id);
     return this.d.journal.getSession(s.id)!;
   }
 
@@ -1592,8 +1593,9 @@ export class Agent {
   /**
    * The roster agent that speaks in this session. Members are the chat's own `metadata.agentIds` (what the Web UI
    * picks for a new chat), else the project's agents, else (for agent.task children) the parent's speaker. The agent
-   * named by the last human message wins when it is a member; otherwise the project lead (when a member), otherwise
-   * the first member. No members: undefined, and the global AGENTS.md with `config.agent.name` applies.
+   * named by the last human message wins when it is a member; otherwise the chat lead (only when the chat has
+   * several members), otherwise the project lead, otherwise the first member. A single member is not a lead.
+   * No members: undefined, and the global AGENTS.md with `config.agent.name` applies.
    */
   private speaker(sessionId: string, depth = 0): AgentRecord | undefined {
     const session = this.d.journal.getSession(sessionId);
@@ -1613,8 +1615,38 @@ export class Agent {
     if (!members.length) return undefined;
     const asked = [...this.d.journal.events(sessionId, { types: ["message.user"] })].reverse().find((e) => typeof (e.data as { agentId?: string }).agentId === "string");
     const agentId = (asked?.data as { agentId?: string } | undefined)?.agentId;
-    const id = agentId && members.includes(agentId) ? agentId : project?.leadId && members.includes(project.leadId) ? project.leadId : members[0];
+    const chatLead = typeof session.metadata?.leadId === "string" ? session.metadata.leadId : "";
+    const id = agentId && members.includes(agentId) ? agentId : members.length > 1 && members.includes(chatLead) ? chatLead : project?.leadId && members.includes(project.leadId) ? project.leadId : members[0];
     return roster.agents.find((a) => a.id === id);
+  }
+
+  /** Chat members and the lead. One member is never a lead. */
+  private team(sessionId: string): { members: AgentRecord[]; leadId: string } {
+    const session = this.d.journal.getSession(sessionId);
+    if (!session) return { members: [], leadId: "" };
+    const roster = loadRoster(this.d.paths);
+    const project = session.projectId ? roster.projects.find((p) => p.id === session.projectId) : undefined;
+    const own = Array.isArray(session.metadata?.agentIds) ? (session.metadata.agentIds as unknown[]).filter((id): id is string => typeof id === "string") : [];
+    const ids = (own.length ? own : project?.agentIds ?? []).filter((id) => roster.agents.some((a) => a.id === id));
+    const members = ids.map((id) => roster.agents.find((a) => a.id === id)!);
+    const chatLead = typeof session.metadata?.leadId === "string" ? session.metadata.leadId : "";
+    const leadId = members.length > 1 ? (members.some((a) => a.id === chatLead) ? chatLead : project?.leadId && members.some((a) => a.id === project.leadId) ? project.leadId : members[0]?.id ?? "") : "";
+    return { members, leadId };
+  }
+
+  /** A multi-agent chat names a lead, and that agent keeps the kanban-lead skill. */
+  private grantLeadSkill(sessionId: string): void {
+    const { members, leadId } = this.team(sessionId);
+    if (members.length < 2 || !leadId) return;
+    const lead = members.find((a) => a.id === leadId);
+    if (!lead || lead.skills.includes("kanban-lead")) return;
+    saveAgent(this.d.paths, { ...lead, skills: [...lead.skills, "kanban-lead"] });
+  }
+
+  private agentCanUse(agent: AgentRecord, wireName: string): boolean {
+    const tool = this.allTools().find((t) => toWire(t.name) === wireName || t.name === wireName);
+    if (!tool?.plugin) return true;
+    return agentHasPlugin(agent, tool.plugin, DEFAULT_ON_PLUGINS, sharedPlugins(this.d.paths));
   }
 
   /**
@@ -1695,6 +1727,24 @@ export class Agent {
     const project = sessionId ? listProjects(this.d.paths).find((p) => p.id === this.d.journal.getSession(sessionId)?.projectId) : undefined;
     if (speaker?.persona.trim()) parts.push(speaker.persona);
     else if (existsSync(this.d.paths.agents)) parts.push(readFileSync(this.d.paths.agents, "utf8"));
+    if (sessionId) {
+      const { members, leadId } = this.team(sessionId);
+      if (members.length > 1) {
+        const lead = members.find((a) => a.id === leadId);
+        const lines = members.map((a) => {
+          const tools = this.toolSchemas().filter((t) => this.agentCanUse(a, t.name)).map((t) => t.name);
+          return `- ${a.name} (${a.id})${a.id === leadId ? ", тимлид" : ""}. Специализация: ${a.specialization.trim() || "—"}. ${a.summary.trim() || "Без краткого описания."} Навыки: ${a.skills.length ? a.skills.join(", ") : "нет"}. Инструменты: ${tools.length ? tools.join(", ") : "нет"}.`;
+        });
+        parts.push([
+          "В этом чате несколько агентов. Задачи ведутся на канбан-доске проекта: kanban.list, kanban.create, kanban.update. Колонки backlog, todo, doing, review, done.",
+          speaker?.id === leadId
+            ? "Ты тимлид. Разложи просьбу человека на карточки и назначь исполнителя по специализации. Порядок — навык kanban-lead."
+            : `Ты исполнитель. Тимлид этого чата: ${lead?.name ?? leadId}. Бери карточки, где assigneeId — ты.`,
+          "Команда:",
+          ...lines,
+        ].join("\n"));
+      }
+    }
     if (this.d.config.agent.instructions) parts.push(this.d.config.agent.instructions);
     const folder = sessionId ? this.sessionWorkspace(sessionId) : this.d.paths.workspace;
     // No clock here: the time of each turn is in its turn context, so this text stays byte-identical (cacheable).

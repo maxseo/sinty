@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ChatMessage, ContextSnapshot } from "@sinty/sdk";
 import type { SintyConfig } from "../config.js";
-import { saveAgent, saveProject } from "../roster.js";
+import { loadRoster, saveAgent, saveProject } from "../roster.js";
 import type { Sinty } from "../sinty.js";
 import { boot, FIXTURES, tempHome } from "./helpers.js";
 
@@ -82,6 +82,26 @@ test("speaker: a chat without a project but with agentIds gets that agent", asyn
     await sinty.agent.idle();
     assert.match(requests(home)[0]!.messages[0]!.content, /^BETA-PERSONA-MARKER/);
     assert.equal(agentMessage(sinty, s.id).agentName, "Beta");
+  });
+});
+
+test("speaker: a multi-agent chat uses its own lead and gives that agent kanban-lead", async () => {
+  await withSinty({}, async (sinty, home) => {
+    const alpha = saveAgent(sinty.paths, { name: "Alpha", persona: "ALPHA-PERSONA-MARKER", skills: [] });
+    const beta = saveAgent(sinty.paths, { name: "Beta", specialization: "вёрстка", summary: "Собирает страницы", persona: "BETA-PERSONA-MARKER", skills: [] });
+    const project = saveProject(sinty.paths, { name: "team", agentIds: [alpha.id, beta.id], leadId: alpha.id });
+    const s = sinty.agent.createSession({ projectId: project.id, metadata: { agentIds: [alpha.id, beta.id], leadId: beta.id } });
+    assert.ok(loadRoster(sinty.paths).agents.find((a) => a.id === beta.id)?.skills.includes("kanban-lead"));
+    const alone = sinty.agent.createSession({ projectId: project.id, metadata: { agentIds: [alpha.id], leadId: alpha.id } });
+    assert.equal(loadRoster(sinty.paths).agents.find((a) => a.id === alpha.id)?.skills.includes("kanban-lead"), false);
+    sinty.agent.send(s.id, "hi");
+    sinty.agent.send(alone.id, "solo");
+    await sinty.agent.idle();
+    const team = requests(home)[0]!.messages[0]!.content;
+    assert.match(team, /^BETA-PERSONA-MARKER/);
+    assert.match(team, /Ты тимлид/);
+    assert.match(team, /вёрстка/);
+    assert.doesNotMatch(requests(home)[1]!.messages[0]!.content, /Ты тимлид/);
   });
 });
 
