@@ -123,7 +123,7 @@ interface ToolCall {
 
 type Item =
   | { kind: "user"; key: string; text: string; ts: string; files: SentAttachment[] }
-  | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string; media: MediaRef[] }
+  | { kind: "agent"; key: string; text: string; ts: string; interim?: boolean; name?: string; agentId?: string; media: MediaRef[] }
   | { kind: "tool"; key: string; call: ToolCall }
   | { kind: "note"; key: string; tone: "info" | "warn" | "error"; text: string };
 
@@ -162,7 +162,7 @@ function build(events: SintyEvent[], sessionId: string): Item[] {
         items.push({ kind: "user", key, text: d.text, ts: e.ts, files: sentAttachments(sessionId, e.seq, d.attachments) });
         break;
       case "message.agent":
-        if (d.text || pending.length) items.push({ kind: "agent", key, text: d.text ?? "", ts: e.ts, name: d.agentName, media: pending });
+        if (d.text || pending.length) items.push({ kind: "agent", key, text: d.text ?? "", ts: e.ts, name: d.agentName, agentId: typeof d.agentId === "string" ? d.agentId : undefined, media: pending });
         pending = [];
         break;
       case "model.response":
@@ -202,6 +202,13 @@ function build(events: SintyEvent[], sessionId: string): Item[] {
   }
   flush();
   return items;
+}
+
+const AVATAR_COLORS = ["#6366f1", "#0ea5e9", "#f97316", "#22c55e", "#eab308", "#ef4444", "#7c3aed", "#ec4899", "#06b6d4", "#8b5cf6"];
+function avatarColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = Math.imul(31, h) + name.charCodeAt(i) | 0;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]!;
 }
 
 function AgentBody({ text, media, sessionId }: { text: string; media: MediaRef[]; sessionId: string }) {
@@ -317,7 +324,7 @@ export function Chat({ sessionId, draftOwner = "", title = "", projectName, onCh
   const sendGuard = useRef(false);
   /** Same key until this exact payload is accepted, so a retry does not open a second turn. */
   const pendingSend = useRef<{ key: string; fingerprint: string } | null>(null);
-  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
+  const [members, setMembers] = useState<{ id: string; name: string; avatar: string }[]>([]);
   const [replyAgent, setReplyAgent] = useState("");
   const [browserAvailable, setBrowserAvailable] = useState(false);
   const [browsers, setBrowsers] = useState<BrowserTab[]>(() => keptPreview().tabs);
@@ -361,12 +368,12 @@ export function Chat({ sessionId, draftOwner = "", title = "", projectName, onCh
       return;
     }
     void Promise.all([
-      api<{ agents: { id: string; name: string }[] }>("/v1/roster/agents"),
+      api<{ agents: { id: string; name: string; avatar?: string }[] }>("/v1/roster/agents"),
       projectId ? api<{ projects: { id: string; leadId: string; agentIds: string[] }[] }>("/v1/roster/projects") : Promise.resolve({ projects: [] as { id: string; leadId: string; agentIds: string[] }[] }),
     ]).then(([a, p]) => {
       const project = p.projects.find((x) => x.id === projectId);
       const ids = picked.length ? picked : project?.agentIds.length ? project.agentIds : browserAvailable ? a.agents.map(agent => agent.id) : [];
-      const list = a.agents.filter((agent) => ids.includes(agent.id));
+      const list = a.agents.filter((agent) => ids.includes(agent.id)).map((agent) => ({ id: agent.id, name: agent.name, avatar: agent.avatar || "" }));
       const lead = project?.leadId && list.some((m) => m.id === project.leadId) ? project.leadId : "";
       setMembers(list);
       setMembersKnown(true);
@@ -815,7 +822,7 @@ export function Chat({ sessionId, draftOwner = "", title = "", projectName, onCh
         </div>
       ) : (
         <div class="log" ref={logRef}>
-          {items.map((it) => {
+          {items.map((it, index) => {
             switch (it.kind) {
               case "user":
                 return (
@@ -828,13 +835,21 @@ export function Chat({ sessionId, draftOwner = "", title = "", projectName, onCh
                     {it.text}
                   </div>
                 );
-              case "agent":
+              case "agent": {
+                const group = members.length > 1;
+                const next = items[index + 1];
+                const same = next?.kind === "agent" && (next.agentId || next.name) === (it.agentId || it.name);
+                const person = members.find((m) => m.id === it.agentId) || members.find((m) => m.name === it.name);
+                const face = person?.name || it.name || "А";
                 return (
-                  <div key={it.key} class={`msg agent${it.interim ? " interim" : ""}`}>
-                    {it.name && <div class="muted small">{it.name}</div>}
-                    <AgentBody text={it.text} media={it.media} sessionId={sessionId} />
+                  <div key={it.key} class={`msg-row${group ? "" : " solo"}`}>
+                    {group && (same ? <span class="msg-av" /> : <span class="msg-av" style={person?.avatar ? undefined : { background: avatarColor(face) }}>{person?.avatar ? <img src={person.avatar} alt="" /> : face.trim().slice(0, 1).toUpperCase()}</span>)}
+                    <div class={`msg agent${it.interim ? " interim" : ""}`}>
+                      <AgentBody text={it.text} media={it.media} sessionId={sessionId} />
+                    </div>
                   </div>
                 );
+              }
               case "note":
                 return (
                   <div key={it.key} class={`note ${it.tone}`}>
@@ -846,8 +861,15 @@ export function Chat({ sessionId, draftOwner = "", title = "", projectName, onCh
             }
           })}
           {liveText && (
-            <div class="msg agent interim">
-              <AgentBody text={liveText} media={[]} sessionId={sessionId} />
+            <div class={`msg-row${members.length > 1 ? "" : " solo"}`}>
+              {members.length > 1 && (() => {
+                const person = members.find((m) => m.id === replyAgent);
+                const face = person?.name || "А";
+                return <span class="msg-av" style={person?.avatar ? undefined : { background: avatarColor(face) }}>{person?.avatar ? <img src={person.avatar} alt="" /> : face.trim().slice(0, 1).toUpperCase()}</span>;
+              })()}
+              <div class="msg agent interim">
+                <AgentBody text={liveText} media={[]} sessionId={sessionId} />
+              </div>
             </div>
           )}
           {(toolLine || (running && !liveText)) && (

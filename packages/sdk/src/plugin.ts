@@ -309,6 +309,8 @@ export interface AgentApi {
   stream(sessionId: string, opts?: { afterSeq?: number; signal?: AbortSignal }): AsyncIterable<LiveEvent>;
   createSession(init?: { title?: string; projectId?: string; metadata?: Record<string, unknown> }): Promise<SessionInfo>;
   send(sessionId: string, text: string, opts?: { idempotencyKey?: string; channel?: string }): Promise<{ turnId: string }>;
+  /** Journal one agent line in a chat. Does not start a turn. */
+  say(sessionId: string, text: string, opts?: { agentId?: string; agentName?: string }): Promise<void>;
   interrupt(sessionId: string): Promise<boolean>;
 }
 

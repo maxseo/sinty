@@ -24,7 +24,7 @@ export interface WireHttpRequest {
   body: Uint8Array | null;
 }
 
-export type AgentOp = "listSessions" | "getSession" | "events" | "createSession" | "send" | "interrupt";
+export type AgentOp = "listSessions" | "getSession" | "events" | "createSession" | "send" | "say" | "interrupt";
 
 export interface InitMessage {
   t: "init";

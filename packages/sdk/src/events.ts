@@ -52,7 +52,8 @@ export interface EventDataMap {
   "turn.resumed": { fromSeq: number };
 
   "message.user": { text: string; attachments?: BlobRef[]; channel?: string };
-  "message.agent": { text: string; attachments?: BlobRef[] };
+  /** `relay` is a teammate's line copied into the group chat. The model reads it as that person speaking, not as its own reply. */
+  "message.agent": { text: string; attachments?: BlobRef[]; agentId?: string; agentName?: string; relay?: boolean };
   /** A picture, video or audio file saved under the session project's `_out/generation`. The chat draws it; the model does not see this event. */
   "chat.media": { files: { path: string; kind: "audio" | "video" | "image" }[] };
   "message.channel": { channel: string; direction: "in" | "out"; externalId?: string; text: string };

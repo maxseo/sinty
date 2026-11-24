@@ -112,6 +112,7 @@ const agentApi: AgentApi = {
   events: (sessionId, opts) => agentCall("events", sessionId, opts ?? {}),
   createSession: (init) => agentCall("createSession", init ?? {}),
   send: (sessionId, text, opts) => agentCall("send", sessionId, text, opts ?? {}),
+  say: (sessionId, text, opts) => agentCall("say", sessionId, text, opts ?? {}),
   interrupt: (sessionId) => agentCall("interrupt", sessionId),
   stream(sessionId, opts) {
     return (async function* () {

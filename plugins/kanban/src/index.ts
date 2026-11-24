@@ -256,11 +256,13 @@ export default definePlugin({
     async function start(card: Card): Promise<void> {
       if (!card.assigneeId || blockedBy(card).length) return;
       if (card.state === "working" || card.state === "blocked") return;
+      const chat = card.chatId || await teamChat(card);
+      if (chat) card.chatId = chat;
       if (!card.sessionId) {
         const s = await ctx.agent.createSession({
           title: card.title,
           ...(card.projectId ? { projectId: card.projectId } : {}),
-          metadata: { kanbanCard: card.id, agentIds: [card.assigneeId] },
+          metadata: { kanbanCard: card.id, agentIds: [card.assigneeId], ...(chat ? { parentSessionId: chat } : {}) },
         });
         card.sessionId = s.id;
       }
@@ -327,6 +329,44 @@ export default definePlugin({
     function bySession(sessionId: string): Card | undefined {
       return store.cards.find((c) => c.sessionId === sessionId);
     }
+
+    const relay = async (card: Card, text: string, agentId?: string, agentName?: string): Promise<void> => {
+      const chat = card.chatId || await teamChat(card);
+      if (!chat || chat === card.sessionId || !text.trim()) return;
+      card.chatId = chat;
+      store.save();
+      await ctx.agent.say(chat, text, { ...(agentId ? { agentId } : {}), ...(agentName ? { agentName } : {}) });
+    };
+
+    ctx.on("message.agent", (e) => {
+      const card = bySession(e.sessionId) ?? store.cards.find((c) => c.briefSessionId === e.sessionId || c.reviewSessionId === e.sessionId);
+      if (!card) return;
+      const data = e.data as { text?: string; agentId?: string; agentName?: string; relay?: boolean };
+      if (data.relay) return;
+      const text = data.text?.trim();
+      if (!text || text.startsWith("[Канбан #")) return;
+      void relay(card, text, data.agentId, data.agentName).catch((err: unknown) => ctx.log.warn("kanban relay failed", err instanceof Error ? err.message : err));
+    });
+
+    ctx.on("turn.blocked", (e) => {
+      const card = bySession(e.sessionId);
+      if (!card) return;
+      const data = e.data as { reason?: string; detail?: string };
+      if (data.reason !== "approval") return;
+      void relay(card, `Жду разрешения, чтобы продолжить: ${data.detail || "нужно одобрение"}`, card.assigneeId ?? undefined).catch(() => undefined);
+    });
+
+    void (async () => {
+      for (const card of [...store.cards]) {
+        if (!card.sessionId) continue;
+        const spoken = await ctx.agent.events(card.sessionId, { types: ["message.agent"], limit: 100 });
+        for (const event of spoken) {
+          const data = event.data as { text?: string; agentId?: string; agentName?: string; relay?: boolean };
+          if (data.relay || !data.text?.trim()) continue;
+          await relay(card, data.text, data.agentId ?? card.assigneeId ?? undefined, data.agentName);
+        }
+      }
+    })().catch((err: unknown) => ctx.log.warn("kanban backfill failed", err instanceof Error ? err.message : err));
 
     ctx.on("agent.state", (e) => {
       const card = bySession(e.sessionId);
@@ -602,9 +642,12 @@ function registerTools(
     description: "Create a card. A backlog card with assigneeId asks that agent to decompose or send it to todo. Children of a split belong in todo with their own assigneeId, reviewerId, and dependsOn. A card does not start until its reviewer is set and every dependency is done.",
     input: createInput,
     sideEffects: "write",
-    async run(input) {
+    async run(input, call) {
       const column = input.column === "doing" || input.column === "done" ? "backlog" : input.column;
-      const card = blank(store, input, column, "agent", now);
+      const here = await ctx.agent.getSession(call.sessionId);
+      const projectId = input.projectId || here?.projectId || undefined;
+      const chatId = input.chatId || (here && !here.metadata?.kanbanCard ? call.sessionId : undefined);
+      const card = blank(store, { ...input, ...(projectId ? { projectId } : {}), ...(chatId ? { chatId } : {}) }, column, "agent", now);
       store.cards.push(card);
       store.save();
       if (card.column === "backlog" && card.assigneeId) await handBacklog(card);

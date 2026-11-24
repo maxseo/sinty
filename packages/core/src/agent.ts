@@ -196,6 +196,14 @@ export class Agent {
 
   // ---- public API ----
 
+  /** One agent line in a chat, without starting a turn. Used to show a teammate's reply in the group chat. */
+  say(sessionId: string, text: string, from: { agentId?: string; agentName?: string } = {}): void {
+    if (!this.d.journal.getSession(sessionId)) throw new AgentError("not_found", `session ${sessionId} not found`, 404);
+    const body = text.trim();
+    if (!body) return;
+    this.record({ sessionId, type: "message.agent", actor: AGENT, data: strip({ text: body, agentId: from.agentId, agentName: from.agentName, relay: true }) });
+  }
+
   createSession(init: { title?: string | undefined; projectId?: string | undefined; metadata?: Record<string, unknown> | undefined } = {}): SessionRow {
     const s = this.d.journal.createSession(newId("ses"), init);
     this.record({ sessionId: s.id, type: "session.created", actor: SYSTEM, data: strip({ title: init.title, projectId: init.projectId, metadata: init.metadata }) });
@@ -1927,6 +1935,13 @@ export function eventsToMessages(events: SintyEvent[], dataDir?: string): ChatMe
           }
         }
         out.push({ role: "user", content, ...(images.length ? { images } : {}) });
+        break;
+      }
+      case "message.agent": {
+        const said = (e as SintyEvent<"message.agent">).data;
+        if (!said.relay || !said.text) break;
+        closeOpen();
+        out.push({ role: "user", content: `[${said.agentName || "агент"}] ${said.text}` });
         break;
       }
       case "model.response": {

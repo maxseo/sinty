@@ -14,6 +14,7 @@ const ARGS: Record<AgentOp, z.ZodType<unknown[]>> = {
     z.object({ title: z.string().max(300).optional(), projectId: z.string().max(100).optional(), metadata: z.record(z.string(), z.unknown()).optional() }).optional(),
   ]),
   send: z.tuple([id, z.string().min(1).max(200_000), z.object({ idempotencyKey: z.string().max(200).optional(), channel: z.string().max(100).optional() }).optional()]),
+  say: z.tuple([id, z.string().min(1).max(20_000), z.object({ agentId: z.string().max(100).optional(), agentName: z.string().max(200).optional() }).optional()]),
   interrupt: z.tuple([id]),
 };
 
@@ -70,6 +71,11 @@ export function createAgentBridge(get: () => { agent: Agent; journal: Journal; b
         case "send": {
           const o = (a[2] ?? {}) as { idempotencyKey?: string; channel?: string };
           return agent.send(a[0], a[1], { idempotencyKey: o.idempotencyKey ? `${plugin}:${o.idempotencyKey}` : undefined, channel: o.channel ?? plugin, actor });
+        }
+        case "say": {
+          const o = (a[2] ?? {}) as { agentId?: string; agentName?: string };
+          agent.say(a[0], a[1], o);
+          return null;
         }
         case "interrupt":
           return agent.interrupt(a[0], actor);

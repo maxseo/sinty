@@ -28,6 +28,7 @@ const AGENT_OP_SCOPE: Record<AgentOp | "stream", AgentScope> = {
   stream: "sessions.read",
   createSession: "sessions.write",
   send: "sessions.write",
+  say: "sessions.write",
   interrupt: "sessions.write",
 };
 const NO_BODY_STATUS = new Set([101, 204, 205, 304]);
