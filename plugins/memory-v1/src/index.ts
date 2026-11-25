@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { definePlugin, ToolError, z, type MemoryWrite, type TurnInfo } from "@sinty/sdk";
-import { EXTRACT_PROMPT, parseClaims } from "./extract.js";
+import { EXTRACT_PROMPT, parseClaims, parseNightLinks } from "./extract.js";
 import { MemoryV1Store, localDay, rememberLine, type RememberInput } from "./store.js";
 import type { Mode, Policy } from "./policy.js";
 
-const kind = z.enum(["person", "preference", "fact", "decision", "question"]);
+const kind = z.enum(["person", "preference", "fact", "decision", "question", "observation", "file", "architecture", "outcome"]);
 const rel = z.enum(["supports", "contradicts", "continues"]);
 
 const page = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "public", "graph.html"), "utf8");
@@ -92,15 +92,16 @@ export default definePlugin({
         if (session?.metadata && typeof session.metadata.parentSessionId === "string") return {};
         const said = messages.filter((m) => m.role === "user").map((m) => m.content).join("\n").trim();
         if (!said) return {};
-        const save = (text: string, kind: "person" | "preference" | "fact" | "decision" | "question", basis: "user_requested" | "agent_inferred", opKey: string, quote: string, subject?: string): void => {
+        const save = (text: string, cardKind: "person" | "preference" | "fact" | "decision" | "question" | "observation" | "file" | "architecture" | "outcome", basis: "user_requested" | "agent_inferred", opKey: string, quote: string, subject?: string, path?: string): void => {
           store.remember({
             userId: turn.userId,
             agentId: turn.agentId,
             sessionId: turn.sessionId,
             ...(turn.projectId ? { projectId: turn.projectId } : {}),
             text,
-            kind,
+            kind: cardKind,
             ...(subject ? { subject } : {}),
+            ...(path ? { path } : {}),
             basis,
             evidenceId: turn.turnId || turn.sessionId,
             quote,
@@ -121,7 +122,7 @@ export default definePlugin({
             messages: [{ role: "user", content: `${EXTRACT_PROMPT}\n\nUser said:\n${said.slice(-6000)}` }],
           });
           parseClaims(reply.text).forEach((claim, index) => {
-            try { save(claim.text, claim.kind, "agent_inferred", `after:${turn.turnId || turn.sessionId}:${index}`, claim.quote); }
+            try { save(claim.text, claim.kind, "agent_inferred", `after:${turn.turnId || turn.sessionId}:${index}`, claim.quote, claim.subject, claim.path); }
             catch (error) { ctx.log.warn("memory-v1 skipped an inferred claim", error instanceof Error ? error.message : error); }
           });
         } catch (error) {
@@ -140,6 +141,8 @@ export default definePlugin({
         basis: z.enum(["user_requested", "agent_inferred"]).default("agent_inferred"),
         evidenceId: z.string().min(1).max(200),
         quote: z.string().max(1000).default(""),
+        subject: z.string().max(80).optional(),
+        path: z.string().max(300).optional(),
         links: z.array(z.object({ to: z.string(), rel })).max(8).optional(),
       }),
       sideEffects: "write",
@@ -156,6 +159,8 @@ export default definePlugin({
           basis: args.basis,
           evidenceId: args.evidenceId,
           quote: args.quote || args.text,
+          ...(args.subject ? { subject: args.subject } : {}),
+          ...(args.path ? { path: args.path } : {}),
           opKey: call.idempotencyKey,
           ...(args.links ? { links: args.links } : {}),
         };
@@ -177,7 +182,22 @@ export default definePlugin({
         const turn = turns.get(call.sessionId);
         if (!turn) throw new ToolError("AGENT_MEMORY_UNAVAILABLE", "this turn has no memory context yet");
         const rows = store.search(turn.userId, turn.agentId, { sessionId: turn.sessionId, ...(turn.projectId ? { projectId: turn.projectId } : {}) }, args.query);
-        return { content: { claims: rows.map((row) => ({ id: row.id, text: row.text, kind: row.kind, home: row.home })) } };
+        return { content: { claims: rows.map((row) => ({ id: row.id, text: row.text, kind: row.kind, home: row.home, subject: row.subject, path: row.path, quote: row.quote ?? "" })) } };
+      },
+    });
+
+    ctx.tool({
+      name: "memory_v1.open",
+      description: "Open one memory card and the journal evidence it was taken from: quote, file path, session and evidence id.",
+      input: z.object({ id: z.string().regex(/^mem_[a-f0-9]+$/) }),
+      sideEffects: "read",
+      idempotent: true,
+      async run(args, call) {
+        const turn = turns.get(call.sessionId);
+        if (!turn) throw new ToolError("AGENT_MEMORY_UNAVAILABLE", "this turn has no memory context yet");
+        const card = store.source(turn.userId, turn.agentId, args.id);
+        if (!card) throw new ToolError("AGENT_MEMORY_SCOPE_DENIED", "card is not in this user's memory");
+        return { content: { id: card.id, text: card.text, kind: card.kind, subject: card.subject, path: card.path, quote: card.quote ?? "", sessionId: card.sessionId, evidenceId: card.evidenceId, validFrom: card.validFrom ?? "", validTo: card.validTo } };
       },
     });
 
@@ -267,6 +287,22 @@ export default definePlugin({
         ctx.log.warn("memory-v1 night pass kept the raw card list", error instanceof Error ? error.message : error);
       }
       store.saveDay(userId, agentId, day, summary, policy.researchAtNight);
+      const ids = new Set(cards.map((card) => card.id));
+      if (ids.size) {
+        try {
+          const catalog = cards.map((card) => `${card.id} | ${card.kind} | ${card.subject || "-"} | ${card.path || "-"} | ${card.text}`).join("\n");
+          const organized = await ctx.models.complete({
+            route: "cheap",
+            maxOutputTokens: 700,
+            messages: [{ role: "user", content: `These are existing memory cards. Do not invent cards or facts. Assign a short subject key only when two cards are the same thing, and link ids that support, contradict, or continue each other.\nReply with JSON only: {"subjects":[{"id":"...","subject":"..."}],"links":[{"from":"...","to":"...","rel":"supports|contradicts|continues"}]}\n\n${catalog}` }],
+          });
+          const parsed = parseNightLinks(organized.text, ids);
+          for (const row of parsed.subjects) store.setSubject(userId, agentId, row.id, row.subject);
+          for (const link of parsed.links) store.addLink(userId, link.from, link.to, link.rel);
+        } catch (error) {
+          ctx.log.warn("memory-v1 night pass kept the cards unlinked", error instanceof Error ? error.message : error);
+        }
+      }
       return { day, summary };
     };
 

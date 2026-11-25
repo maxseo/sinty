@@ -1,5 +1,5 @@
 export type Home = "chat" | "project" | "user";
-export type CardType = "person" | "preference" | "fact" | "decision" | "question";
+export type CardType = "person" | "preference" | "fact" | "decision" | "question" | "observation" | "file" | "architecture" | "outcome";
 /** `near` is eligible for the prompt index. `long` is found by search. */
 export type Span = "near" | "long";
 export type CardStatus = "current" | "past" | "reverted" | "open" | "answered" | "dropped";
@@ -35,6 +35,8 @@ export interface ClaimView {
   span: Span;
   status: CardStatus;
   subject: string;
+  /** File path this card points at. Empty when the card is not about a file. */
+  path: string;
   text: string;
   salience: number;
   validTo: string | null;
@@ -46,8 +48,10 @@ export interface ClaimView {
 
 const PAST = new Set<CardStatus>(["past", "reverted", "answered", "dropped"]);
 
+const LONG = new Set<CardType>(["decision", "question", "observation", "file", "architecture", "outcome"]);
+
 export function spanFor(kind: CardType): Span {
-  return kind === "decision" || kind === "question" ? "long" : "near";
+  return LONG.has(kind) ? "long" : "near";
 }
 
 export function homeFor(kind: CardType, projectId: string | undefined): Home {

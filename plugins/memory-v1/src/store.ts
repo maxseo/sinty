@@ -47,6 +47,8 @@ export interface RememberInput {
   basis: "user_requested" | "agent_inferred";
   evidenceId: string;
   quote: string;
+  /** File path copied from the user's words. Empty when the card is not about a file. */
+  path?: string;
   /** The user's words. An inferred card is kept only when quote is a piece of this text. */
   sourceText?: string;
   opKey: string;
@@ -78,7 +80,8 @@ export class MemoryV1Store {
         touched_at TEXT NOT NULL,
         span TEXT NOT NULL DEFAULT 'near',
         status TEXT NOT NULL DEFAULT 'current',
-        subject TEXT NOT NULL DEFAULT ''
+        subject TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS claims_owner ON claims (user_id, agent_id, valid_to);
       CREATE TABLE IF NOT EXISTS evidence (
@@ -128,6 +131,7 @@ export class MemoryV1Store {
     if (!names.has("span")) this.db.exec("ALTER TABLE claims ADD COLUMN span TEXT NOT NULL DEFAULT 'near'");
     if (!names.has("status")) this.db.exec("ALTER TABLE claims ADD COLUMN status TEXT NOT NULL DEFAULT 'current'");
     if (!names.has("subject")) this.db.exec("ALTER TABLE claims ADD COLUMN subject TEXT NOT NULL DEFAULT ''");
+    if (!names.has("path")) this.db.exec("ALTER TABLE claims ADD COLUMN path TEXT NOT NULL DEFAULT ''");
     const policyCols = new Set((this.db.prepare("PRAGMA table_info(policies)").all() as { name: string }[]).map((column) => column.name));
     if (!policyCols.has("night")) this.db.exec("ALTER TABLE policies ADD COLUMN night INTEGER NOT NULL DEFAULT 0");
     if (!policyCols.has("research_at_night")) this.db.exec("ALTER TABLE policies ADD COLUMN research_at_night INTEGER NOT NULL DEFAULT 0");
@@ -170,9 +174,11 @@ export class MemoryV1Store {
     if (!text || text.length > 500) throw Object.assign(new Error("claim text must be 1..500 characters"), { code: "AGENT_MEMORY_EXPLICIT_SOURCE_INVALID" });
     if (looksSecret(text) || looksSecret(input.quote)) throw Object.assign(new Error("secrets are not stored"), { code: "AGENT_MEMORY_EXPLICIT_SOURCE_INVALID" });
     const quote = input.quote.replace(/\s+/g, " ").trim().slice(0, 1000);
+    const filePath = (input.path ?? "").trim().slice(0, 300);
     if (input.basis === "agent_inferred" && input.sourceText) {
       const source = normalize(input.sourceText);
       if (!quote || !source.includes(normalize(quote))) throw Object.assign(new Error("an inferred card needs a quote from the user's words"), { code: "AGENT_MEMORY_EXPLICIT_SOURCE_INVALID" });
+      if (filePath && !source.includes(normalize(filePath))) throw Object.assign(new Error("an inferred path must be copied from the user's words"), { code: "AGENT_MEMORY_EXPLICIT_SOURCE_INVALID" });
     }
     if (!input.evidenceId) throw Object.assign(new Error("a claim needs evidence from this turn"), { code: "AGENT_MEMORY_EXPLICIT_SOURCE_INVALID" });
     const subject = (input.subject ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
@@ -192,7 +198,7 @@ export class MemoryV1Store {
     this.db.exec("BEGIN");
     try {
       if (sameText) {
-        this.db.prepare("UPDATE claims SET salience = 1, touched_at = ?, basis = ?, kind = ?, span = ?, subject = CASE WHEN ? != '' THEN ? ELSE subject END WHERE id = ? AND user_id = ?").run(now, input.basis, input.kind, spanFor(input.kind), subject, subject, id, input.userId);
+        this.db.prepare("UPDATE claims SET salience = 1, touched_at = ?, basis = ?, kind = ?, span = ?, subject = CASE WHEN ? != '' THEN ? ELSE subject END, path = CASE WHEN ? != '' THEN ? ELSE path END WHERE id = ? AND user_id = ?").run(now, input.basis, input.kind, spanFor(input.kind), subject, subject, filePath, filePath, id, input.userId);
       } else {
         const replaced = subject
           ? this.db.prepare(`SELECT id FROM claims WHERE user_id = ? AND agent_id = ? AND subject = ? AND subject != '' AND valid_to IS NULL`).all(input.userId, input.agentId, subject) as { id: string }[]
@@ -200,8 +206,8 @@ export class MemoryV1Store {
         if (replaced.length) {
           this.db.prepare(`UPDATE claims SET status = 'past', valid_to = ?, touched_at = ? WHERE user_id = ? AND agent_id = ? AND subject = ? AND subject != '' AND valid_to IS NULL`).run(now, now, input.userId, input.agentId, subject);
         }
-        this.db.prepare(`INSERT INTO claims (id, user_id, agent_id, session_id, project_id, home, kind, text, text_norm, basis, salience, valid_from, touched_at, span, status, subject)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.userId, input.agentId, input.sessionId, input.projectId ?? "", home, input.kind, text, norm, input.basis, salience, now, now, spanFor(input.kind), status, subject);
+        this.db.prepare(`INSERT INTO claims (id, user_id, agent_id, session_id, project_id, home, kind, text, text_norm, basis, salience, valid_from, touched_at, span, status, subject, path)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.userId, input.agentId, input.sessionId, input.projectId ?? "", home, input.kind, text, norm, input.basis, salience, now, now, spanFor(input.kind), status, subject, filePath);
         for (const old of replaced) {
           this.db.prepare("INSERT OR IGNORE INTO links (user_id, from_id, to_id, rel) VALUES (?, ?, ?, 'supersedes')").run(input.userId, old.id, id);
         }
@@ -250,6 +256,7 @@ export class MemoryV1Store {
       span: spanFor((row.kind === "open" ? "question" : row.kind) as CardType),
       status: (row.status as CardStatus | undefined) ?? (row.valid_to ? "past" : freshStatus((row.kind === "open" ? "question" : row.kind) as CardType)),
       subject: String(row.subject ?? ""),
+      path: String(row.path ?? ""),
       text: String(row.text),
       salience: Number(row.salience),
       validTo: row.valid_to ? String(row.valid_to) : null,
@@ -299,16 +306,54 @@ export class MemoryV1Store {
       .map((row) => ({ userId: row.user_id, agentId: row.agent_id }));
   }
 
+  /** The card plus the quote and the journal id it was taken from. */
+  source(userId: string, agentId: string, id: string): (ClaimView & { evidenceId: string }) | undefined {
+    const claim = this.findClaim(userId, id);
+    if (!claim || claim.agentId !== agentId) return undefined;
+    const evidence = this.db.prepare("SELECT evidence_id, quote FROM evidence WHERE user_id = ? AND claim_id = ? ORDER BY id DESC LIMIT 1").get(userId, id) as { evidence_id: string; quote: string } | undefined;
+    return { ...claim, quote: evidence?.quote ?? claim.quote ?? "", evidenceId: evidence?.evidence_id ?? "" };
+  }
+
+  /** Sets a subject on a current card and closes the previous card with that subject. */
+  setSubject(userId: string, agentId: string, id: string, subject: string): boolean {
+    const next = subject.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (next.length < 2) return false;
+    const claim = this.findClaim(userId, id);
+    if (!claim || claim.agentId !== agentId || claim.validTo) return false;
+    const now = new Date().toISOString();
+    const replaced = this.db.prepare("SELECT id FROM claims WHERE user_id = ? AND agent_id = ? AND subject = ? AND valid_to IS NULL AND id != ?").all(userId, agentId, next, id) as { id: string }[];
+    this.db.exec("BEGIN");
+    try {
+      if (replaced.length) this.db.prepare("UPDATE claims SET status = 'past', valid_to = ?, touched_at = ? WHERE user_id = ? AND agent_id = ? AND subject = ? AND valid_to IS NULL AND id != ?").run(now, now, userId, agentId, next, id);
+      this.db.prepare("UPDATE claims SET subject = ?, touched_at = ? WHERE id = ? AND user_id = ?").run(next, now, id, userId);
+      for (const old of replaced) this.db.prepare("INSERT OR IGNORE INTO links (user_id, from_id, to_id, rel) VALUES (?, ?, ?, 'supersedes')").run(userId, old.id, id);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return true;
+  }
+
+  addLink(userId: string, from: string, to: string, rel: "supports" | "contradicts" | "continues"): boolean {
+    const left = this.findClaim(userId, from);
+    const right = this.findClaim(userId, to);
+    if (!left || !right || left.agentId !== right.agentId) return false;
+    this.db.prepare("INSERT OR IGNORE INTO links (user_id, from_id, to_id, rel) VALUES (?, ?, ?, ?)").run(userId, from, to, rel);
+    return true;
+  }
+
   search(userId: string, agentId: string, here: { sessionId: string; projectId?: string }, query: string, limit = 12): (ClaimView & { match: number })[] {
     const policy = this.policy(userId, agentId);
     const history = wantsHistory(query);
     const words = normalize(query).split(" ").filter((w) => w.length > 1);
+    const quotes = this.quotesFor(userId);
     return this.list(userId, agentId)
-      .map((claim) => ({ claim, score: score(`${claim.text} ${claim.subject}`, words) }))
+      .map((claim) => ({ claim, score: score(`${claim.text} ${claim.subject} ${claim.path} ${quotes.get(claim.id) ?? ""}`, words) }))
       .filter((row) => row.score > 0 && inRecall(row.claim, here, policy, history))
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
-      .map((row) => ({ ...row.claim, match: row.score }));
+      .map((row) => ({ ...row.claim, quote: quotes.get(row.claim.id) ?? "", match: row.score }));
   }
 
   graph(userId: string, agentId: string, here: { sessionId: string; projectId?: string }): { policy: Policy; nodes: (ClaimView & { bright: number; inRecall: boolean })[]; edges: { from: string; to: string; rel: string }[] } {
@@ -344,6 +389,14 @@ export class MemoryV1Store {
     return { policy, nodes, edges };
   }
 
+  private quotesFor(userId: string): Map<string, string> {
+    const quotes = new Map<string, string>();
+    for (const row of this.db.prepare("SELECT claim_id, quote FROM evidence WHERE user_id = ? ORDER BY id DESC").all(userId) as { claim_id: string; quote: string }[]) {
+      if (!quotes.has(row.claim_id)) quotes.set(row.claim_id, row.quote);
+    }
+    return quotes;
+  }
+
   private list(userId: string, agentId: string): ClaimView[] {
     const rows = this.db.prepare("SELECT * FROM claims WHERE user_id = ? AND agent_id = ?").all(userId, agentId) as Record<string, string | number | null>[];
     return rows.map((row) => ({
@@ -357,6 +410,7 @@ export class MemoryV1Store {
       span: spanFor((row.kind === "open" ? "question" : row.kind) as CardType),
       status: (row.status as CardStatus | undefined) ?? (row.valid_to ? "past" : freshStatus((row.kind === "open" ? "question" : row.kind) as CardType)),
       subject: String(row.subject ?? ""),
+      path: String(row.path ?? ""),
       text: String(row.text),
       salience: Number(row.salience),
       validTo: row.valid_to ? String(row.valid_to) : null,

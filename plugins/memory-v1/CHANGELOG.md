@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+- Cards keep a file path and a journal evidence id. Search looks at the path, the subject and the quote. memory_v1.open returns that source.
+- Observation, file, architecture and outcome cards stay out of the short prompt and are found by search. The turn reader can set a subject. The night pass may label and link cards that already exist.
+
 ## 0.2.3
 - A click on a sphere opens the card: type, status, subject, quote and its links. Replacing a subject draws a "supersedes" line to the old card.
 

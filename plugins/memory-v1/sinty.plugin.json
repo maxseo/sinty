@@ -1,7 +1,7 @@
 {
   "$schema": "../../schemas/plugin-manifest.schema.json",
   "name": "memory-v1",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Memory cards for one user and agent, with a recall policy and an agent-card graph",
   "kinds": [
     "memory",
@@ -41,6 +41,12 @@
     },
     {
       "name": "memory_v1.search",
+      "sideEffects": "read",
+      "idempotent": true,
+      "docs": "README.md"
+    },
+    {
+      "name": "memory_v1.open",
       "sideEffects": "read",
       "idempotent": true,
       "docs": "README.md"

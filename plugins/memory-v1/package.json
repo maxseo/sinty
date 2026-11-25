@@ -1,6 +1,6 @@
 {
   "name": "@sinty/plugin-memory-v1",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "private": true,

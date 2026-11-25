@@ -140,10 +140,10 @@ for (const id of ["aboutUser", "projectWork", "otherProjects", "night", "researc
   document.getElementById(id).onclick = () => togOn(id, !togIs(id));
 }
 function applyTheme(theme) { document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light"; }
-const colors = { person: "#0891b2", fact: "#2563eb", preference: "#16a34a", decision: "#d97706", question: "#7c3aed" };
+const colors = { person: "#0891b2", fact: "#2563eb", preference: "#16a34a", decision: "#d97706", question: "#7c3aed", observation: "#64748b", file: "#0f766e", architecture: "#1d4ed8", outcome: "#be123c" };
 const relColor = { supports: "#16a34a", contradicts: "#dc2626", continues: "#2563eb", supersedes: "#d97706" };
 const relName = { supports: "подтверждает", contradicts: "противоречит", continues: "продолжает", supersedes: "заменено на" };
-const kindName = { person: "человек", preference: "предпочтение", fact: "факт", decision: "решение", question: "вопрос" };
+const kindName = { person: "человек", preference: "предпочтение", fact: "факт", decision: "решение", question: "вопрос", observation: "наблюдение", file: "файл", architecture: "архитектура", outcome: "исход" };
 const statusName = { current: "сейчас", past: "было", reverted: "отменено", open: "открыт", answered: "отвечен", dropped: "брошен" };
 const spanName = { near: "рядом", long: "долго" };
 const homeName = { user: "вы", project: "проект", chat: "этот чат" };
@@ -362,6 +362,7 @@ function showCard() {
   const facts = document.getElementById("cardFacts");
   facts.innerHTML = "";
   fact("тема", node.subject);
+  fact("путь", node.path);
   fact("цитата", node.quote);
   fact("дом", homeName[node.home] || node.home);
   fact("основание", basisName[node.basis] || node.basis);

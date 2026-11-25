@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { parseClaims } from "./extract.js";
+import { parseClaims, parseNightLinks } from "./extract.js";
 import { brightness, inRecall } from "./policy.js";
 import { MemoryV1Store, rememberLine } from "./store.js";
 
@@ -100,7 +100,7 @@ test("eval: facts and preferences are in the block, decisions are long memory", 
 });
 test("eval: a normal sentence can be parsed into a claim without the word запомни", () => {
   const claims = parseClaims('{"claims":[{"text":"Пользователя зовут Макс","quote":"меня зовут Макс","kind":"fact"},{"text":"привет","kind":"nope"}]}');
-  assert.deepEqual(claims, [{ text: "Пользователя зовут Макс", kind: "fact", quote: "меня зовут Макс" }]);
+  assert.deepEqual(claims, [{ text: "Пользователя зовут Макс", kind: "fact", quote: "меня зовут Макс", subject: "", path: "" }]);
   assert.deepEqual(parseClaims("не json"), []);
 });
 
@@ -114,7 +114,7 @@ test("eval: brightness fades and drops out of recall under 0.15", () => {
   assert.ok(brightness(1, new Date().toISOString()) > 0.9);
   const old = new Date(Date.now() - 200 * 86_400_000).toISOString();
   assert.ok(brightness(0.6, old) < 0.15);
-  const claim = { id: "mem_1", userId: "u", agentId: "a", sessionId: "s", projectId: "p", home: "project" as const, kind: "fact" as const, span: "near" as const, status: "current" as const, subject: "", text: "x", salience: 0.6, validTo: null, touchedAt: old };
+  const claim = { id: "mem_1", userId: "u", agentId: "a", sessionId: "s", projectId: "p", home: "project" as const, kind: "fact" as const, span: "near" as const, status: "current" as const, subject: "", path: "", text: "x", salience: 0.6, validTo: null, touchedAt: old };
   assert.equal(inRecall(claim, { sessionId: "s", projectId: "p" }, { mode: "project", aboutUser: true, projectWork: true, otherProjects: false, night: false, researchAtNight: false, researchPrompt: "" }), false);
 });
 
@@ -128,4 +128,21 @@ test("eval: projectWork hides another chat's decision and keeps the project fact
   assert.equal(db.search("u1", "a1", here, "файл").length, 1);
   assert.equal(db.search("u1", "a1", here, "sqlite").length, 0);
   assert.equal(db.search("u1", "a1", here, "тест").length, 1);
+});
+
+test("eval: a file card stays out of the prompt and is found by its path", () => {
+  const db = store();
+  const saved = db.remember({ ...base, kind: "file", text: "Отчёт о сверке", path: "projects/ресеч/_out/отчёт-5-документов.md", quote: "отчёт", opKey: "file" });
+  assert.equal(db.prompt("u1", "a1").some((row) => row.kind === "file"), false);
+  const found = db.search("u1", "a1", { sessionId: "s1", projectId: "p1" }, "отчёт-5-документов");
+  assert.equal(found[0]?.id, saved.id);
+  const opened = db.source("u1", "a1", saved.id);
+  assert.equal(opened?.path, "projects/ресеч/_out/отчёт-5-документов.md");
+  assert.equal(opened?.evidenceId, "m1");
+});
+
+test("eval: the night pass only labels and links cards that already exist", () => {
+  const parsed = parseNightLinks('{"subjects":[{"id":"mem_1","subject":"отчёт"},{"id":"mem_missing","subject":"нет"}],"links":[{"from":"mem_1","to":"mem_2","rel":"supports"},{"from":"mem_1","to":"mem_1","rel":"supports"}]}', new Set(["mem_1", "mem_2"]));
+  assert.deepEqual(parsed.subjects, [{ id: "mem_1", subject: "отчёт" }]);
+  assert.deepEqual(parsed.links, [{ from: "mem_1", to: "mem_2", rel: "supports" }]);
 });
