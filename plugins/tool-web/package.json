@@ -12,5 +12,8 @@
   "dependencies": {
     "@sinty/sdk": "workspace:*",
     "playwright": "^1.64.1"
+  },
+  "devDependencies": {
+    "@sinty/plugin-tool-browser": "workspace:*"
   }
 }

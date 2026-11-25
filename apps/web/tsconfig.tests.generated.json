@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".test-output",
+    "rootDir": "src",
+    "types": [
+      "node"
+    ],
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": []
+}

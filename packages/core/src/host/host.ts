@@ -128,7 +128,7 @@ export class PluginProcess {
   embedders: string[] = [];
   transcribers: string[] = [];
   listers: string[] = [];
-  memoryProviders: string[] = [];
+  memoryProviders: { name: string; write: boolean; forget: boolean }[] = [];
   memoryProcessors: { name: string; order: number; hooks: string[] }[] = [];
   /** Registered ctx.onContextSnapshot (see `inspector`). */
   inspects = false;
@@ -224,7 +224,7 @@ export class PluginProcess {
             this.memoryProviders = [];
             this.memoryProcessors = [];
           } else {
-            this.memoryProviders = memory.providers;
+            this.memoryProviders = memory.providers.map((p) => typeof p === "string" ? { name: p, write: false, forget: false } : { name: p.name, write: !!p.write, forget: !!p.forget });
             this.memoryProcessors = memory.processors;
           }
           this.inspects = msg.inspects === true;
@@ -1040,10 +1040,10 @@ export class PluginHost {
     return undefined;
   }
 
-  /** Memory providers registered by running plugins, as `{ plugin, name }`. */
-  memoryProviders(): { plugin: PluginProcess; name: string }[] {
-    const out: { plugin: PluginProcess; name: string }[] = [];
-    for (const p of this.plugins.values()) if (!p.disabled) for (const name of p.memoryProviders) out.push({ plugin: p, name });
+  /** Memory providers registered by running plugins, with whether they implement write/forget. */
+  memoryProviders(): { plugin: PluginProcess; name: string; write: boolean; forget: boolean }[] {
+    const out: { plugin: PluginProcess; name: string; write: boolean; forget: boolean }[] = [];
+    for (const p of this.plugins.values()) if (!p.disabled) for (const prov of p.memoryProviders) out.push({ plugin: p, ...prov });
     return out;
   }
 

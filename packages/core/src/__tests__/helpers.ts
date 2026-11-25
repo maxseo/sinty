@@ -19,7 +19,23 @@ export interface ScriptStep {
 export function tempHome(): { home: string; cleanup: () => void } {
   const home = mkdtempSync(join(tmpdir(), "sinty-test-"));
   initHome(home);
-  return { home, cleanup: () => rmSync(home, { recursive: true, force: true }) };
+  return {
+    home,
+    cleanup: () => {
+      // Windows can keep a just-stopped plugin/SQLite handle for a short time; retry only those busy errors.
+      for (let i = 0; i < 12; i++) {
+        try {
+          rmSync(home, { recursive: true, force: true });
+          return;
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code !== "EPERM" && code !== "EBUSY" && code !== "ENOTEMPTY") throw e;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 * (i + 1));
+        }
+      }
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
 }
 
 export function testConfig(script: ScriptStep[], extra: Partial<SintyConfig> = {}, plugins = ["fake-provider", "test-tools"]): Partial<SintyConfig> {

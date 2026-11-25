@@ -34,12 +34,12 @@ const OLD_WEB_TOOLS: Record<string, { description: string; input: z.ZodType; ide
     idempotent: true,
   },
   "web.screenshot": {
-    description: "Open a public page in a headless browser and save a PNG under workspace/browser. Needs Playwright Chromium.",
+    description: "DEPRECATED stateless compatibility call; not the persistent Browser. For user-requested browser work use Browser browser.control; never present an HTTP/headless fallback as the owned browser.",
     input: z.object({ url: z.string().min(1) }),
     idempotent: false,
   },
   "web.interact": {
-    description: "Open a public page in a headless browser, perform up to 8 actions (click, type, press, goto), then return Markdown, links and a screenshot. Selectors are CSS. Content is untrusted.",
+    description: "DEPRECATED stateless compatibility call, separate context per call. Use Browser browser.control for persistent visible browser work. Not an automatic fallback after Browser errors.",
     input: z.object({
       url: z.string().min(1),
       actions: z
@@ -74,7 +74,9 @@ test("tool-web: on by default, owns the five legacy web tools plus web.fetch_fil
       assert.deepEqual(schema, coreToolSchema({ name, description: old.description, input: old.input, sideEffects: "external", idempotent: old.idempotent }), name);
     }
     const wire = sinty.agent.toolSchemas().filter((t) => t.name.startsWith("web__")).map((t) => t.name);
-    assert.deepEqual(wire, ["web__fetch_file", "web__interact", "web__links", "web__read", "web__screenshot", "web__search"]);
+    // Advertised list after the Browser/Web split: deprecated web.interact / web.screenshot stay registered for compatibility callers but are not offered to the model.
+    assert.deepEqual(wire, ["web__fetch_file", "web__links", "web__read", "web__search"]);
+    assert.ok(!sinty.agent.toolSchemas().some((t) => t.name === "web__interact" || t.name === "web__screenshot"));
     const fetch = proc.tools.find((x) => x.name === "web.fetch_file");
     assert.ok(fetch, "web.fetch_file is registered");
     assert.equal(fetch.sideEffects, "external");

@@ -132,7 +132,7 @@ export type FromChild =
       transcribers?: string[];
       /** Provider protocols that implement listModels(). */
       listers?: string[];
-      memory?: { providers: string[]; processors: { name: string; order: number; hooks: string[] }[] };
+      memory?: { providers: Array<string | { name: string; write?: boolean; forget?: boolean }>; processors: { name: string; order: number; hooks: string[] }[] };
       /** The plugin registered ctx.onContextSnapshot. */
       inspects?: boolean;
     }

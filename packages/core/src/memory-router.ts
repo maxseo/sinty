@@ -159,6 +159,9 @@ interface PluginRef {
   name: string;
   /** How config and records name it: the plugin name when the provider has the same name, else plugin:name. */
   id: string;
+  /** False for read-only providers (recall only, e.g. a vault). */
+  write?: boolean;
+  forget?: boolean;
 }
 
 function renderNear(records: MemoryRecord[]): string {
@@ -922,15 +925,19 @@ export class MemoryRouter {
     return out;
   }
 
-  /** A running memory provider replaces the builtin fact store for recall, profile and writes. */
+  /** A provider that implements write replaces the builtin fact store. Read-only recall providers do not. */
   private ownsMemory(): boolean {
-    return this.providers().length > 0;
+    return this.writableProviders().length > 0;
   }
 
-  /** Where writes go while a memory plugin owns storage: memory.writeTo when set, otherwise every provider. */
+  /** Where writes go while a memory plugin owns storage: memory.writeTo when set, otherwise every writable provider. */
   private memoryTargets(): PluginRef[] {
     const chosen = this.writeTargets();
-    return chosen.length ? chosen : this.providers();
+    return (chosen.length ? chosen : this.providers()).filter((p) => p.write);
+  }
+
+  private writableProviders(): PluginRef[] {
+    return this.providers().filter((p) => p.write);
   }
 
   private processors(hook: string): { plugin: PluginProcess; name: string }[] {

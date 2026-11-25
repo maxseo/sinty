@@ -114,7 +114,7 @@
     },
     {
       "name": "memory-v1",
-      "version": "0.1.1",
+      "version": "0.3.0",
       "description": "Claims with proof for one user and agent, a recall policy, and an agent-card memory graph",
       "kinds": [
         "memory",

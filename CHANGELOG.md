@@ -1,3 +1,75 @@
+# Sinty 0.5.2 — изменения после 0.5.1
+
+Дата подготовки: 25 ноября 2026. Статус: локальная подготовленная сборка, не опубликована и не установлена поверх работающей копии.
+База: v0.5.1 / 4e96d8b0bad772e6c7f3d4a0cacadf342d73021a.
+Исходный snapshot: 2f7f430a17042539f1ed4dc6f43f0f72d0c5319b + согласованные изменения подготовки 0.5.2.
+
+## Чаты и вложения
+- Переименование чата с явным подтверждением/отменой; случайный клик вне формы не закрывает редактирование.
+- Раздельные черновики по пользователю и чату; защита от очистки нового текста после завершения предыдущей отправки. Это хранение в памяти текущего UI, не сохранение после перезагрузки страницы.
+- Вставка изображений через Ctrl+V, миниатюры обычных вложений и просмотр изображений из истории после перезагрузки.
+- Предпросмотр исторических изображений привязан к доступной пользователю сессии, конкретному событию и вложению; проверяются hash, MIME и размер, произвольное чтение blob по пути не разрешено.
+- Снято прежнее ограничение количества вложений 8 за отправку; существующий большой per-file upload limit не является новой возможностью этой версии.
+- Отображение аватаров агентов.
+
+## Предпросмотр файлов
+- Правая панель PreviewDock и fs.preview для HTML с assets, Markdown, текста, PDF и медиа.
+- Ограниченные grants и нормализация workspace paths; это не VM и не новая изолированная ОС-песочница.
+
+## Browser и Web
+- Отдельный tool-browser / browser.control, не смешанный с базовым tool-web.
+- Принадлежащие пользователю persistent Chromium identities, DOM-state/actions, screenshots и выбранные uploads.
+- Ручная передача управления, pause/resume, leases/quarantine; ограничения публичной сети, блокировка WebSocket и закрытие popups.
+- Это управление браузером, не desktop/CUA. Локальные security checks не заменяют визуальную приёмку реального сайта.
+- Устаревшие web.interact / web.screenshot остаются зарегистрированными для совместимых прямых вызовов, но не предлагаются модели в списке tools; канонический путь — browser.control.
+
+## Memory v1 0.3.0
+- Типизированные claims/cards, статусы и subjects, supersedes-связи, evidence/citations и ссылки на журнал.
+- remember/search/open, разграничение user/chat/project/agent, ближняя и долговременная память.
+- Передача user identity через core и делегирование; извлечение из слов пользователя без записи дочерней задачи как пользовательского факта.
+- Graph/cards UI, заметки о файлах и архитектуре с доказательствами. Это не обход всего диска и не автоматическое веб-исследование.
+- Registry синхронизирован с package/manifest: 0.3.0.
+- Только провайдер, который реализует write, заменяет встроенное хранилище фактов. Read-only recall (например vault) больше не перехватывает запись и не подменяет builtin memory. Это исправление регрессии ownsMemory(), согласованное с контрактом SDK и docs/spec/memory.md.
+
+## Агенты и Kanban
+- Тимлид чата при работе нескольких агентов, предоставление существующего kanban-lead skill.
+- SDK agent.say и передача ответов в общий чат без дополнительного модельного хода.
+- Проверка/изменение повторной доставки старых Kanban-сообщений отложены по решению владельца; гарантия отсутствия повторов не заявляется.
+
+## Провайдеры, модели и MCP
+- Исправления replay reasoning_content и thinking controls для Qwen/DeepSeek/DashScope/OpenRouter с учётом endpoint.
+- MCP-изображения сохраняются как blobs вместо повторного хранения base64; добавлены проверки и mapping для Anthropic/Responses.
+- Ограничения MCP images: до четырёх PNG/JPEG, до 4 MiB каждое / 8 MiB суммарно. Резерв токенов — оценка контекста, не расчёт стоимости.
+- Явный NDJSON transport для MCP stdio при сохранении legacy Content-Length по умолчанию; ограничения размера, таймауты, cancellation и обработка поздних ответов.
+- Каталожный шаблон Outlook не означает настроенную или подключённую почту.
+
+## Accounts, SDK и каталог плагинов
+- Native first-run sole superadmin setup, защита гонок/origin checks, доверенная передача core user identity.
+- SDK placements agent/plugins, categories/compatibility/changelog/updateMode, lifecycle hooks и events; категории не выдают permissions.
+- Подпись каталога Ed25519, pinned trust, SHA/sequence/expiry, permission review и маркировка доверия источнику.
+- Transactional install/rollback/recovery и UI истории. Наличие кода не означает включённый каталог и проверенную production-конфигурацию.
+
+## Scheduler
+- Существующий lifecycle pause останавливает таймер, запрещает новые tick и ждёт завершения текущего прохода; resume возвращает таймер и немедленно запускает tick.
+- Задания и история не удаляются; алгоритмы cron/одноразовых заданий, idempotency и формат данных этим изменением не заменены.
+- В 0.5.2 обычная компиляция включает уже имевшиеся исходники этих hooks; ранее установленный dist их не содержал. Работающий scheduler не заменялся.
+
+## Подготовка сборки
+- Версии приложения/root, CLI, Web и release metadata согласованы на 0.5.2; внутренние core/SDK остаются 0.0.1.
+- В package tool-browser явно объявлена уже используемая runtime-зависимость @sinty/core: это устраняет неверный порядок чистой workspace-сборки. Для совместимого shim tool-web → tool-browser также объявлена build-зависимость; lockfile синхронизирован офлайн.
+- Расширены unit/integration fixtures для chat/media, Browser, памяти, моделей/MCP, accounts и plugin transactions.
+- В изолированном snapshot исправлены 10 ранее красных core-проверок: запись памяти только через writable providers; повтор удаления Windows fixture homes при EPERM; честное обновление golden/wire ожиданий после скрытия deprecated web tools; тесты persistent backend перенесены в tool-browser, чтобы patch-suite tool-web не требовал недоступный sibling module.
+
+## Прототипы и ограничения — не выдавать за готовые возможности
+- Windows managed updater/bridge остаётся прототипом. Текущая checkout-копия — development mode, автоматическая замена этой копии не включалась.
+- Updater packaging/bootstrap/signing, Linux/Docker/deployment и миграции в этой задаче не дорабатывались.
+- Sandbox/ACL/VM и исследовательские roadmap-направления не реализовывались.
+- Distribution center, восстановление его пароля, внешний Hub/website не являются функциями harness 0.5.2.
+- Облачные files/runtimes 0.2.0 остаются отдельными draft-пакетами. Их нельзя заменять старым локальным runtimes 0.1.0.
+- Production-readiness не заявляется; точные результаты новой проверки и состав локальных артефактов приведены в отдельном BUILD-REPORT.
+
+---
+
 ## Unreleased
 
 - UX: Settings tabs match the Agents card (65px bar, 920px column, cards, custom select, toggles) except Навыки and Расход.

@@ -117,10 +117,8 @@
       "stt__transcribe",
       "vision__look",
       "web__fetch_file",
-      "web__interact",
       "web__links",
       "web__read",
-      "web__screenshot",
       "web__search"
     ],
     "maxOutputTokens": 1000

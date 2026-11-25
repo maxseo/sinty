@@ -318,7 +318,7 @@ async function init(msg: InitMessage): Promise<void> {
     transcribers: [...providers.values()].filter((p) => typeof p.transcribe === "function").map((p) => p.protocol),
     listers: [...providers.values()].filter((p) => typeof p.listModels === "function").map((p) => p.protocol),
     memory: {
-      providers: [...memoryProviders.keys()],
+      providers: [...memoryProviders.values()].map((p) => ({ name: p.name, write: typeof p.write === "function", forget: typeof p.forget === "function" })),
       processors: [...memoryProcessors.values()].map((p) => ({
         name: p.name,
         order: p.order ?? 100,
