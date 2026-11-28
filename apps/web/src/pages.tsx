@@ -1,5 +1,4 @@
 import {SystemUpdatesPane} from "./system-updates-pane.js";
-import {PluginTab,type PluginTabInfo} from "./plugin-tab.js";
 import {PluginRecoveryPane} from "./plugin-recovery-pane.js";
 import {PluginCatalogPane} from "./plugin-catalog-pane.js";
 import { ModelSettings, type ModelProfiles } from "./model-settings.js";

@@ -48,6 +48,8 @@ and a `CHANGELOG.md` line. Project-level overview: [plan](../plan.md), [roadmap]
 
 | Date | Entry | PR | In one line |
 |---|---|---|---|
+| 2026-11-28 | [Port local-models plugin onto 0.5.2](2026-11-28-local-models-plugin-0.5.2.md) | (open) | Cherry-pick and adapt PR #94 onto release/0.5.2; Settings → Models subtab for one managed llama-server. |
+| 2026-11-12 | [Local-models plugin](2026-11-12-local-models-plugin.md) | #94 | Original v1 against release/0.5.1-local (now stale vs 0.5.2). |
 | 2026-11-25 | [Golden prompts hide deprecated web tools](2026-11-25-golden-hide-deprecated-web-tools.md) | (snapshot) | memory-tools and compaction goldens drop advertised web.interact / web.screenshot after the Browser/Web split. |
 | 2026-11-06 | [Settings UX](2026-11-06-settings-ux.md) | (open) | Settings tabs match the Agents card except Skills and Usage. |
 | 2026-11-06 | [Agents card UX](2026-11-06-agents-card-ux.md) | (open) | Agent editor matches sidebar/chat: 65px bar, 920px column, custom select, plugin toggles; projects stay in the left panel. |
