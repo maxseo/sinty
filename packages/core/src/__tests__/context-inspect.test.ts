@@ -190,6 +190,8 @@ test("manifest: ui.tabs and permissions.context are validated", () => {
   assert.equal(ok.ui?.tabs?.[0]?.placement, undefined, "placement is optional (sidebar)");
   const placed = parseManifest({ ...base, ui: { tabs: [{ id: "a", title: "A", path: "/a", placement: "session" }, { id: "b", title: "B", path: "/b", placement: "sidebar" }] } });
   assert.deepEqual(placed.ui?.tabs?.map((t) => t.placement), ["session", "sidebar"]);
+  const grouped = parseManifest({ ...base, ui: { tabs: [{ id: "models", title: "Local", path: "/tab", placement: "settings", group: "models" }] } });
+  assert.equal(grouped.ui?.tabs?.[0]?.group, "models");
   assert.equal(parseManifest({ ...base, ui: { static: "public" } }).ui?.static, "public");
   const bad: unknown[] = [
     { ui: {} },
@@ -204,6 +206,7 @@ test("manifest: ui.tabs and permissions.context are validated", () => {
     { ui: { tabs: [{ id: "a", title: "x", path: "/tab", extra: 1 }] } },
     { ui: { tabs: [{ id: "a", title: "x", path: "/a" }, { id: "a", title: "y", path: "/b" }] } },
     { ui: { tabs: [{ id: "a", title: "x", path: "/a", placement: "header" }] } },
+    { ui: { tabs: [{ id: "a", title: "x", path: "/a", placement: "sidebar", group: "models" }] } },
     { ui: { tabs: [{ id: "a", title: "x", path: "/a", placement: "" }] } },
     { ui: { tabs: [{ id: "a", title: "x", path: "/a", placement: 1 }] } },
     { permissions: { context: ["write"] } },
